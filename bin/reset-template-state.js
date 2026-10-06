@@ -7,6 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { withTaskLock } = require('./lib/lock');
 
 const FILES = {
   'active_task.md': `# Active Task Assignment Blueprint
@@ -79,13 +80,16 @@ Last Date Proven Working: never — nothing executed yet.
 function resetTemplateState(projectDir) {
   const aiDir = path.join(projectDir, '.ai');
   if (!fs.existsSync(aiDir)) return false;
-  for (const [name, content] of Object.entries(FILES)) {
-    const target = path.join(aiDir, name);
-    try {
-      if (fs.existsSync(target)) fs.writeFileSync(target, content, 'utf8');
-    } catch (_) { /* best effort */ }
-  }
-  return true;
+
+  return withTaskLock(projectDir, 'bootstrap-reset', () => {
+    for (const [name, content] of Object.entries(FILES)) {
+      const target = path.join(aiDir, name);
+      try {
+        if (fs.existsSync(target)) fs.writeFileSync(target, content, 'utf8');
+      } catch (_) { /* best effort */ }
+    }
+    return true;
+  });
 }
 
 module.exports = { resetTemplateState };

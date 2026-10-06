@@ -18,6 +18,7 @@ path = "src/main.rs"
 # Windows compiler stack. Windows needs no features: windowing is Win32 and
 # text is DirectWrite.
 gpui = { version = "0.2.2", default-features = false, features = ["windows-manifest"] }
+serde_json = "1.0"
 
 [profile.release]
 # opt-level 0 keeps codegen stack use low enough that rustc does not abort

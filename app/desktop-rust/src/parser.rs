@@ -1,4 +1,4 @@
-//! Port of `app/desktop/lib/parser.js` to Rust.
+//! Port of `bin/lib/parser.js` to Rust.
 //!
 //! The contract semantics are load-bearing: `verified_steps` decides where
 //! Code resumes, and `validate_contract` fails closed. Both are ported

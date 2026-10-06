@@ -90,22 +90,8 @@ function askMissionControl() {
 function setupMissionControl(projectPath) {
   // On Windows, npm is npm.cmd and cannot be spawned without a shell.
   const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  try {
-    execFileSync(npmCmd, ['--version'], { stdio: 'ignore', shell: process.platform === 'win32' });
-    console.log('\n📦 Installing Mission Control (Electron dev dependency)...');
-    console.log('   This downloads Electron once (~100 MB). You can skip it and run later with:');
-    console.log(`   cd ${path.join(projectPath, 'app', 'desktop')} && npm install && npm start`);
-    try {
-      execFileSync(npmCmd, ['install'], { cwd: path.join(projectPath, 'app', 'desktop'), stdio: 'inherit', shell: process.platform === 'win32' });
-      console.log('\n✅ Mission Control installed. Launch it anytime with:');
-      console.log(`   cd ${path.join(projectPath, 'app', 'desktop')}`);
-      console.log(`   npm start`);
-    } catch (_) {
-      console.log('\n⚠️ Mission Control install failed. Run `npm install` inside app/desktop/ later.');
-    }
-  } catch (_) {
-    console.log('\n⚠️ npm not found. Mission Control needs it once: cd app/desktop/ && npm install');
-  }
+  console.log('\n📦 Mission Control (Native GPUI Desktop Dashboard):');
+  console.log(`   Run with: cd ${path.join(projectPath, 'app', 'desktop-rust')} && cargo run`);
 }
 
 function initMetadata(projectName, projectPath) {
@@ -278,7 +264,7 @@ async function main() {
     if (wantMissionControl) {
       setupMissionControl(projectPath);
     } else {
-      console.log('\n⏭️ Skipping Mission Control. Set it up later with:\n   cd app/desktop/\n   npm install\n   npm start');
+      console.log('\n⏭️ Skipping Mission Control. Launch it later with:\n   cd app/desktop-rust/\n   cargo run');
     }
 
     console.log(`\n✅ Setup complete! Welcome to Vibe Assembly.`);

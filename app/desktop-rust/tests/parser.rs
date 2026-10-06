@@ -1,6 +1,6 @@
 //! Contract-semantics tests for the Rust parser.
 //!
-//! These mirror `app/desktop/lib/parser.js` exactly. The two implementations
+//! These mirror `bin/lib/parser.js` exactly. The two implementations
 //! must never disagree: the `va` CLI reports state in a terminal while this
 //! app reports it on screen, and a divergence would make one of them lie.
 

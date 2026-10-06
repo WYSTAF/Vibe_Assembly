@@ -8,7 +8,7 @@ Cloned from GitHub instead of using `npx create-vibe-assembly`? Three steps:
 
 1. Open the folder in your editor with Roo Code — it auto-detects `.roomodes` (the five modes) and `.roorules`.
 2. Optional tools:
-   - Mission Control dashboard: `cd app/desktop && npm install && npm start`
+   - Mission Control dashboard: `cd app/desktop-rust && cargo run`
    - `va` status CLI: `npm i -g create-vibe-assembly` (or just run `node bin/va.js`)
 3. Switch to 👑 Boss and describe your first feature.
 

@@ -16,6 +16,7 @@ pub struct Workspace {
     pub progress_lines: Vec<String>,
     pub violation: Option<String>,
     pub missing: Vec<String>,
+    pub router_assignment: crate::router::RouterAssignment,
 }
 
 impl Workspace {
@@ -66,6 +67,8 @@ impl Workspace {
             .rev()
             .collect();
 
+        let router_assignment = crate::router::resolve_assignment(root);
+
         Workspace {
             root: root.to_path_buf(),
             exists: true,
@@ -76,6 +79,7 @@ impl Workspace {
             progress_lines,
             violation,
             missing,
+            router_assignment,
         }
     }
 

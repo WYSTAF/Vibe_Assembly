@@ -38,7 +38,7 @@ jobs:
           TARBALL="$(npm pack --silent)"
           mv "$TARBALL" "$STAGE/pkg.tgz"
           npm install --prefix "$STAGE/deps" --no-audit --no-fund --ignore-scripts "$STAGE/pkg.tgz"
-          PARSER="$STAGE/deps/node_modules/create-vibe-assembly/app/desktop/lib/parser.js"
+          PARSER="$STAGE/deps/node_modules/create-vibe-assembly/bin/lib/parser.js"
           test -f "$PARSER"
           PARSER="$PARSER" node -e "
             const p = require(process.env.PARSER);

@@ -28,11 +28,17 @@ app/opencode-dev/**/dist/
 app/opencode-dev/packages/desktop/resources/opencode-cli*
 app/opencode-dev/**/*.tsbuildinfo
 
-# Mission Control (Electron) install artifacts
-app/desktop/node_modules/
-
 # Mission Control (native, Rust) build artifacts
 app/desktop-rust/target/
+
+# Legacy desktop artifacts
+app/desktop/
+
+# Local model combo configuration (machine-local; .example is tracked)
+.ai/model_combo.txt
+
+# Single-writer lockfile guard for active_task.md
+.ai/.task.lock
 
 # Scratch / local-only workspaces
 bun-test-q/

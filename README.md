@@ -210,19 +210,17 @@ Refresh guidance for benchmark sources lives inside the knowledge file itself �
 
 ## 🖥️ Mission Control (desktop app)
 
-Vibe Assembly ships with its own Electron dashboard at `app/desktop/`: a live operations-room view of your workspace.
+Vibe Assembly ships with its own native desktop dashboard at `app/desktop-rust/`: a live operations-room view of your workspace built with GPUI.
 
 - **Next Action** panel with one-click copy of the exact paste phrase (`Execute active task` / `Continue relay`)
 - Live **Ticket Queue** + Active Ticket (allowlist, verification steps, `relay_notes`)
 - **Contract Violation** alerts when `.ai/active_task.md` state is inconsistent (fail-closed, same rules Code enforces)
-- Operational state, known bugs, and progress — updating live as agents work (`fs.watch`)
-- Zero runtime dependencies; hardened renderer (contextIsolation, sandbox, strict CSP)
-- Launches through an env-sanitizing launcher immune to editor-injected `ELECTRON_RUN_AS_NODE`
+- Operational state, known bugs, ADR decisions, and progress
+- Native Rust binary with zero webview/electron overhead
 
 ```bash
-cd app/desktop
-npm install   # once (~100 MB Electron download)
-npm start
+cd app/desktop-rust
+cargo run
 ```
 
 The bootstrap CLI offers to install it automatically. Point it at any workspace with `node start.js --root <path>`.

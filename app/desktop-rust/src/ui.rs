@@ -403,6 +403,30 @@ fn state_panel(ws: &Workspace) -> impl IntoElement {
         },
     ));
 
+    // Vibe Router allocation status
+    rows.push((
+        "Router",
+        if ws.router_assignment.is_live {
+            "🟢 Live Assignments Active".to_string()
+        } else {
+            "Offline Fallback".to_string()
+        },
+        if ws.router_assignment.is_live {
+            status_ok()
+        } else {
+            text_muted()
+        },
+    ));
+
+    let lock_status = crate::lock::check_task_lock(&ws.root);
+    if let crate::lock::LockStatus::Held(info) = lock_status {
+        rows.push((
+            "Task Lock",
+            format!("🔒 Held by PID {} ({})", info.pid, info.holder),
+            status_warn(),
+        ));
+    }
+
     panel("Operational State", None).child(
         div()
             .flex()
@@ -608,6 +632,13 @@ impl Render for MissionControl {
                                     ws.active_task.verified_steps().len(),
                                     ws.active_task.steps_total()
                                 )),
+                        )
+                        .child(
+                            if ws.router_assignment.is_live {
+                                chip("🟢 ROUTER: LIVE", status_ok())
+                            } else {
+                                chip("○ ROUTER: OFFLINE", text_muted())
+                            },
                         ),
                 )
                 .child(next_action(&ws, ws.suggested_phrase()))

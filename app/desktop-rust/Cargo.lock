@@ -5024,6 +5024,7 @@ name = "vibe-assembly-control"
 version = "1.2.0"
 dependencies = [
  "gpui",
+ "serde_json",
 ]
 
 [[package]]

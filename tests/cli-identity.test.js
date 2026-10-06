@@ -25,7 +25,7 @@ describe('cli bootstrap safety', () => {
     // The .ai/README_AI.md tooling section must stay in sync with reality.
     const aiReadme = fs.readFileSync(path.join(root, '.ai', 'README_AI.md'), 'utf8');
     for (const ref of [
-      'app/desktop/lib/parser.js',
+      'bin/lib/parser.js',
       'bin/va.js',
       'bin/reset-template-state.js',
       '.githooks/pre-commit',
@@ -69,7 +69,7 @@ describe('cli bootstrap safety', () => {
     const pattern = line.match(/"fileRegex":\s*"([^"]+)"/)[1];
     const re = new RegExp(pattern.replace(/\\\\/g, '\\')); // YAML single-backslash -> JS literal
     for (const mustDeny of ['.githooks/pre-commit', '.roomodes', '.roorules', '.ai/active_task.md',
-                            'src/README-helper.js', 'app/desktop/main.js']) {
+                            'src/README-helper.js', 'bin/lib/parser.js']) {
       assert.equal(re.test(mustDeny), false, `regex must DENY ${mustDeny}`);
     }
     for (const mustAllow of ['README.md', 'CHANGELOG.md', 'docs/guide.md', 'plans/001-x.md', '.ai/changelog.md']) {

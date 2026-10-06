@@ -8,7 +8,7 @@ Core Architecture Rules
 4. 📣 Hermes may APPEND dated entries to `.ai/changelog.md` (Boss keeps file structure) and fully owns: root-level `*.md`, `docs/`, `plans/` — written only from disk evidence (changelog, progress, decisions, git log). Never touches production code, `.githooks/`, `.roomodes`, or `.ai/active_task.md`.
 
 Tooling every mode should know about
-- **Mission Control** (`app/desktop/`): read-only Electron dashboard over this directory. It renders the ticket queue, contract checks, and relay evidence — it never writes `.ai/` state. Its parser lives at `app/desktop/lib/parser.js`; if you change the `active_task.md` layout or `.ai/ticket_contract.md`, update that parser and its tests (`app/desktop/test/parser.test.js`) in the same task.
+- **Mission Control** (`app/desktop-rust/`): native GPUI dashboard over this directory. It renders the ticket queue, contract checks, and relay evidence — it never writes `.ai/` state. The shared JavaScript parser lives at `bin/lib/parser.js`; if you change the `active_task.md` layout or `.ai/ticket_contract.md`, update that parser and `app/desktop-rust/src/parser.rs` in the same task.
 - **`va` CLI** (`bin/va.js`): terminal mirror of Mission Control (`va`, `va --copy`, `va --summary`). Same rule: schema changes here must keep it working.
 - **`bin/reset-template-state.js`**: resets volatile workflow files to pristine template defaults; used by the bootstrap CLI after cloning.
 - **Guardrail hook** (`.githooks/pre-commit`): blocks commits outside the architecture allowlist. Staged deletions are always permitted (cleanup). If you add a legitimate top-level directory to this workspace, add it to the hook's allowlist in the same change.

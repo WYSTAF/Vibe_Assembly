@@ -1,5 +1,5 @@
 // Parity guard: the Rust parser (app/desktop-rust/src/parser.rs) and the JS
-// parser (app/desktop/lib/parser.js) must agree exactly. The `va` CLI reports
+// parser (bin/lib/parser.js) must agree exactly. The `va` CLI reports
 // state in a terminal while Mission Control reports it on screen; if the two
 // ever disagree, one of them is lying to the user.
 //
@@ -9,7 +9,7 @@
 
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
-const p = require('../app/desktop/lib/parser.js');
+const p = require('../bin/lib/parser.js');
 
 const mkSteps = (n) =>
   Array.from({ length: n }, (_, i) => ({ n: i + 1, text: '', verify: null }));
