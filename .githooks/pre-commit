@@ -15,7 +15,7 @@ try {
 
     // Git always reports paths with forward slashes, regardless of OS.
     const ALLOWED_DIRECTORIES = ['app', '.ai', '.roo', '.agents', 'tasks', 'tests', 'docs', '.githooks', 'bin', 'plans', 'graphify-out', '.github', 'templates'];
-    const ALLOWED_ROOT_FILES = ['README.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'LICENSE', 'skills-lock.json', '.roomodes', '.roorules', '.gitignore', 'package.json'];
+    const ALLOWED_ROOT_FILES = ['README.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'LICENSE', 'skills-lock.json', '.roomodes', '.roorules', '.gitignore', '.gitattributes', 'package.json'];
 
     let violation = false;
 

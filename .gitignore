@@ -3,9 +3,14 @@
 node_modules/
 dist/
 build/
+target/
+**/target/
 .env*
 *.log
 init_factory.md
+
+# Local IDE & Claude Code Session Overheads
+.claude/
 
 # Agent Execution Overhead
 # plans/ is committed advisor output (scout)

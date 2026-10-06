@@ -86,6 +86,12 @@ describe('.githooks/pre-commit', () => {
     assert.equal(r.code, 0, `expected pass, got: ${r.output}`);
   });
 
+  it('allows canonical root configuration files (.gitattributes, .gitignore, package.json)', () => {
+    stage('.gitattributes');
+    const r = runHook(repo);
+    assert.equal(r.code, 0, `expected pass, got: ${r.output}`);
+  });
+
   it('allows nested paths with spaces in the workspace name', () => {
     stage('app/my dir/file.js');
     const r = runHook(repo);
