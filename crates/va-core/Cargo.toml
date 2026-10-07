@@ -1,0 +1,12 @@
+[package]
+name = "va-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Core state engine, parser, router client, and allocator for Vibe Assembly"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+regex = "1.13"

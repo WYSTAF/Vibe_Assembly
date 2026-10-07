@@ -1,0 +1,20 @@
+{
+  "$comment": "Standard Vibe Assembly project templates. Each ships a working dependency-free starter in app/ plus pre-filled .ai/project_overview.md and .ai/project_config.md so Boss starts warm. Copy is done by bin/cli.js --template <name>.",
+  "templates": [
+    {
+      "name": "planner",
+      "description": "Personal planner: goals with persistence + weekly view skeleton.",
+      "entry": "app/index.html"
+    },
+    {
+      "name": "todo",
+      "description": "To-do list: add/complete/delete + filters, localStorage.",
+      "entry": "app/index.html"
+    },
+    {
+      "name": "website",
+      "description": "One-page site: sticky nav, hero, sections. Deploy anywhere static.",
+      "entry": "app/index.html"
+    }
+  ]
+}

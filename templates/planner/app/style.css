@@ -1,0 +1,57 @@
+/* Planner starter — intentionally plain. Let the modes restyle it for you. */
+:root {
+  --bg: #f6f7fb;
+  --panel: #ffffff;
+  --ink: #1d2433;
+  --muted: #6b7590;
+  --accent: #4f6df5;
+  --line: #e3e7f2;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 system-ui, sans-serif;
+  min-height: 100vh;
+  display: flex; flex-direction: column;
+}
+header { padding: 28px 20px 10px; text-align: center; }
+header h1 { font-size: 26px; }
+.tagline { color: var(--muted); font-size: 13px; margin-top: 4px; }
+.columns {
+  flex: 1;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+  padding: 16px 20px;
+  max-width: 980px; margin: 0 auto; width: 100%;
+}
+@media (max-width: 720px) { .columns { grid-template-columns: 1fr; } }
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+}
+.card h2 { font-size: 14px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; }
+#goal-form { display: flex; gap: 8px; margin-bottom: 12px; }
+#goal-form input {
+  flex: 1; padding: 9px 12px;
+  border: 1px solid var(--line); border-radius: 8px; font-size: 14px;
+}
+#goal-form button {
+  background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+  padding: 9px 16px; font-weight: 600; cursor: pointer;
+}
+.item-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.item-list li {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg); border-radius: 8px; padding: 8px 10px;
+}
+.item-list li.done span { text-decoration: line-through; color: var(--muted); }
+.item-list input[type="checkbox"] { accent-color: var(--accent); }
+#week-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.day {
+  min-height: 110px; background: var(--bg); border-radius: 8px; padding: 6px;
+  font-size: 11px; color: var(--muted);
+}
+.day b { display: block; color: var(--ink); margin-bottom: 4px; }
+footer { text-align: center; color: var(--muted); font-size: 12px; padding: 14px; }

@@ -1,0 +1,31 @@
+/* Website starter — intentionally plain. Let the modes restyle it for you. */
+:root {
+  --bg: #ffffff;
+  --ink: #16202e;
+  --muted: #5d6b80;
+  --accent: #0f62fe;
+  --alt: #f4f6fa;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { color: var(--ink); font: 16px/1.6 system-ui, sans-serif; }
+nav {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 14px 24px; position: sticky; top: 0;
+  background: rgba(255,255,255,0.92); backdrop-filter: blur(6px);
+  border-bottom: 1px solid #e8ecf3;
+}
+.logo { font-weight: 800; letter-spacing: 2px; }
+.links a { color: var(--muted); text-decoration: none; margin-left: 18px; font-size: 14px; }
+.links a:hover { color: var(--ink); }
+.hero { text-align: center; padding: 96px 20px 72px; }
+.hero h1 { font-size: clamp(30px, 5vw, 48px); max-width: 700px; margin: 0 auto 14px; }
+.hero p { color: var(--muted); max-width: 520px; margin: 0 auto 26px; }
+.cta {
+  display: inline-block; background: var(--accent); color: #fff;
+  padding: 12px 28px; border-radius: 999px; text-decoration: none; font-weight: 600;
+}
+.section { max-width: 760px; margin: 0 auto; padding: 56px 20px; }
+.section.alt { background: var(--alt); max-width: none; }
+.section.alt > * { max-width: 720px; margin-left: auto; margin-right: auto; }
+.section h2 { margin-bottom: 10px; }
+footer { text-align: center; color: var(--muted); font-size: 13px; padding: 26px; }

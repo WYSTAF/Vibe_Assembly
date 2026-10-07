@@ -1,0 +1,16 @@
+[package]
+name = "va-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Vibe Assembly command-line interface — status, models, doctor, init"
+
+[[bin]]
+name = "va"
+path = "src/main.rs"
+
+[dependencies]
+va-core = { path = "../va-core" }
+clap = { version = "4.6", features = ["derive"] }
+serde_json = { workspace = true }

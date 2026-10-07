@@ -1,0 +1,15 @@
+# Vibe Assembly model combo — rename this file to `model_combo.txt` and edit.
+# One router model per line. Run `va --models` to see mode assignments.
+#
+# Example free-router combo:
+gemini-2.0-flash
+deepseek-r1:free
+qwen3-coder
+llama-4-scout
+gpt-5-mini
+
+# Optional per-mode locks always win over automatic allocation:
+# boss = gemini-2.0-flash
+# code = qwen3-coder
+#
+# Inline comments are fine:  deepseek-r1:free  # my free reasoning model

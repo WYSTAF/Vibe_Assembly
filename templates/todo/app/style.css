@@ -1,0 +1,43 @@
+/* To-Do starter — intentionally plain. Let the modes restyle it for you. */
+:root {
+  --bg: #101418;
+  --panel: #1a2028;
+  --ink: #e7ecf3;
+  --muted: #8a95a5;
+  --accent: #2fbf71;
+  --line: #262f3a;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, sans-serif; min-height: 100vh; }
+.app { max-width: 520px; margin: 0 auto; padding: 40px 18px; }
+h1 { font-size: 26px; margin-bottom: 4px; }
+.tagline { color: var(--muted); font-size: 13px; margin-bottom: 22px; }
+#add-form { display: flex; gap: 8px; margin-bottom: 14px; }
+#add-form input {
+  flex: 1; padding: 11px 14px; font-size: 15px;
+  background: var(--panel); border: 1px solid var(--line);
+  color: var(--ink); border-radius: 9px;
+}
+#add-form button {
+  background: var(--accent); color: #08130c; border: 0; border-radius: 9px;
+  padding: 11px 18px; font-weight: 700; cursor: pointer;
+}
+.filters { display: flex; gap: 6px; margin-bottom: 12px; }
+.filters button {
+  background: transparent; color: var(--muted); border: 1px solid var(--line);
+  padding: 5px 12px; border-radius: 999px; cursor: pointer; font-size: 13px;
+}
+.filters button.active { color: var(--ink); border-color: var(--accent); }
+#todo-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+#todo-list li {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--panel); border-radius: 9px; padding: 10px 12px;
+}
+#todo-list li.done span { text-decoration: line-through; color: var(--muted); }
+#todo-list input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
+#todo-list .del {
+  margin-left: auto; background: none; border: 0; color: var(--muted);
+  cursor: pointer; font-size: 16px;
+}
+#todo-list .del:hover { color: #ff6b6b; }
+.count { color: var(--muted); font-size: 13px; margin-top: 12px; }

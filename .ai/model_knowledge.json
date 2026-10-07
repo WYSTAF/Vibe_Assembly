@@ -1,0 +1,46 @@
+{
+  "$schema_note": "Vibe Assembly model-knowledge base. Curated capability CLASSES (stable) — not live benchmark scores. Refresh guidance in SOURCES. Allocators match on 'class' + 'strengths', never on made-up precision.",
+  "version": 1,
+  "curated": "2026-08-26",
+  "SOURCES": {
+    "note": "Re-check these when refreshing this file. All render leaderboards client-side; check them in a browser.",
+    "agentic_coding": "https://www.swebench.com/",
+    "general_and_coding": "https://livebench.ai/",
+    "open_model_rankings": "https://huggingface.co/spaces/open-llm-leaderboard/open_llm_leaderboard",
+    "community_free_tier_reports": "https://openrouter.ai/rankings"
+  },
+  "classes": {
+    "reasoner":      "Deliberate multi-step thinking; best at root-cause diagnosis and hard planning. Slow and token-hungry.",
+    "coder":         "Instruction-tuned specifically for code diffs; strong at allowlisted ticket execution and precise edits.",
+    "flagship":      "Top general capability; strong long-context planning and architecture work.",
+    "workhorse":     "Solid mid-tier general model; good quality/price/speed balance for conversation and light tickets.",
+    "fast":          "Very fast, cheap, small-context; ideal for chat, status summaries, and formatting work."
+  },
+  "mode_requirements": {
+    "boss":   { "primary_class": "flagship",    "fallback_classes": ["reasoner", "workhorse"], "why": "Blueprints need long context + strong planning; no terminal use." },
+    "chat":   { "primary_class": "fast",        "fallback_classes": ["workhorse", "flagship"], "why": "High-volume conversation; speed matters more than depth." },
+    "code":   { "primary_class": "coder",       "fallback_classes": ["flagship", "reasoner"],  "why": "Precise diffs inside allowlists beat raw intelligence." },
+    "debug":  { "primary_class": "reasoner",    "fallback_classes": ["flagship", "coder"],     "why": "Root-cause traversal rewards deliberate reasoning over speed." },
+    "hermes": { "primary_class": "workhorse",   "fallback_classes": ["fast", "flagship"],      "why": "Documentation is language-quality-bound, not latency-bound; mid-tier suffices." }
+  },
+  "models": [
+    { "name": "Claude Sonnet family",        "aliases": ["claude-sonnet", "claude"],                 "class": "coder",         "context_tokens": 200000,  "notes": "Excellent instruction-following for allowlisted edits; strong agentic coding record." },
+    { "name": "GPT-5.x mini/nano class",     "aliases": ["gpt-5-mini", "gpt-5-nano", "gpt-mini"],    "class": "fast",          "context_tokens": 128000,  "notes": "Fast and cheap; good conversational quality." },
+    { "name": "GPT-5.x flagship class",      "aliases": ["gpt-5", "gpt-4o", "gpt-4.1"],              "class": "flagship",      "context_tokens": 128000,  "notes": "Strong general planning; widely available on routers." },
+    { "name": "DeepSeek R-series",           "aliases": ["deepseek-r1", "deepseek-r", "r1"],          "class": "reasoner",      "context_tokens": 128000,  "notes": "Deliberate reasoning; common free tier on community routers; slow but thorough." },
+    { "name": "DeepSeek V-series chat",      "aliases": ["deepseek-v3", "deepseek-chat", "deepseek"], "class": "workhorse",     "context_tokens": 128000,  "notes": "Strong open-weight general model; very router-available." },
+    { "name": "Qwen Coder series",           "aliases": ["qwen-coder", "qwen2.5-coder", "qwen3-coder"], "class": "coder",      "context_tokens": 131072,  "notes": "Purpose-built for code completion and diffs; frequent free tiers." },
+    { "name": "GLM flagship",                "aliases": ["glm-4", "glm-5", "glm"],                    "class": "flagship",      "context_tokens": 128000,  "notes": "Competitive open-weight generalist; good agentic performance." },
+    { "name": "Kimi (Moonshot)",             "aliases": ["kimi", "moonshot", "kimi-k2"],              "class": "workhorse",     "context_tokens": 200000,  "notes": "Long context; generous free tiers on community routers." },
+    { "name": "Llama 4 class",               "aliases": ["llama-4", "llama", "llama3"],               "class": "workhorse",     "context_tokens": 128000,  "notes": "Ubiquitous open-weight baseline on every router." },
+    { "name": "Mistral large/mid",           "aliases": ["mistral", "mistral-large", "mistral-small"],"class": "workhorse",     "context_tokens": 128000,  "notes": "Efficient European option; commonly free-tiered." },
+    { "name": "Gemini Flash",                "aliases": ["gemini-flash", "gemini-2", "gemini"],       "class": "fast",          "context_tokens": 1000000, "notes": "Huge context, very fast, generous free tier — excellent Chat/Boss-on-a-budget." },
+    { "name": "Gemini Pro",                  "aliases": ["gemini-pro"],                               "class": "flagship",      "context_tokens": 1000000, "notes": "Flagship-class with million-token context when available." },
+    { "name": "Grok class",                  "aliases": ["grok"],                                     "class": "workhorse",     "context_tokens": 131072,  "notes": "Available on some aggregators; solid generalist." },
+    { "name": "Nemotron ultra class",        "aliases": ["nemotron"],                                 "class": "reasoner",      "context_tokens": 262144,  "notes": "Large-context reasoner variant; seen on NVIDIA-hosted free chains." }
+  ],
+  "routers": {
+    "note": "API aggregators that expose many models behind one OpenAI-compatible key. Any of these works; set the combo via va models.",
+    "examples": ["OpenRouter", "9router", "OmniRoute", "Requesty", "NanoGPT"]
+  }
+}

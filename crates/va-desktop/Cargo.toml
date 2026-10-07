@@ -1,0 +1,19 @@
+[package]
+name = "va-desktop"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Mission Control — native GPUI desktop dashboard for Vibe Assembly"
+
+[[bin]]
+name = "va-control"
+path = "src/main.rs"
+
+[dependencies]
+va-core = { path = "../va-core" }
+# default-features = false drops `wayland` and `x11`, which are Linux-only and
+# are the main reason gpui's dependency graph is large enough to overflow the
+# Windows compiler stack. Windows needs no features: windowing is Win32 and
+# text is DirectWrite.
+gpui = { version = "0.2.2", default-features = false, features = ["windows-manifest"] }

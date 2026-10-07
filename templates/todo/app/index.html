@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>To-Do — Vibe Assembly Starter</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="app">
+    <h1>✅ To-Do</h1>
+    <p class="tagline">A standard starter — make it yours via 💬 Chat → 👑 Boss.</p>
+
+    <form id="add-form">
+      <input id="todo-input" type="text" placeholder="What needs doing?" autocomplete="off" />
+      <button type="submit">Add</button>
+    </form>
+
+    <div class="filters">
+      <button data-filter="all" class="active">All</button>
+      <button data-filter="open">Open</button>
+      <button data-filter="done">Done</button>
+    </div>
+
+    <ul id="todo-list"></ul>
+    <p id="count" class="count">0 open</p>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

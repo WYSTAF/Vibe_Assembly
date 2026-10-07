@@ -1,0 +1,26 @@
+# Pure Rust build artifacts
+target/
+**/target/
+Cargo.lock.backup
+
+# Authoritative runtime lockfile (ADR-007 single-writer guard)
+.ai/.task.lock
+
+# Machine-local model combo configuration (.example is tracked)
+.ai/model_combo.txt
+
+# System & OS overheads
+.DS_Store
+Thumbs.db
+*.log
+
+# IDE & Editor session configurations
+.claude/
+.idea/
+.vscode/
+*.iml
+
+# Local references and scratch
+/references/upstream/
+*.tmp
+*.bak

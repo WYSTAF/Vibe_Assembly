@@ -1,0 +1,7 @@
+# Reuse the dependency build cache from the probe crate so gpui's ~700
+# transitive crates are compiled once, not once per project.
+[build]
+target-dir = "Q:/va-rust/gpui-probe/target"
+# Single job prevents mmap paging file exhaustion on Windows when multiple
+# rustc instances simultaneously mmap the multi-gigabyte gpui rlibs.
+jobs = 1

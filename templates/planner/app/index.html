@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Planner — Vibe Assembly Starter</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>🗓️ My Planner</h1>
+    <p class="tagline">A standard starter — replace this header with your brand via 💬 Chat → 👑 Boss.</p>
+  </header>
+
+  <main class="columns">
+    <section class="card" id="goals-panel">
+      <h2>Goals</h2>
+      <form id="goal-form">
+        <input id="goal-input" type="text" placeholder="Add a goal…" autocomplete="off" />
+        <button type="submit">Add</button>
+      </form>
+      <ul id="goal-list" class="item-list"></ul>
+    </section>
+
+    <section class="card">
+      <h2>This Week</h2>
+      <div id="week-grid"></div>
+    </section>
+  </main>
+
+  <footer>
+    <span>Standard planner template · data stays in your browser (localStorage)</span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
