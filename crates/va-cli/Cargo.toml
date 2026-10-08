@@ -7,7 +7,7 @@ license.workspace = true
 description = "Vibe Assembly command-line interface — status, models, doctor, init"
 
 [[bin]]
-name = "va"
+name = "vibe-assembly"
 path = "src/main.rs"
 
 [dependencies]

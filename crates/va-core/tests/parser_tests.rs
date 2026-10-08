@@ -1,7 +1,7 @@
 //! Contract-semantics tests for the Rust parser.
 //!
 //! These mirror `bin/lib/parser.js` exactly. The two implementations
-//! must never disagree: the `va` CLI reports state in a terminal while this
+//! must never disagree: the `vibe-assembly` CLI reports state in a terminal while this
 //! app reports it on screen, and a divergence would make one of them lie.
 
 use va_core::parser::*;
@@ -269,4 +269,62 @@ fn a_real_blocker_is_reported() {
     let ws = Workspace::load(&dir);
     assert_eq!(ws.blockers(), Some("KB-002 unresolved."));
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Namespaced ticket ids (e.g. `VA-RUST-001`) must parse alongside the legacy
+/// `T-NNN` form, so a new wave can introduce its own prefix without a parser
+/// change. Bare numbers and lowercase junk must still be rejected.
+#[test]
+fn accepts_namespaced_ticket_ids() {
+    let raw = r#"
+## Active Ticket
+- **id:** VA-RUST-001
+
+## Queue
+| order | id | title | status | effort | depends_on |
+|------:|----|-------|--------|--------|------------|
+| 1 | VA-RUST-001 | Scaffold the harness | pending | S | none |
+| 2 | not-a-ticket | lowercase junk | pending | S | none |
+| 3 | 42 | bare number | pending | S | none |
+
+## Ticket VA-RUST-001
+### Meta
+- **status:** pending
+- **effort:** S
+- **depends_on:** none
+- **files_allowed:**
+   - crates/va-harness/src/lib.rs
+
+### Steps
+1. Create the crate.
+"#;
+    let p = parse_active_task(raw);
+    assert_eq!(p.active_id.as_deref(), Some("VA-RUST-001"));
+    // Only the well-formed id is accepted as a queue row.
+    assert_eq!(p.queue.len(), 1, "junk ids must be rejected: {:?}", p.queue);
+    assert_eq!(p.queue[0].id, "VA-RUST-001");
+    assert_eq!(validate_contract(&p), None);
+}
+
+#[test]
+fn legacy_t_prefix_still_parses() {
+    let raw = r#"
+## Active Ticket
+- **id:** T-001
+
+## Queue
+| order | id | title | status | effort | depends_on |
+|------:|----|-------|--------|--------|------------|
+| 1 | T-001 | Legacy ticket | pending | S | none |
+
+## Ticket T-001
+### Meta
+- **status:** pending
+### Steps
+1. Do the thing.
+"#;
+    let p = parse_active_task(raw);
+    assert_eq!(p.active_id.as_deref(), Some("T-001"));
+    assert_eq!(p.queue.len(), 1);
+    assert_eq!(validate_contract(&p), None);
 }

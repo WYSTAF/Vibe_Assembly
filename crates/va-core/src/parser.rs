@@ -2,7 +2,7 @@
 //!
 //! The contract semantics are load-bearing: `verified_steps` decides where
 //! Code resumes, and `validate_contract` fails closed. Both are ported
-//! literally rather than "improved" so the native app and the `va` CLI can
+//! literally rather than "improved" so the native app and the `vibe-assembly` CLI can
 //! never disagree about what state a workspace is in.
 
 use serde::{Deserialize, Serialize};
@@ -121,6 +121,30 @@ fn normalize(raw: &str) -> String {
     raw.replace("\r\n", "\n").replace('\r', "\n")
 }
 
+/// A ticket id is `PREFIX-NNN` — an uppercase alphanumeric/hyphen prefix ending
+/// in a numeric segment. Accepts both the legacy `T-401` form and namespaced
+/// ids like `VA-RUST-001`, so a new wave does not require a parser change.
+/// Rejects bare numbers, lowercase junk, and the literal `none`.
+fn is_ticket_id(id: &str) -> bool {
+    let id = id.trim();
+    if id.is_empty() || id.eq_ignore_ascii_case("none") {
+        return false;
+    }
+    let (prefix, last) = match id.rsplit_once('-') {
+        Some(parts) => parts,
+        None => return false,
+    };
+    if prefix.is_empty() || last.is_empty() {
+        return false;
+    }
+    if !last.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    prefix
+        .chars()
+        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '-')
+}
+
 fn parse_queue_rows(section: &str) -> Vec<QueueRow> {
     let mut rows = Vec::new();
     for line in section.lines() {
@@ -137,7 +161,10 @@ fn parse_queue_rows(section: &str) -> Vec<QueueRow> {
             Ok(n) => n,
             Err(_) => continue,
         };
-        if !cells[1].starts_with("T-") {
+        // Ticket ids are PREFIX-NNN (e.g. T-401, VA-RUST-001). Accept any
+        // uppercase alphanumeric prefix ending in a numeric segment so new
+        // waves can introduce their own namespaces without a parser change.
+        if !is_ticket_id(cells[1]) {
             continue;
         }
         rows.push(QueueRow {

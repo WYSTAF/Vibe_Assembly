@@ -22,7 +22,7 @@ pub struct Workspace {
 
 impl Workspace {
     /// Walk up from `start` looking for a `.ai/` directory, mirroring the
-    /// `va` CLI's discovery rule.
+    /// `vibe-assembly` CLI's discovery rule.
     pub fn discover(start: &Path) -> Option<PathBuf> {
         let mut cur = Some(start);
         while let Some(dir) = cur {
@@ -85,7 +85,7 @@ impl Workspace {
     }
 
     /// The phrase a human pastes back to Boss to start work. Mirrors the
-    /// `va` CLI's suggestion rule.
+    /// `vibe-assembly` CLI's suggestion rule.
     pub fn suggested_phrase(&self) -> Option<&'static str> {
         let status = self
             .active_task

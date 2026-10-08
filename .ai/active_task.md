@@ -1,61 +1,75 @@
-# Active Task Assignment Blueprint
+# 🎯 Active Task Assignment Blueprint
 
 ## Wave
-- **Name:** Vibe Assembly Desktop Launch
-- **Objective:** Launch the Vibe Assembly Electron Desktop GUI application in development mode, verifying its dependencies and ensuring it runs correctly.
+- **Name:** Wave 1 — Native Rust Execution Core
+- **Objective:** Establish the pure-Rust execution engine for Vibe Assembly. Wave 1 delivers the `va-harness` crate: a hash-anchored editing engine that lets an agent apply precise, verifiable edits to files without whole-file rewrites, plus the relay/verification loop that makes interrupted sessions resumable. This is the foundation every later wave builds on.
 - **Status:** planning_complete
 - **User paste:** `Execute active task`
 
 ## Status Snapshot
-- **current_ticket:** T-401
-- **completed_tickets:** T-401
-- **remaining_tickets:** none
+- **current_ticket:** VA-RUST-001
+- **completed_tickets:** none
+- **remaining_tickets:** VA-RUST-001
 - **resume_rule:** Open the explicit Active Ticket, read its `relay_notes`, and continue at the first step without successful verification evidence.
 
 ## Active Ticket
-- **id:** none
+- **id:** VA-RUST-001
 
 ## Queue
 | order | id | title | status | effort | depends_on |
 |------:|----|-------|--------|--------|------------|
-| 1 | T-401 | Launch Vibe Assembly Desktop in Dev Mode | done | S | none |
+| 1 | VA-RUST-001 | Scaffold va-harness execution engine (hash-anchored editing) | pending | S | none |
 
----
-
-## Ticket T-401
+## Ticket VA-RUST-001
 ### Meta
-- **status:** done
+- **status:** pending
 - **effort:** S
 - **depends_on:** none
 - **files_allowed:**
+   - Cargo.toml
+   - crates/va-harness/Cargo.toml
+   - crates/va-harness/src/lib.rs
+   - crates/va-harness/src/anchor.rs
+   - crates/va-harness/tests/anchor_tests.rs
    - .ai/active_task.md
 - **files_forbidden:** (default: all other paths)
 
 ### context_inline
-The desktop app is located in `app/opencode-dev/packages/desktop`. We need to verify its dependencies, run its predev script, and launch the development server.
+Vibe Assembly migrated to a pure-Rust Cargo workspace on 2026-10-08 (ADR-014). Existing crates: `va-core` (parser/allocator/router/lock/prompts/bootstrap), `va-cli` (binary `vibe-assembly`), `va-desktop` (binary `vibe-assembly-desktop`). All three build offline with `ulimit -s unlimited`.
+
+The workspace root `Cargo.toml` declares members explicitly under `[workspace] members = [...]`. A new crate must be added to that list or it will not build.
+
+**What hash-anchored editing means:** instead of rewriting a whole file, an agent names a small anchor (a unique substring plus a line-context hash) and supplies a replacement. The harness locates the anchor, verifies the surrounding content still hashes to the expected value, and applies the edit only if it matches. This prevents the classic failure where a model edits stale content it remembered from an earlier context — the edit is rejected rather than silently corrupting the file.
+
+**Design constraint:** `va-harness` must depend only on `va-core` plus the standard library. No new third-party crates, because the network is throttled on this machine and offline builds are required. A simple FNV-1a or std `DefaultHasher` is sufficient for anchoring — do not add `sha2`.
+
+**Verification style:** every step below has a command whose exit code proves the step worked. Run them in order.
 
 ### Steps
-1. Verify and install dependencies inside the desktop package.
-   - **Verify:** `cd app/opencode-dev/packages/desktop && bun install` -> expected successful installation of dependencies.
-2. Run the predev script to prepare the build assets.
-   - **Verify:** `cd app/opencode-dev/packages/desktop && bun run predev` -> expected predev script to complete successfully.
-3. Launch the electron-vite development environment.
-   - **Verify:** `cd app/opencode-dev/packages/desktop && bun run dev` -> expected electron-vite development server to start and open the Electron window.
+1. Create the `va-harness` crate skeleton and register it in the workspace.
+   - **Verify:** `cargo metadata --offline --no-deps --format-version 1 | findstr va-harness` → prints a line containing `va-harness`
+2. Implement `Anchor` in `crates/va-harness/src/anchor.rs`: a struct holding `before` (context lines), `target` (the exact text to replace), and `after` (context lines), plus a `hash_of(&str) -> u64` helper using `std::collections::hash_map::DefaultHasher`.
+   - **Verify:** `cargo build --offline -p va-harness` → exits 0
+3. Implement `apply_anchored_edit(content: &str, anchor: &Anchor, replacement: &str) -> Result<String, AnchorError>` in `anchor.rs`. It must locate `anchor.target` inside `content`, confirm the surrounding context matches, and return the edited content. If the target appears zero times or more than once, return a distinct error variant rather than guessing.
+   - **Verify:** `cargo build --offline -p va-harness` → exits 0
+4. Re-export the public API from `crates/va-harness/src/lib.rs` (`Anchor`, `AnchorError`, `apply_anchored_edit`, `hash_of`).
+   - **Verify:** `cargo build --offline -p va-harness` → exits 0
+5. Write integration tests in `crates/va-harness/tests/anchor_tests.rs` covering the four required cases: successful edit; target-not-found; target-ambiguous (appears twice); stale-context rejection (context hash mismatch).
+   - **Verify:** `cargo test --offline -p va-harness` → all tests pass, exit 0
+6. Append one relay_notes entry recording the step number, changed paths, exact command, and exit code; then mark the Queue row and Meta status `done`, set the Status Snapshot to reflect completion, and set `## Active Ticket` to `none`.
+   - **Verify:** `cargo test --offline --workspace` → exits 0 with no regressions
 
 ### done_when
-- The Electron development window opens successfully showing the Vibe Assembly GUI interface.
+- `cargo build --offline -p va-harness` exits 0
+- `cargo test --offline -p va-harness` exits 0 and reports at least 4 passing tests
+- `cargo clippy --offline -p va-harness --all-targets` exits 0 with zero warnings
+- `va-harness` appears in `cargo metadata` workspace members
 
 ### stop_when
-- Any dependency installation or predev script fails with a fatal error.
-- The Electron window fails to open or crashes on startup.
+- Any step requires a third-party dependency not already in `Cargo.lock`
+- Any step requires editing a file outside `files_allowed`
+- `cargo build` fails twice on the same step (attempt cap — escalate to Debug)
+- The network is required for any step (offline builds only)
 
 ### relay_notes
-- **Step 1 (bun install):** PASS. exited 0 (prior session).
-- **Step 2 (bun run predev):** PASS. CLI binary copied to `resources/opencode-cli.exe`. Boss ruling: the prior session's offline-fallback edit in `scripts/utils.ts` (try/catch around the CLI download; writes a placeholder binary on failure) is ACCEPTED and retained — it keeps `predev` usable on flaky networks. It was outside this ticket's allowlist when made; recorded here as an approved exception.
-- **Step 3 (bun run dev):** PASS after Boss-approved fix (2026-08-25).
-  - **Root cause (empirically reproduced):** `ELECTRON_RUN_AS_NODE=1` leaked into the launch environment (editors/agent harnesses running inside Electron — VS Code/Roo Code/Cursor — inject it into spawned shells). electron-vite spawns the Electron binary with inherited env, so electron.exe booted as plain Node; `import { BrowserWindow } from 'electron'` in transitive dep `electron-dl@4.0.0` (via `electron-context-menu`) resolved against the npm stub package, which has no named exports → `SyntaxError: ... does not provide an export named 'BrowserWindow'`. Reproduced byte-for-byte by launching `electron.exe .` with the var set; clean env launches fine.
-  - **Fix (Boss-approved, outside original allowlist):** new `app/opencode-dev/packages/desktop/scripts/dev.ts` sanitizes `ELECTRON_RUN_AS_NODE` from a copied env object and passes the explicit `env` option to `spawn("electron-vite", ["dev"])`; `"dev"` script now routes through it (`bun ./scripts/dev.ts`). Explicit-env is required because mutating `process.env` under Bun does not reliably propagate to children.
-  - **Verification:** `ELECTRON_RUN_AS_NODE=1 bun run dev` → sanitizer warning printed; vite main/preload built; renderer dev server up on localhost:5173; Electron window opened; crash reporter/auto-updater/sidecar/onboarding all initialized; ran ~78s until test-harness SIGTERM (exit 143 shutdown cascade only). No SyntaxError anywhere in the log.
-
-## Completion Record
-- **Closed:** 2026-08-25. Root cause + fix logged in `.ai/known_bugs.md` (KB-001) and `.ai/decisions.md` (ADR-008). `current_state.md` updated.
+- (empty until Code runs)

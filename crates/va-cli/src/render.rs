@@ -1,4 +1,4 @@
-//! Terminal rendering helpers. Mirrors the `va` CLI's output shape.
+//! Terminal rendering helpers for the `vibe-assembly` CLI.
 
 use va_core::parser::{ActiveTask, QueueRow};
 

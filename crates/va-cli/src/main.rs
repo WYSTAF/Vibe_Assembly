@@ -1,7 +1,6 @@
 //! Vibe Assembly CLI — the terminal operations room.
 //!
-//! Pure Rust. Mirrors the legacy `bin/va.js` surface: status, --models,
-//! --doctor, --json, --summary, plus native workspace init.
+//! Pure Rust. Surface: status, models, doctor, init, reset, --json, --summary.
 
 mod render;
 
@@ -20,7 +19,7 @@ use render::{queue_lines, role_icon, Palette};
 
 #[derive(Parser)]
 #[command(
-    name = "va",
+    name = "vibe-assembly",
     version,
     about = "Vibe Assembly — terminal operations room for the .ai/ workspace contract"
 )]

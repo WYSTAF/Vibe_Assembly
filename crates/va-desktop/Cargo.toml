@@ -7,7 +7,7 @@ license.workspace = true
 description = "Mission Control — native GPUI desktop dashboard for Vibe Assembly"
 
 [[bin]]
-name = "va-control"
+name = "vibe-assembly-desktop"
 path = "src/main.rs"
 
 [dependencies]

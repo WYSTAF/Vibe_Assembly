@@ -51,10 +51,10 @@ cargo run -p va-cli -- init my-project
 
 # Inspect it
 cd my-project
-va status          # ticket queue + resume point
-va models          # model allocation for the five modes
-va doctor          # workspace health check
-va --json          # machine-readable status
+vibe-assembly status          # ticket queue + resume point
+vibe-assembly models          # model allocation for the five modes
+vibe-assembly doctor          # workspace health check
+vibe-assembly --json          # machine-readable status
 
 # Launch the desktop dashboard
 cargo run -p va-desktop
@@ -67,8 +67,8 @@ Vibe Assembly/
 ├── .ai/                    # The AI contract — authoritative state
 ├── crates/
 │   ├── va-core/            # State engine: parser, allocator, router, lock, prompts
-│   ├── va-cli/             # `va` binary — terminal operations room
-│   └── va-desktop/         # `va-control` — native GPUI dashboard
+│   ├── va-cli/             # `vibe-assembly` binary — terminal operations room
+│   └── va-desktop/         # `vibe-assembly-desktop` — native GPUI dashboard
 ├── templates/              # Seeded project starters (planner, todo, website)
 └── references/             # Upstream harnesses (not built)
 ```
@@ -84,7 +84,7 @@ Every capability from the original Node.js implementation is now native Rust:
 | `bin/lib/router.js` | `va-core/src/router.rs` |
 | `bin/lib/lock.js` | `va-core/src/lock.rs` |
 | `bin/reset-template-state.js` | `va-core/src/bootstrap.rs` |
-| `bin/va.js` | `va-cli/src/main.rs` |
+| `bin/va.js` (the `va` CLI) | `vibe-assembly` binary — `va-cli/src/main.rs` |
 | `.roo/rules/*.md`, `.roomodes` | `va-core/src/prompts.rs` |
 | `app/desktop-rust/` | `va-desktop/` |
 
