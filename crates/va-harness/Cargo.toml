@@ -1,0 +1,11 @@
+[package]
+name = "va-harness"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Execution harness — session trajectory DAG, hash-anchored patcher, diff review, and quality judge"
+
+[dependencies]
+va-core = { path = "../va-core" }
+serde_json = { workspace = true }

@@ -20,7 +20,10 @@ Thumbs.db
 .vscode/
 *.iml
 
-# Local references and scratch
+# Local references and scratch.
+# Upstream sources are fetched, never committed — they are large and are
+# study material, not part of the product.
 /references/upstream/
+/references/*.zip
 *.tmp
 *.bak

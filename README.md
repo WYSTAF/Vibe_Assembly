@@ -66,12 +66,46 @@ cargo run -p va-desktop
 Vibe Assembly/
 ├── .ai/                    # The AI contract — authoritative state
 ├── crates/
-│   ├── va-core/            # State engine: parser, allocator, router, lock, prompts
+│   ├── va-core/            # State engine: parser, allocator, router, lock, prompts,
+│   │                       #   knowledge (model scoring), bootstrap
+│   ├── va-harness/         # Execution engine: session, patcher, review, judge, engine
 │   ├── va-cli/             # `vibe-assembly` binary — terminal operations room
 │   └── va-desktop/         # `vibe-assembly-desktop` — native GPUI dashboard
 ├── templates/              # Seeded project starters (planner, todo, website)
 └── references/             # Upstream harnesses (not built)
 ```
+
+## ⚙️ The execution harness
+
+`va-harness` is the part that makes an agent's edits safe to trust.
+
+| Module | Role |
+|---|---|
+| `session` | Append-only transactional trajectory DAG. Per-node state hashing, `fork`, `rollback`, `replay`. Replay reuses stored results — no tool re-runs. |
+| `patcher` | Edits address **per-block hashes**, never line numbers. Recovers from a uniform line shift; hard-rejects an ambiguous hash rather than guessing. |
+| `review` | Git checkpoint per phase, isolating each step's exact delta for review. |
+| `judge` | Deterministic gate before commit: slop comments, placeholders, `unwrap()` in production, import-only churn, excessive churn. One targeted retry, then abort. |
+| `engine` | Observe → Think → Patch → Verify → Judge. Model-agnostic via a `Planner` trait. |
+
+```bash
+# Discover block hashes in a file
+vibe-assembly blocks src/main.rs
+
+# Patch by hash (4-hex short form or the full 64-bit value)
+vibe-assembly patch src/main.rs --target 159A <<< 'pub fn beta(y: i32) -> i32 {
+    y * 42
+}'
+
+# Zero-config role assignment from Vibe Router
+vibe-assembly run --auto-combo
+```
+
+**Vibe Router.** The client targets `/api/assignment` (the `/v1` path does not
+exist on the gateway) and honours `VIBE_ROUTER_TOKEN` (Bearer) or
+`VIBE_ROUTER_API_KEY` (`X-API-Key`). Without credentials it falls back to
+`.ai/model_combo.txt` and says so. Models the curated table has never seen are
+scored from their name — version progression and behavioural tags — so
+`gemini-3.8-flash` or `glm-5.3` still allocates sensibly.
 
 ## 🧩 Feature parity with the legacy JS tooling
 

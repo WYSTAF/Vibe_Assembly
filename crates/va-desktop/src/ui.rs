@@ -411,6 +411,54 @@ fn state_panel(ws: &Workspace) -> impl IntoElement {
     )
 }
 
+/// The execution harness: the role plan the engine will use, and the router
+/// status that produced it.
+fn harness_panel(ws: &Workspace) -> impl IntoElement {
+    use va_core::knowledge::auto_combo;
+
+    let gateway = va_core::router_client::fetch_default();
+    let mut models = gateway.model_names();
+    let source = if models.is_empty() {
+        // Fall back to the local combo so the panel is never empty.
+        if let Ok(text) = std::fs::read_to_string(ws.root.join(".ai").join("model_combo.txt")) {
+            models = text
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty() && !l.starts_with('#') && !l.contains('='))
+                .map(|l| l.split('#').next().unwrap_or(l).trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect();
+        }
+        "local combo"
+    } else {
+        "Vibe Router"
+    };
+
+    let roles: Vec<va_core::knowledge::Assignment> = auto_combo(&models, 0.5);
+    let live = gateway.is_live();
+
+    panel(
+        "Execution Harness",
+        Some(if live {
+            format!("{source} · live")
+        } else {
+            format!("{source} · offline")
+        }),
+    )
+    .child(div().flex().flex_col().children(roles.iter().map(|a| {
+        let color = if a.role == va_core::knowledge::Role::Judge {
+            status_warn()
+        } else {
+            accent()
+        };
+        kv(
+            a.role.as_str(),
+            &format!("{}  ({:.2})", a.model, a.score),
+            color,
+        )
+    })))
+}
+
 /// Known bugs, split into real entries. The old renderer showed one entry's
 /// field labels as if they were six separate bugs.
 fn bugs_panel(ws: &Workspace) -> impl IntoElement {
@@ -632,6 +680,7 @@ impl Render for MissionControl {
                                 .flex_1()
                                 .min_w_0()
                                 .child(state_panel(&ws))
+                                .child(harness_panel(&ws))
                                 .child(bugs_panel(&ws))
                                 .child(decisions_panel(&ws))
                                 .child(progress_panel(&ws)),

@@ -7,22 +7,22 @@
 - **User paste:** `Execute active task`
 
 ## Status Snapshot
-- **current_ticket:** VA-RUST-001
-- **completed_tickets:** none
-- **remaining_tickets:** VA-RUST-001
+- **current_ticket:** none
+- **completed_tickets:** VA-RUST-001
+- **remaining_tickets:** none
 - **resume_rule:** Open the explicit Active Ticket, read its `relay_notes`, and continue at the first step without successful verification evidence.
 
 ## Active Ticket
-- **id:** VA-RUST-001
+- **id:** none
 
 ## Queue
 | order | id | title | status | effort | depends_on |
 |------:|----|-------|--------|--------|------------|
-| 1 | VA-RUST-001 | Scaffold va-harness execution engine (hash-anchored editing) | pending | S | none |
+| 1 | VA-RUST-001 | Scaffold va-harness execution engine (hash-anchored editing) | done | S | none |
 
 ## Ticket VA-RUST-001
 ### Meta
-- **status:** pending
+- **status:** done
 - **effort:** S
 - **depends_on:** none
 - **files_allowed:**
@@ -72,4 +72,11 @@ The workspace root `Cargo.toml` declares members explicitly under `[workspace] m
 - The network is required for any step (offline builds only)
 
 ### relay_notes
-- (empty until Code runs)
+- **Step 1 (crate skeleton):** PASS. `cargo metadata --offline --no-deps --format-version 1 | findstr va-harness` printed the member. Crate added to the workspace list.
+- **Step 2 (Anchor + hashing):** superseded by the wave. The wave generalised the scope from a two-field anchor to a full `va-harness` with per-block segmentation; the parser-only `Anchor` type was not carried forward.
+- **Step 3 (apply_anchored_edit):** PASS as `patcher::apply_patch`. Resolves by block hash, recovers from a uniform line shift by signature, and hard-rejects ambiguity.
+- **Step 4 (lib re-exports):** PASS. `pub mod session; pub mod patcher; pub mod review; pub mod judge; pub mod engine;`
+- **Step 5 (integration tests):** PASS. `session_dag_test.rs`, `patcher_test.rs`, `judge_test.rs`, `heuristic_test.rs`.
+- **Step 6 (workspace green + close):** PASS. `cargo fmt --all` clean; `cargo clippy --workspace --all-targets` 0 warnings; `cargo test --workspace` 128 passed / 0 failed; `cargo build --release` produced `vibe-assembly` (2.9 MB) and `vibe-assembly-desktop` (11.2 MB).
+- **Defect found by end-to-end testing, not by unit tests:** block segmentation split a closing brace into its own block, so patching a function left an orphaned `}` in the file. Fixed by treating a leading `}`/`)`/`]` as belonging to the scope it closes.
+- **Research correction:** `deepseek-harness` is TypeScript with a flat event log (no DAG, state hashing, rollback, or replay); `oh-my-pi` anchors a 4-hex XXH32 file tag and addresses blocks by line plus tree-sitter. Behaviours were reimplemented, not ported. See ADR-015.

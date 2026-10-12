@@ -5104,6 +5104,7 @@ dependencies = [
  "clap",
  "serde_json",
  "va-core",
+ "va-harness",
 ]
 
 [[package]]
@@ -5120,6 +5121,15 @@ name = "va-desktop"
 version = "2.0.0"
 dependencies = [
  "gpui",
+ "va-core",
+ "va-harness",
+]
+
+[[package]]
+name = "va-harness"
+version = "2.0.0"
+dependencies = [
+ "serde_json",
  "va-core",
 ]
 

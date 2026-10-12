@@ -4,6 +4,7 @@ members = [
     "crates/va-core",
     "crates/va-cli",
     "crates/va-desktop",
+    "crates/va-harness",
 ]
 
 [workspace.package]

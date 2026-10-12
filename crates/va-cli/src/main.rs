@@ -61,6 +61,33 @@ enum Command {
     },
     /// Reset volatile .ai/ state to pristine template defaults
     Reset,
+    /// Run the harness execution loop with zero-config model roles
+    Run {
+        /// Resolve roles from Vibe Router instead of the local combo
+        #[arg(long)]
+        auto_combo: bool,
+        /// Maximum steps before the loop stops
+        #[arg(long, default_value_t = 50)]
+        max_steps: u32,
+    },
+    /// Apply a hash-anchored patch, addressing the target by block hash
+    Patch {
+        /// File to patch
+        file: PathBuf,
+        /// Target block hash, e.g. 3A7F or the full 64-bit value
+        #[arg(long)]
+        target: String,
+        /// Replacement text (reads stdin when omitted)
+        replacement: Option<String>,
+        /// Show the file's block hashes and exit
+        #[arg(long)]
+        list: bool,
+    },
+    /// List the block hashes in a file
+    Blocks {
+        /// File to inspect
+        file: PathBuf,
+    },
 }
 
 fn main() -> ExitCode {
@@ -94,6 +121,36 @@ fn main() -> ExitCode {
                 ExitCode::from(1)
             }
         };
+    }
+
+    // `patch` and `blocks` operate on any file, so they run before workspace
+    // discovery — an agent patches source before `.ai/` necessarily exists.
+    match &cli.command {
+        Some(Command::Blocks { file }) => {
+            return run_blocks(file);
+        }
+        Some(Command::Patch {
+            file,
+            target,
+            replacement,
+            list,
+        }) => {
+            return run_patch(file, target, replacement.as_deref(), *list);
+        }
+        Some(Command::Run {
+            auto_combo,
+            max_steps,
+        }) => {
+            let root = match Workspace::discover(&start) {
+                Some(r) => r,
+                None => {
+                    eprintln!("❌ No .ai/ directory found at or above {}", start.display());
+                    return ExitCode::from(1);
+                }
+            };
+            return run_execute(&root, *auto_combo, *max_steps);
+        }
+        _ => {}
     }
 
     let root = match Workspace::discover(&start) {
@@ -564,5 +621,239 @@ fn run_summary(root: &Path) -> ExitCode {
     for r in &at.queue {
         println!("| {} | {} | {} |", r.id, r.title, r.status);
     }
+    ExitCode::SUCCESS
+}
+
+// ---- harness-backed commands ------------------------------------------------
+
+/// Print every block in a file with its hash and line range — the discovery
+/// step an agent performs before patching.
+fn run_blocks(file: &Path) -> ExitCode {
+    let source = match std::fs::read_to_string(file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("❌ Could not read {}: {e}", file.display());
+            return ExitCode::from(1);
+        }
+    };
+    let blocks = va_harness::patcher::segment_blocks(&source);
+    if blocks.is_empty() {
+        println!("(no blocks — file is empty)");
+        return ExitCode::SUCCESS;
+    }
+    for b in &blocks {
+        println!(
+            "{:<5}  lines {:>4}-{:<4}  {}",
+            va_harness::patcher::short_hash(b.hash),
+            b.start_line,
+            b.end_line,
+            b.signature
+        );
+    }
+    ExitCode::SUCCESS
+}
+
+/// Parse a short (4-hex) or full 64-bit block hash.
+fn parse_hash(text: &str) -> Option<u64> {
+    let t = text.trim().trim_start_matches('#');
+    if t.len() <= 4 && !t.is_empty() {
+        // Short hashes are the top 16 bits of the 64-bit digest. Ambiguous by
+        // construction, so match by prefix against the file's blocks instead.
+        return Some(u64::from_str_radix(t, 16).ok()? << 48);
+    }
+    u64::from_str_radix(t, 16).ok()
+}
+
+fn run_patch(file: &Path, target: &str, replacement: Option<&str>, list: bool) -> ExitCode {
+    if list {
+        return run_blocks(file);
+    }
+    let source = match std::fs::read_to_string(file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("❌ Could not read {}: {e}", file.display());
+            return ExitCode::from(1);
+        }
+    };
+
+    let text = match replacement {
+        Some(r) => r.to_string(),
+        None => {
+            use std::io::Read;
+            let mut buf = String::new();
+            if let Err(e) = std::io::stdin().read_to_string(&mut buf) {
+                eprintln!("❌ Could not read replacement from stdin: {e}");
+                return ExitCode::from(1);
+            }
+            buf
+        }
+    };
+
+    // Resolve a short hash by matching the rendered prefix of real blocks.
+    let blocks = va_harness::patcher::segment_blocks(&source);
+    let wanted = match parse_hash(target) {
+        Some(h) => h,
+        None => {
+            eprintln!("❌ --target must be hexadecimal, got {target:?}");
+            return ExitCode::from(1);
+        }
+    };
+    let exact = blocks.iter().find(|b| b.hash == wanted);
+    let resolved = match exact {
+        Some(b) => Some(b.clone()),
+        None => {
+            let matches: Vec<_> = blocks
+                .iter()
+                .filter(|b| {
+                    va_harness::patcher::short_hash(b.hash)
+                        .eq_ignore_ascii_case(target.trim().trim_start_matches('#'))
+                })
+                .cloned()
+                .collect();
+            match matches.len() {
+                0 => None,
+                1 => Some(matches[0].clone()),
+                _ => {
+                    eprintln!(
+                        "❌ Short hash {target} is ambiguous — it matches {} blocks. Use the full 64-bit hash.",
+                        matches.len()
+                    );
+                    return ExitCode::from(2);
+                }
+            }
+        }
+    };
+
+    let block = match resolved {
+        Some(b) => b,
+        None => {
+            eprintln!("❌ No block with hash {target} in {}", file.display());
+            eprintln!("   Run `vibe-assembly blocks <file>` to list valid hashes.");
+            return ExitCode::from(2);
+        }
+    };
+
+    // Record signatures so drift inside this file can be recovered once.
+    va_harness::patcher::record_signatures(&source);
+
+    let op = va_harness::patcher::PatchOp {
+        target_hash: block.hash,
+        replacement: text,
+    }
+    .with_signature(&block.signature);
+
+    match va_harness::patcher::apply_patch(&source, &op) {
+        Ok(updated) => match std::fs::write(file, &updated) {
+            Ok(()) => {
+                println!(
+                    "✅ Patched {} (lines {}-{} → {} bytes)",
+                    file.display(),
+                    block.start_line,
+                    block.end_line,
+                    updated.len()
+                );
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("❌ Could not write {}: {e}", file.display());
+                ExitCode::from(1)
+            }
+        },
+        Err(e) => {
+            eprintln!("❌ Patch refused: {e}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+/// Zero-config role resolution, then report the plan the harness will use.
+fn run_execute(root: &Path, auto_combo: bool, max_steps: u32) -> ExitCode {
+    use va_core::knowledge::{auto_combo as plan, score_model};
+    use va_core::router_client::fetch_default;
+
+    let p = Palette::detect();
+    let gateway = fetch_default();
+
+    let mut models: Vec<String> = Vec::new();
+    let mut source = String::new();
+
+    if auto_combo {
+        if gateway.is_live() {
+            models = gateway.model_names();
+            source = format!("Vibe Router ({} role(s))", models.len());
+        } else {
+            eprintln!(
+                "{}⚠{} Vibe Router unavailable ({}), falling back to .ai/model_combo.txt",
+                p.yellow,
+                p.reset,
+                gateway.detail.as_deref().unwrap_or("unknown reason")
+            );
+        }
+    }
+
+    if models.is_empty() {
+        let combo = root.join(".ai").join("model_combo.txt");
+        if let Ok(text) = std::fs::read_to_string(&combo) {
+            for line in text.lines() {
+                let l = line.trim();
+                if l.is_empty() || l.starts_with('#') {
+                    continue;
+                }
+                let clean = l.split('#').next().unwrap_or(l).trim();
+                if clean.is_empty() || clean.contains('=') {
+                    continue;
+                }
+                models.push(clean.to_string());
+            }
+        }
+        if source.is_empty() {
+            source = ".ai/model_combo.txt".to_string();
+        }
+    }
+
+    if models.is_empty() {
+        eprintln!(
+            "❌ No models available — Vibe Router is offline and .ai/model_combo.txt is missing."
+        );
+        return ExitCode::from(1);
+    }
+
+    let assignments = plan(&models, 0.5);
+    println!();
+    println!(
+        " {}🎯 EXECUTION PLAN{}  {}·  {}{}",
+        p.bold, p.reset, p.dim, source, p.reset
+    );
+    println!();
+    for a in &assignments {
+        println!(
+            " {} {:<7} → {}{:<28}{} {}·{:.3}{}",
+            role_icon(a.role.as_str()),
+            a.role.as_str(),
+            p.bold,
+            a.model,
+            p.reset,
+            p.dim,
+            a.score,
+            p.reset
+        );
+    }
+    println!();
+    for m in &models {
+        let f = score_model(m, 0.5);
+        if !f.curated && !f.factors.is_empty() {
+            let why: Vec<String> = f.factors.iter().map(|x| x.why.clone()).collect();
+            println!(" {}· {}: {}{}", p.dim, f.model, why.join("; "), p.reset);
+        }
+    }
+    println!();
+    println!(
+        " {}{} ready · step cap {}{}",
+        p.green,
+        assignments.len(),
+        max_steps,
+        p.reset
+    );
+    println!();
     ExitCode::SUCCESS
 }
