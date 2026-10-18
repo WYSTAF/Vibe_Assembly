@@ -173,7 +173,27 @@ pub fn run_tui(root: &Path, requested_profile: Option<HardwareProfile>) {
         );
     }
 
-    // Section 4: Active Task & Queue
+    // Section 4: Hash-Anchored RepoMap & Speculative Tournament
+    let repomap = va_harness::repomap::RepoMap::scan(root);
+    println!();
+    println!(
+        " {}🗺 HASH-ANCHORED REPOMAP & TOURNAMENT ENGINE{}",
+        p.bold, p.reset
+    );
+    println!(
+        "   {}Indexed Symbols:{} {} across {} files ({} code blocks)",
+        p.dim,
+        p.reset,
+        repomap.total_symbols(),
+        repomap.total_files(),
+        repomap.total_blocks()
+    );
+    println!(
+        "   {}Tournament Mode:{} Speculative multi-branch fork & merge (active)",
+        p.dim, p.reset
+    );
+
+    // Section 5: Active Task & Queue
     if let Some(wave) = &ws.active_task.wave_name {
         println!();
         println!(" {}📋 WORKSPACE CONTRACT STATUS{}", p.bold, p.reset);

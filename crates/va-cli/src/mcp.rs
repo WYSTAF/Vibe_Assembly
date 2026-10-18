@@ -16,10 +16,13 @@ use serde_json::{json, Value};
 
 use va_core::knowledge::auto_combo;
 use va_core::router_client::fetch_default;
+use va_harness::diagnostics::{DiagnosticPinpointer, PinnedDiagnostic};
 use va_harness::judge::{Judge, Verdict};
 use va_harness::patcher::{apply_patch, segment_blocks, short_hash, PatchOp};
+use va_harness::repomap::RepoMap;
 use va_harness::review::parse_unified_diff;
 use va_harness::session::Session;
+use va_harness::tournament::{CandidatePatch, SpeculativeTournament};
 
 #[derive(Debug, Deserialize)]
 pub struct JsonRpcRequest {
@@ -168,6 +171,80 @@ pub fn handle_mcp_request(raw: &str, root: Option<&Path>) -> Option<String> {
                                 "description": "Optional list of model IDs; if omitted queries live router"
                             }
                         }
+                    }
+                },
+                {
+                    "name": "vibe_assembly_repomap",
+                    "description": "Generate a compact, hash-anchored repository symbol map within a token budget.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "max_tokens": {
+                                "type": "integer",
+                                "description": "Maximum token budget for repomap (default 2048)"
+                            },
+                            "priority": {
+                                "type": "array",
+                                "items": { "type": "string" },
+                                "description": "Priority file paths to render first"
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "vibe_assembly_diagnose_blocks",
+                    "description": "Parse compiler errors (JSON or text) and pinpoint exact hash-anchored code blocks and snippets.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "command": {
+                                "type": "string",
+                                "description": "Optional compiler command (default: `cargo check --message-format=json`)"
+                            },
+                            "output": {
+                                "type": "string",
+                                "description": "Optional raw compiler output to pin directly"
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "vibe_assembly_tournament_step",
+                    "description": "Run a speculative multi-branch tournament evaluating competing candidate patches and merge winner.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "candidates": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "id": { "type": "string" },
+                                        "description": { "type": "string" },
+                                        "patches": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "file": { "type": "string" },
+                                                    "target_hash": { "type": "string" },
+                                                    "replacement": { "type": "string" }
+                                                },
+                                                "required": ["file", "target_hash", "replacement"]
+                                            }
+                                        },
+                                        "cost_micros": { "type": "integer" },
+                                        "latency_ms": { "type": "integer" }
+                                    },
+                                    "required": ["id", "description", "patches"]
+                                }
+                            },
+                            "verification_command": {
+                                "type": "string",
+                                "description": "Optional verification command (e.g. `cargo check`)"
+                            }
+                        },
+                        "required": ["candidates"]
                     }
                 }
             ]
@@ -468,6 +545,168 @@ fn execute_tool(name: &str, args: &Value, root: Option<&Path>) -> Result<Value, 
                 "isError": false
             }))
         }
+        "vibe_assembly_repomap" => {
+            let budget = args
+                .get("max_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(2048) as usize;
+            let priority_files: Vec<PathBuf> = args
+                .get("priority")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|s| s.as_str().map(PathBuf::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let r = root.unwrap_or_else(|| Path::new("."));
+            let repomap = RepoMap::scan(r);
+            let rendered = repomap.render_within_budget(budget, &priority_files);
+
+            Ok(json!({
+                "content": [{
+                    "type": "text",
+                    "text": rendered
+                }],
+                "isError": false
+            }))
+        }
+        "vibe_assembly_diagnose_blocks" => {
+            let r = root.unwrap_or_else(|| Path::new("."));
+            let output_text = if let Some(raw) = args.get("output").and_then(|v| v.as_str()) {
+                raw.to_string()
+            } else {
+                let cmd = args
+                    .get("command")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("cargo check --message-format=json");
+                let (prog, arg) = if cfg!(windows) {
+                    ("cmd", "/C")
+                } else {
+                    ("sh", "-c")
+                };
+                let out = std::process::Command::new(prog)
+                    .arg(arg)
+                    .arg(cmd)
+                    .current_dir(r)
+                    .output()
+                    .map_err(|e| json!({"code": -32000, "message": format!("Command execution failed: {e}")}))?;
+                format!(
+                    "{}\n{}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                )
+            };
+
+            let pinned = DiagnosticPinpointer::pin_from_output(r, &output_text);
+            let feedback = PinnedDiagnostic::format_feedback(&pinned);
+
+            Ok(json!({
+                "content": [{
+                    "type": "text",
+                    "text": if feedback.is_empty() {
+                        "No compiler diagnostics found on code blocks.".to_string()
+                    } else {
+                        feedback
+                    }
+                }],
+                "isError": false
+            }))
+        }
+        "vibe_assembly_tournament_step" => {
+            let r = root.unwrap_or_else(|| Path::new("."));
+            let candidates_val = args
+                .get("candidates")
+                .and_then(|v| v.as_array())
+                .ok_or_else(
+                    || json!({"code": -32602, "message": "Missing required argument `candidates`"}),
+                )?;
+
+            let mut candidates = Vec::new();
+            for c_val in candidates_val {
+                let id = c_val
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("cand")
+                    .to_string();
+                let description = c_val
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let patches_val = c_val.get("patches").and_then(|v| v.as_array()).ok_or_else(
+                    || json!({"code": -32602, "message": "Candidate missing `patches` array"}),
+                )?;
+
+                let mut patches = Vec::new();
+                for p_val in patches_val {
+                    let file_str = p_val.get("file").and_then(|v| v.as_str()).ok_or_else(
+                        || json!({"code": -32602, "message": "Patch missing `file`"}),
+                    )?;
+                    let target_str = p_val
+                        .get("target_hash")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(
+                            || json!({"code": -32602, "message": "Patch missing `target_hash`"}),
+                        )?;
+                    let replacement = p_val
+                        .get("replacement")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(
+                            || json!({"code": -32602, "message": "Patch missing `replacement`"}),
+                        )?;
+
+                    let file_path = PathBuf::from(file_str);
+                    let full = r.join(&file_path);
+                    let content = std::fs::read_to_string(&full).unwrap_or_default();
+                    let target_hash = parse_hash_val(target_str, &content).unwrap_or(0);
+                    let op = PatchOp::new(target_hash, replacement);
+                    patches.push((file_path, op));
+                }
+
+                candidates.push(CandidatePatch {
+                    id,
+                    description,
+                    patches,
+                    cost_micros: c_val
+                        .get("cost_micros")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
+                    latency_ms: c_val
+                        .get("latency_ms")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0),
+                });
+            }
+
+            let session_path = r.join(".ai").join("session.jsonl");
+            let mut session = if session_path.exists() {
+                let raw = std::fs::read_to_string(&session_path).unwrap_or_default();
+                Session::from_jsonl(&raw).unwrap_or_default()
+            } else {
+                Session::new()
+            };
+
+            let mut tournament = SpeculativeTournament::new(r);
+            if let Some(cmd) = args.get("verification_command").and_then(|v| v.as_str()) {
+                tournament = tournament.with_verification_command(cmd);
+            }
+
+            let outcome = tournament.run(&mut session, &candidates).map_err(
+                |e| json!({"code": -32000, "message": format!("Tournament failed: {e}")}),
+            )?;
+
+            let _ = std::fs::write(&session_path, session.to_jsonl());
+
+            Ok(json!({
+                "content": [{
+                    "type": "text",
+                    "text": serde_json::to_string_pretty(&outcome).unwrap_or_default()
+                }],
+                "isError": false
+            }))
+        }
         unknown => Err(json!({
             "code": -32601,
             "message": format!("Unknown tool: {unknown}")
@@ -539,6 +778,9 @@ mod tests {
         assert!(names.contains(&"vibe_assembly_judge_diff"));
         assert!(names.contains(&"vibe_assembly_session_dag"));
         assert!(names.contains(&"vibe_assembly_auto_combo"));
+        assert!(names.contains(&"vibe_assembly_repomap"));
+        assert!(names.contains(&"vibe_assembly_diagnose_blocks"));
+        assert!(names.contains(&"vibe_assembly_tournament_step"));
     }
 
     #[test]
@@ -592,5 +834,46 @@ mod tests {
         let text = resp["result"]["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("boss"));
         assert!(text.contains("code"));
+    }
+
+    #[test]
+    fn test_mcp_repomap_call() {
+        let req = json!({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {
+                "name": "vibe_assembly_repomap",
+                "arguments": {
+                    "max_tokens": 512
+                }
+            }
+        })
+        .to_string();
+
+        let resp_str = handle_mcp_request(&req, None).expect("must produce response");
+        let resp: Value = serde_json::from_str(&resp_str).unwrap();
+        assert_eq!(resp["result"]["isError"], false);
+    }
+
+    #[test]
+    fn test_mcp_diagnose_blocks_call() {
+        let sample_output = "error[E0432]: unresolved import `foo`\n --> src/sample.rs:10:5\n";
+        let req = json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "tools/call",
+            "params": {
+                "name": "vibe_assembly_diagnose_blocks",
+                "arguments": {
+                    "output": sample_output
+                }
+            }
+        })
+        .to_string();
+
+        let resp_str = handle_mcp_request(&req, None).expect("must produce response");
+        let resp: Value = serde_json::from_str(&resp_str).unwrap();
+        assert_eq!(resp["result"]["isError"], false);
     }
 }

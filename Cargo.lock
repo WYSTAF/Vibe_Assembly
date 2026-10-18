@@ -5130,6 +5130,7 @@ dependencies = [
 name = "va-harness"
 version = "2.0.0"
 dependencies = [
+ "regex",
  "serde",
  "serde_json",
  "va-core",

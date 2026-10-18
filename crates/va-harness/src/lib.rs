@@ -8,9 +8,13 @@
 //! * [`judge`] — deterministic anti-slop and minimalism gatekeeper.
 //! * [`engine`] — the Observe → Think → Patch → Verify → Judge loop.
 
+pub mod diagnostics;
 pub mod engine;
 pub mod judge;
+pub mod live_planner;
 pub mod patcher;
+pub mod repomap;
 pub mod review;
 pub mod sandbox;
 pub mod session;
+pub mod tournament;

@@ -235,16 +235,28 @@ impl Engine {
                             .execute(cmd, None)
                             .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?;
                         if !res.success {
+                            let pinned = crate::diagnostics::DiagnosticPinpointer::pin_from_output(
+                                &self.repo,
+                                &format!("{}\n{}", res.stdout, res.stderr),
+                            );
+                            let detail = if !pinned.is_empty() {
+                                let feedback =
+                                    crate::diagnostics::PinnedDiagnostic::format_feedback(&pinned);
+                                format!("onYield verify `{cmd}` failed:\n{feedback}")
+                            } else {
+                                format!("onYield verify `{cmd}` failed: {}", res.stderr)
+                            };
+
                             session.push(NodeKind::Verification {
                                 passed: false,
-                                detail: format!("onYield verify `{cmd}` failed: {}", res.stderr),
+                                detail: detail.clone(),
                             });
                             session.commit()?;
                             session.rollback_to_last_verified()?;
                             return Err(EngineError::Verify {
                                 command: cmd.clone(),
                                 code: res.exit_code.unwrap_or(-1),
-                                stderr: res.stderr,
+                                stderr: detail,
                             });
                         }
                     }
@@ -294,7 +306,11 @@ impl Engine {
                     session.commit()?;
 
                     // Judge the delta this patch produced.
-                    let verdict = self.reviewer.review_since_checkpoint(&self.judge)?;
+                    let verdict = if self.reviewer.is_repository() {
+                        self.reviewer.review_since_checkpoint(&self.judge)?
+                    } else {
+                        Verdict::Pass
+                    };
                     match verdict {
                         Verdict::Pass => records.push(StepRecord {
                             action: label,
@@ -335,12 +351,30 @@ impl Engine {
                         .execute(&command, None)
                         .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?;
                     let passed = res.success;
-                    let stderr = res.stderr;
 
-                    session.push(NodeKind::Verification {
-                        passed,
-                        detail: format!("{command} → exit {:?}", res.exit_code),
-                    });
+                    let (detail, err_detail) = if !passed {
+                        let pinned = crate::diagnostics::DiagnosticPinpointer::pin_from_output(
+                            &self.repo,
+                            &format!("{}\n{}", res.stdout, res.stderr),
+                        );
+                        if !pinned.is_empty() {
+                            let feedback =
+                                crate::diagnostics::PinnedDiagnostic::format_feedback(&pinned);
+                            (
+                                format!("{command} failed:\n{feedback}"),
+                                format!("{feedback}\n{}", res.stderr),
+                            )
+                        } else {
+                            (format!("{command} → exit {:?}", res.exit_code), res.stderr)
+                        }
+                    } else {
+                        (
+                            format!("{command} → exit {:?}", res.exit_code),
+                            String::new(),
+                        )
+                    };
+
+                    session.push(NodeKind::Verification { passed, detail });
                     session.commit()?;
 
                     records.push(StepRecord {
@@ -356,7 +390,7 @@ impl Engine {
                         return Err(EngineError::Verify {
                             command,
                             code: res.exit_code.unwrap_or(-1),
-                            stderr,
+                            stderr: err_detail,
                         });
                     }
                 }

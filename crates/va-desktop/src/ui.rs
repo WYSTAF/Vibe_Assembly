@@ -415,6 +415,7 @@ fn state_panel(ws: &Workspace) -> impl IntoElement {
 /// status that produced it.
 fn harness_panel(ws: &Workspace) -> impl IntoElement {
     use va_core::knowledge::auto_combo;
+    use va_harness::repomap::RepoMap;
 
     let gateway = va_core::router_client::fetch_default();
     let mut models = gateway.model_names();
@@ -436,6 +437,38 @@ fn harness_panel(ws: &Workspace) -> impl IntoElement {
 
     let roles: Vec<va_core::knowledge::Assignment> = auto_combo(&models, 0.5);
     let live = gateway.is_live();
+    let repomap = RepoMap::scan(&ws.root);
+
+    let mut items: Vec<(&str, String, gpui::Rgba)> = roles
+        .iter()
+        .map(|a| {
+            let color = if a.role == va_core::knowledge::Role::Judge {
+                status_warn()
+            } else {
+                accent()
+            };
+            (
+                a.role.as_str(),
+                format!("{}  ({:.2})", a.model, a.score),
+                color,
+            )
+        })
+        .collect();
+
+    items.push((
+        "RepoMap",
+        format!(
+            "{} symbols · {} blocks",
+            repomap.total_symbols(),
+            repomap.total_blocks()
+        ),
+        status_ok(),
+    ));
+    items.push((
+        "Tournament",
+        "Multi-Branch Speculative DAG".to_string(),
+        accent(),
+    ));
 
     panel(
         "Execution Harness",
@@ -445,18 +478,12 @@ fn harness_panel(ws: &Workspace) -> impl IntoElement {
             format!("{source} · offline")
         }),
     )
-    .child(div().flex().flex_col().children(roles.iter().map(|a| {
-        let color = if a.role == va_core::knowledge::Role::Judge {
-            status_warn()
-        } else {
-            accent()
-        };
-        kv(
-            a.role.as_str(),
-            &format!("{}  ({:.2})", a.model, a.score),
-            color,
-        )
-    })))
+    .child(
+        div()
+            .flex()
+            .flex_col()
+            .children(items.into_iter().map(|(k, v, c)| kv(k, &v, c))),
+    )
 }
 
 /// Known bugs, split into real entries. The old renderer showed one entry's

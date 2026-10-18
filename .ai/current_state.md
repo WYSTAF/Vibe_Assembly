@@ -1,12 +1,12 @@
 # Current Operational State
-- **Active Milestone:** Pure-Rust Execution Core & Adaptive Runtime (ADR-014, ADR-015, ADR-016)
-- **Current Assignment:** Wave 1 Complete — `VA-RUST-001` closed; 100% pure-Rust Cargo workspace.
-- **Planning Status:** Complete for Wave 1 and Autonomous Adaptive Architecture wave.
+- **Active Milestone:** Architectural Expansion Wave (ADR-014, ADR-015, ADR-016, ADR-017)
+- **Current Assignment:** Expansion Complete — Hash-Anchored RepoMap, Diagnostic Pinpointer, Live Router Planner, and Speculative Tournament Subsystems operational.
+- **Planning Status:** Complete across all architectural waves.
 - **Implementation Status:**
   - `va-core`: Single-writer task lock guard, parser, allocator, `knowledge.rs` (benchmarks + version heuristics + 6-role auto-combo), `router_client.rs` (Vibe-Link, 9router/OpenAI fallback, auto-handshake, telemetry), and `runtime.rs` (hardware profiler, disk-first VPS mode, RAM-first portable zero-wear, `{{PORTABLE_ROOT}}` path normalization, crash-safe atomic flush).
-  - `va-harness`: Multi-parent session trajectory DAG with FNV-1a ancestry hashes, `ContextSurface` range compaction, hash-anchored patcher with whole-file drift detection and scope-bound closing braces, git review isolation, `judge` anti-slop review with 1-retry budget, `sandbox` executor with timeouts and confinement, and durable `onYield` verification loop with `judge_verified_hash`.
-  - `va-cli`: Native terminal operations room (`vibe-assembly` ~3.4MB), `tui` / `top` dashboard, `profile [--json]`, `session` (status, fork, rollback, compact), `run --auto-combo [--stream-jsonl]`, and stdio JSON-RPC 2.0 MCP server (`vibe-assembly mcp`).
-  - `va-desktop`: Native GPUI GPU-accelerated desktop operations room (`vibe-assembly-desktop` ~11MB) with live Execution Harness panel.
-- **Verification Status:** 150/150 tests passing across the workspace. 0 compiler warnings. 0 clippy warnings. `cargo fmt --all -- --check` clean. Release binaries built and verified.
-- **Resume Anchor:** n/a — all Wave 1 tickets verified and completed.
+  - `va-harness`: Multi-parent session trajectory DAG with FNV-1a ancestry hashes, `ContextSurface` range compaction, hash-anchored patcher with whole-file drift detection and scope-bound closing braces, git review isolation, `judge` anti-slop review with 1-retry budget, `sandbox` executor with timeouts and confinement, durable `onYield` verification loop with `judge_verified_hash`, `repomap.rs` (token-budgeted symbol scanner binding symbols to block hashes), `diagnostics.rs` (dual-format compiler error to block pinpointer), `live_planner.rs` (production Observe-Think-Patch-Verify-Judge runner with Vibe Router role headers), and `tournament.rs` (speculative multi-branch tournament runner and scorer).
+  - `va-cli`: Native terminal operations room (`vibe-assembly` ~3.8MB), `tui` / `top` dashboard, `profile [--json]`, `up [--json]`, `repomap [--max-tokens]`, `diagnose [--command]`, `session` (status, fork, rollback, compact), `run --auto-combo [--tournament] [--live] [--stream-jsonl]`, and expanded stdio JSON-RPC 2.0 MCP server (`vibe-assembly mcp`) exposing 8 native tools.
+  - `va-desktop`: Native GPUI GPU-accelerated desktop operations room (`vibe-assembly-desktop` ~11MB) with live Execution Harness panel (roles, live RepoMap symbol/block counts, tournament status).
+- **Verification Status:** 164/164 tests passing across the workspace. 0 compiler warnings. 0 clippy warnings (`cargo clippy --workspace --all-targets -- -D warnings`). `cargo fmt --all -- --check` clean. Release binaries built and verified.
+- **Resume Anchor:** n/a — all expansion wave subsystems verified and completed.
 - **Blockers:** None.

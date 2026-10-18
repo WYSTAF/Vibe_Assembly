@@ -85,13 +85,26 @@ Vibe Assembly/
 |---|---|
 | `session` | Append-only transactional trajectory DAG. Per-node state hashing, `fork`, `rollback`, `replay`, `ContextSurface` compaction. Replay reuses stored results — no tool re-runs. |
 | `patcher` | Edits address **per-block hashes**, never line numbers. Whole-file drift assertion (from `oh-my-pi`), 1-hop recovery from line shifts, and hard rejection on ambiguity. |
+| `repomap` | Fast workspace symbol scanner binding functions, structs, traits, and classes to deterministic block hashes within a configurable token budget. |
+| `diagnostics` | Dual-format compiler error pinpointer (`cargo --message-format=json` & text), mapping error line spans directly to target block hashes and snippets. |
 | `review` | Git checkpoint per phase, isolating each step's exact delta for review. |
 | `judge` | Deterministic gate before commit: slop comments, placeholders, `unwrap()` in production, import-only churn, excessive churn. One targeted retry, then abort. |
 | `sandbox` | Confined command execution with wall-clock timeouts, directory confinement, and bounded output capture. |
-| `engine` | Observe → Think → Patch → Verify → Judge loop with durable `onYield` completion gate and `judge_verified_hash`. |
+| `tournament` | Multi-branch speculative tournament runner scoring candidate branches by zero warnings and minimal line churn, merging winner into the DAG. |
+| `live_planner` | Production Observe → Think (`boss`) → Patch (`code`) → Verify (`debug`) → Judge (`judge`) loop runner. |
+| `engine` | Orchestration loop with durable `onYield` completion gate, diagnostic pinpointer feedback, and `judge_verified_hash`. |
 
 ```bash
-# Discover block hashes in a file
+# Ensure router readiness and perform Zero-401 handshake
+vibe-assembly up
+
+# Discover symbols and block hashes across workspace
+vibe-assembly repomap --max-tokens 2048
+
+# Pinpoint compiler diagnostics directly to code block hashes
+vibe-assembly diagnose
+
+# Discover block hashes in a single file
 vibe-assembly blocks src/main.rs
 
 # Patch by hash (4-hex short form or the full 64-bit value)
@@ -99,8 +112,8 @@ vibe-assembly patch src/main.rs --target 159A <<< 'pub fn beta(y: i32) -> i32 {
     y * 42
 }'
 
-# Zero-config role assignment with JSONL stream for Hermes Agent / external automation
-vibe-assembly run --auto-combo --stream-jsonl
+# Zero-config role assignment with speculative tournament mode
+vibe-assembly run --auto-combo --tournament
 
 # Manage trajectory DAG
 vibe-assembly session status --json

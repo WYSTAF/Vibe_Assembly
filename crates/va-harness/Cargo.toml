@@ -10,3 +10,4 @@ description = "Execution harness — session trajectory DAG, hash-anchored patch
 va-core = { path = "../va-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+regex = "1.13"

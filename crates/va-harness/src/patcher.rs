@@ -28,10 +28,12 @@
 //!    block is an error, never a guess. Upstream has a test asserting exactly
 //!    this: *"even the correctly shifted anchor on repeated content rejects."*
 
+use serde::{Deserialize, Serialize};
+
 use crate::session::fnv1a64;
 
 /// A contiguous slice of a source file.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Block {
     /// 1-based inclusive line range.
     pub start_line: usize,
@@ -267,7 +269,7 @@ impl std::fmt::Display for PatchError {
 impl std::error::Error for PatchError {}
 
 /// A patch instruction targeting a block by hash.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PatchOp {
     pub target_hash: u64,
     pub replacement: String,
