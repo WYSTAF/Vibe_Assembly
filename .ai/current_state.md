@@ -1,8 +1,12 @@
 # Current Operational State
-- **Active Milestone:** Template Hardening & Quality Pass
-- **Current Assignment:** none — T-401 closed; Mission Control desktop app shipped.
-- **Planning Status:** Complete for both waves.
-- **Implementation Status:** Desktop dev launches under editor-poisoned environments (KB-001 fix). New first-party desktop app at `app/desktop/` (Mission Control) — live `.ai/` dashboard with contract checks and copy-paste phrase actions.
-- **Verification Status:** `ELECTRON_RUN_AS_NODE=1 bun run dev` GUI boot verified (T-401); Mission Control window verified live against real workspace state via capturePage screenshot (2026-08-26). 44/44 tests green across template, pre-commit-hook, and parser suites.
-- **Resume Anchor:** n/a — no active tickets.
+- **Active Milestone:** Pure-Rust Execution Core & Adaptive Runtime (ADR-014, ADR-015, ADR-016)
+- **Current Assignment:** Wave 1 Complete — `VA-RUST-001` closed; 100% pure-Rust Cargo workspace.
+- **Planning Status:** Complete for Wave 1 and Autonomous Adaptive Architecture wave.
+- **Implementation Status:**
+  - `va-core`: Single-writer task lock guard, parser, allocator, `knowledge.rs` (benchmarks + version heuristics + 6-role auto-combo), `router_client.rs` (Vibe-Link, 9router/OpenAI fallback, auto-handshake, telemetry), and `runtime.rs` (hardware profiler, disk-first VPS mode, RAM-first portable zero-wear, `{{PORTABLE_ROOT}}` path normalization, crash-safe atomic flush).
+  - `va-harness`: Multi-parent session trajectory DAG with FNV-1a ancestry hashes, `ContextSurface` range compaction, hash-anchored patcher with whole-file drift detection and scope-bound closing braces, git review isolation, `judge` anti-slop review with 1-retry budget, `sandbox` executor with timeouts and confinement, and durable `onYield` verification loop with `judge_verified_hash`.
+  - `va-cli`: Native terminal operations room (`vibe-assembly` ~3.4MB), `tui` / `top` dashboard, `profile [--json]`, `session` (status, fork, rollback, compact), `run --auto-combo [--stream-jsonl]`, and stdio JSON-RPC 2.0 MCP server (`vibe-assembly mcp`).
+  - `va-desktop`: Native GPUI GPU-accelerated desktop operations room (`vibe-assembly-desktop` ~11MB) with live Execution Harness panel.
+- **Verification Status:** 150/150 tests passing across the workspace. 0 compiler warnings. 0 clippy warnings. `cargo fmt --all -- --check` clean. Release binaries built and verified.
+- **Resume Anchor:** n/a — all Wave 1 tickets verified and completed.
 - **Blockers:** None.

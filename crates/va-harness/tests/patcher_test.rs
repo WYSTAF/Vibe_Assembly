@@ -51,10 +51,7 @@ fn probe_hash_matches_segmentation_hash() {
 #[test]
 fn single_chunk_replacement() {
     let beta = block_with_sig(SAMPLE, "pub fn beta(y: i32) -> i32 {");
-    let op = PatchOp {
-        target_hash: beta.hash,
-        replacement: "pub fn beta(y: i32) -> i32 {\n    y * 10\n}".to_string(),
-    };
+    let op = PatchOp::new(beta.hash, "pub fn beta(y: i32) -> i32 {\n    y * 10\n}");
     let out = apply_patch(SAMPLE, &op).unwrap();
     assert!(out.contains("y * 10"));
     assert!(!out.contains("y * 2"));
@@ -69,14 +66,8 @@ fn multi_chunk_replacement_is_sequential() {
     let alpha = block_with_sig(SAMPLE, "pub fn alpha(x: i32) -> i32 {");
     let gamma = block_with_sig(SAMPLE, "pub fn gamma(z: i32) -> i32 {");
     let ops = vec![
-        PatchOp {
-            target_hash: alpha.hash,
-            replacement: "pub fn alpha(x: i32) -> i32 {\n    x + 100\n}".to_string(),
-        },
-        PatchOp {
-            target_hash: gamma.hash,
-            replacement: "pub fn gamma(z: i32) -> i32 {\n    z - 300\n}".to_string(),
-        },
+        PatchOp::new(alpha.hash, "pub fn alpha(x: i32) -> i32 {\n    x + 100\n}"),
+        PatchOp::new(gamma.hash, "pub fn gamma(z: i32) -> i32 {\n    z - 300\n}"),
     ];
     let (out, applied) = apply_patches(SAMPLE, &ops).unwrap();
     assert_eq!(applied.len(), 2);
@@ -92,11 +83,8 @@ fn fuzzy_recovery_from_uniform_line_shift() {
     let beta = block_with_sig(SAMPLE, "pub fn beta(y: i32) -> i32 {");
     let drifted = format!("// SPDX-License-Identifier: MIT\n// generated\n\n{SAMPLE}");
 
-    let op = PatchOp {
-        target_hash: beta.hash,
-        replacement: "pub fn beta(y: i32) -> i32 {\n    y * 99\n}".to_string(),
-    }
-    .with_signature("pub fn beta(y: i32) -> i32 {");
+    let op = PatchOp::new(beta.hash, "pub fn beta(y: i32) -> i32 {\n    y * 99\n}")
+        .with_signature("pub fn beta(y: i32) -> i32 {");
 
     let out = apply_patch(&drifted, &op).unwrap();
     assert!(out.contains("y * 99"), "recovery must apply the patch");
@@ -113,11 +101,8 @@ fn recovery_refuses_when_context_changed() {
         "pub fn beta(y: i32) -> i32 {\n    y * 2\n}",
         "pub fn beta(y: i32) -> i32 {\n    totally_different\n}",
     );
-    let op = PatchOp {
-        target_hash: beta.hash,
-        replacement: "pub fn beta(y: i32) -> i32 {\n    y * 7\n}".to_string(),
-    }
-    .with_signature("pub fn beta(y: i32) -> i32 {");
+    let op = PatchOp::new(beta.hash, "pub fn beta(y: i32) -> i32 {\n    y * 7\n}")
+        .with_signature("pub fn beta(y: i32) -> i32 {");
 
     // The signature still exists once, so this legitimately succeeds — the
     // guarantee is that ambiguity, not drift alone, is refused.
@@ -145,10 +130,7 @@ pub fn twin(a: i32) -> i32 {
         "precondition: the duplicate scopes must collide"
     );
 
-    let op = PatchOp {
-        target_hash: shared,
-        replacement: "pub fn twin(a: i32) -> i32 {\n    a + 1\n}".to_string(),
-    };
+    let op = PatchOp::new(shared, "pub fn twin(a: i32) -> i32 {\n    a + 1\n}");
     match apply_patch(dup, &op) {
         Err(PatchError::Ambiguous { count, .. }) => assert_eq!(count, 2),
         other => panic!("must refuse to guess, got {other:?}"),
@@ -157,10 +139,7 @@ pub fn twin(a: i32) -> i32 {
 
 #[test]
 fn unknown_hash_reports_not_found() {
-    let op = PatchOp {
-        target_hash: 0x1234_5678_9abc_def0,
-        replacement: "fn never() {}".to_string(),
-    };
+    let op = PatchOp::new(0x1234_5678_9abc_def0, "fn never() {}");
     assert!(matches!(
         apply_patch(SAMPLE, &op),
         Err(PatchError::NotFound { .. })
@@ -170,10 +149,7 @@ fn unknown_hash_reports_not_found() {
 #[test]
 fn empty_replacement_is_refused() {
     let alpha = block_with_sig(SAMPLE, "pub fn alpha(x: i32) -> i32 {");
-    let op = PatchOp {
-        target_hash: alpha.hash,
-        replacement: "  \n\t".to_string(),
-    };
+    let op = PatchOp::new(alpha.hash, "  \n\t");
     assert_eq!(apply_patch(SAMPLE, &op), Err(PatchError::EmptyReplacement));
 }
 

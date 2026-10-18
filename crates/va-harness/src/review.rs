@@ -174,7 +174,14 @@ impl Reviewer {
         }
         (lines, numbers)
     }
+}
 
+/// Standalone parser for unified diff text.
+pub fn parse_unified_diff(raw: &str) -> (Vec<DiffLine>, Vec<usize>) {
+    Reviewer::new(Path::new(".")).parse_diff(raw)
+}
+
+impl Reviewer {
     /// Everything changed since the checkpoint — the exact delta of this step.
     pub fn since_checkpoint(&self) -> Result<Vec<DiffLine>, ReviewError> {
         let raw = match &self.checkpoint {

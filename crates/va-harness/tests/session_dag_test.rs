@@ -183,3 +183,144 @@ fn missing_and_unknown_nodes_are_reported_not_panicked() {
         Err(SessionError::UnknownNode(9999))
     ));
 }
+
+#[test]
+fn jsonl_round_trips_complex_payloads_with_quotes_braces_crlf_and_unicode() {
+    let mut s = Session::new();
+    let complex_text = "fn main() {\r\n    println!(\"Hello \\\"World\\\" with {{{nested braces}}} 👑 ⚡\");\r\n}\r\n";
+    s.push(NodeKind::Prompt {
+        role: "user".into(),
+        text: complex_text.into(),
+    });
+    s.commit().unwrap();
+
+    let diff_text = "--- a/src/lib.rs\r\n+++ b/src/lib.rs\r\n@@ -1,2 +1,3 @@\r\n+    let x = \"value with \\\"quotes\\\" and }}} braces\";\r\n";
+    s.push(NodeKind::Thought {
+        text: diff_text.into(),
+    });
+    s.commit().unwrap();
+
+    let raw = s.to_jsonl();
+    let restored = Session::from_jsonl(&raw).unwrap();
+    assert_eq!(restored.len(), 2);
+    assert_eq!(restored.head(), s.head());
+
+    let root_node = restored.nodes().next().unwrap();
+    if let NodeKind::Prompt { text, .. } = &root_node.kind {
+        assert_eq!(text, complex_text);
+    } else {
+        panic!("expected Prompt node");
+    }
+
+    let second_node = restored.nodes().nth(1).unwrap();
+    if let NodeKind::Thought { text } = &second_node.kind {
+        assert_eq!(text, diff_text);
+    } else {
+        panic!("expected Thought node");
+    }
+}
+
+#[test]
+fn context_surface_range_compaction_preserves_dag_and_replay() {
+    let mut s = Session::new();
+    // 1. Initial prompt
+    let _n1 = s.push(NodeKind::Prompt {
+        role: "user".into(),
+        text: "implement algorithm".into(),
+    });
+    s.commit().unwrap();
+
+    // 2. Failed attempt
+    let n2 = s.push(NodeKind::Thought {
+        text: "try brute force".into(),
+    });
+    s.commit().unwrap();
+
+    // 3. Failed verification
+    let _n3 = s.push(NodeKind::Verification {
+        passed: false,
+        detail: "timeout on large inputs".into(),
+    });
+    s.commit().unwrap();
+
+    // 4. Retry thought
+    let n4 = s.push(NodeKind::Thought {
+        text: "try dynamic programming".into(),
+    });
+    s.commit().unwrap();
+
+    // 5. Passing verification
+    let n5 = s.push(NodeKind::Verification {
+        passed: true,
+        detail: "all tests passed".into(),
+    });
+    s.commit().unwrap();
+
+    assert_eq!(s.len(), 5);
+
+    // Extract ContextSurface view over active branch
+    let mut surface = s.context_surface().unwrap();
+    assert_eq!(surface.len(), 5);
+
+    // Compact intermediate retry loop (n2..=n4)
+    surface
+        .compact_range(
+            n2,
+            n4,
+            "Attempted brute force which timed out; switched to dynamic programming.",
+        )
+        .unwrap();
+
+    // Surface now has 3 items: n1, summary, n5
+    assert_eq!(surface.len(), 3);
+    let prompt_ctx = surface.to_prompt_context();
+    assert!(prompt_ctx.contains("The conversation history before this point was compacted"));
+    assert!(prompt_ctx.contains("dynamic programming"));
+    assert!(prompt_ctx.contains("all tests passed"));
+
+    // Crucial invariant: Underlying DAG is NOT mutated or truncated!
+    assert_eq!(s.len(), 5, "underlying DAG must keep all 5 nodes");
+    assert_eq!(s.head(), Some(n5));
+    assert!(s.verify_integrity().is_ok());
+
+    // Deterministic replay still walks all 5 nodes
+    let labels = s.replay(None).unwrap();
+    assert_eq!(labels.len(), 5);
+    assert_eq!(
+        labels,
+        vec![
+            "prompt",
+            "thought",
+            "verification",
+            "thought",
+            "verification"
+        ]
+    );
+}
+
+#[test]
+fn telemetry_and_judge_verified_hash_recorded_and_persisted() {
+    let mut s = Session::new();
+    let n1 = s.push(NodeKind::ToolCall {
+        name: "vibe_router".into(),
+        arguments: "{}".into(),
+    });
+    s.commit().unwrap();
+
+    s.record_telemetry(n1, Some(450), Some(125)).unwrap();
+    assert_eq!(s.total_cost_micros(), 450);
+    assert_eq!(s.total_latency_ms(), 125);
+
+    let v_hash = 0xcafe_babe_1234_5678u64;
+    s.record_judge_verified(n1, v_hash).unwrap();
+
+    let raw = s.to_jsonl();
+    assert!(raw.contains("\"cost_micros\":450"));
+    assert!(raw.contains("\"latency_ms\":125"));
+
+    let restored = Session::from_jsonl(&raw).unwrap();
+    assert_eq!(restored.total_cost_micros(), 450);
+    assert_eq!(restored.total_latency_ms(), 125);
+    let node = restored.get(n1).unwrap();
+    assert_eq!(node.judge_verified_hash, Some(v_hash));
+}

@@ -12,4 +12,5 @@ pub mod engine;
 pub mod judge;
 pub mod patcher;
 pub mod review;
+pub mod sandbox;
 pub mod session;

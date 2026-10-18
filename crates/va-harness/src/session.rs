@@ -21,6 +21,7 @@
 //! Every mutation is transactional: nodes are only visible once `commit` runs,
 //! mirroring the upstream's flush-before-side-effect checkpoint policy.
 
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 
 /// FNV-1a 64-bit. Deterministic, dependency-free, and adequate for integrity
@@ -45,7 +46,8 @@ pub fn hash_str(s: &str) -> u64 {
 pub type NodeId = u64;
 
 /// What kind of trajectory entry a node represents.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum NodeKind {
     /// A user or system instruction.
     Prompt { role: String, text: String },
@@ -61,6 +63,12 @@ pub enum NodeKind {
     Verification { passed: bool, detail: String },
     /// An explicit branch point marker.
     Fork { reason: String },
+    /// A compacted summary replacing a range of intermediate nodes on the surface.
+    Compacted {
+        start: NodeId,
+        end: NodeId,
+        summary: String,
+    },
 }
 
 impl NodeKind {
@@ -73,12 +81,13 @@ impl NodeKind {
             NodeKind::Patch { .. } => "patch",
             NodeKind::Verification { .. } => "verification",
             NodeKind::Fork { .. } => "fork",
+            NodeKind::Compacted { .. } => "compacted",
         }
     }
 }
 
 /// An immutable trajectory node.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Node {
     pub id: NodeId,
     /// Zero or more parents. More than one makes this a merge point.
@@ -89,6 +98,15 @@ pub struct Node {
     /// Hash over the full ancestry state, so a reordered or dropped ancestor
     /// changes every descendant's hash.
     pub state_hash: u64,
+    /// Micro-dollar cost telemetry ingested from Vibe Router (`X-VR-Cost-Micros`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_micros: Option<u64>,
+    /// Latency telemetry ingested from Vibe Router (`X-VR-Latency-Ms`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latency_ms: Option<u64>,
+    /// Deterministic anti-slop verification hash recorded on verified checkpoints.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judge_verified_hash: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,6 +126,13 @@ pub enum SessionError {
     },
     /// A node was committed with no parents and no prior head (empty session).
     EmptySession,
+    /// Compaction range does not correspond to a valid forward slice.
+    InvalidCompactionRange {
+        start: NodeId,
+        end: NodeId,
+    },
+    /// JSONL parse error.
+    JsonlParseError(String),
 }
 
 impl std::fmt::Display for SessionError {
@@ -128,6 +153,10 @@ impl std::fmt::Display for SessionError {
                 "integrity violation at node {node}: expected state hash {expected:#018x}, got {actual:#018x}"
             ),
             SessionError::EmptySession => write!(f, "session has no committed nodes"),
+            SessionError::InvalidCompactionRange { start, end } => {
+                write!(f, "invalid compaction range from node {start} to {end}")
+            }
+            SessionError::JsonlParseError(err) => write!(f, "JSONL parse error: {err}"),
         }
     }
 }
@@ -230,6 +259,9 @@ impl Session {
             kind,
             content_hash: 0,
             state_hash: 0,
+            cost_micros: None,
+            latency_ms: None,
+            judge_verified_hash: None,
         });
         self.detached = false;
         id
@@ -245,6 +277,9 @@ impl Session {
             kind,
             content_hash: 0,
             state_hash: 0,
+            cost_micros: None,
+            latency_ms: None,
+            judge_verified_hash: None,
         });
         self.detached = false;
         id
@@ -291,6 +326,15 @@ impl Session {
                 buf.push_str(detail);
             }
             NodeKind::Fork { reason } => buf.push_str(reason),
+            NodeKind::Compacted {
+                start,
+                end,
+                summary,
+            } => {
+                buf.push_str(&format!("{start}..{end}"));
+                buf.push('\u{1e}');
+                buf.push_str(summary);
+            }
         }
         hash_str(&buf)
     }
@@ -455,34 +499,82 @@ impl Session {
             .collect()
     }
 
+    /// Return the active branch as a `ContextSurface`.
+    pub fn context_surface(&self) -> Result<ContextSurface, SessionError> {
+        let path = self.current_path()?;
+        let mut nodes = Vec::with_capacity(path.len());
+        for id in path {
+            nodes.push(
+                self.nodes
+                    .get(&id)
+                    .ok_or(SessionError::UnknownNode(id))?
+                    .clone(),
+            );
+        }
+        Ok(ContextSurface::from_nodes(nodes))
+    }
+
+    /// Record cost and latency telemetry on an existing node.
+    pub fn record_telemetry(
+        &mut self,
+        id: NodeId,
+        cost_micros: Option<u64>,
+        latency_ms: Option<u64>,
+    ) -> Result<(), SessionError> {
+        let node = self
+            .nodes
+            .get_mut(&id)
+            .ok_or(SessionError::UnknownNode(id))?;
+        if cost_micros.is_some() {
+            node.cost_micros = cost_micros;
+        }
+        if latency_ms.is_some() {
+            node.latency_ms = latency_ms;
+        }
+        Ok(())
+    }
+
+    /// Record a deterministic judge_verified_hash on an existing node.
+    pub fn record_judge_verified(
+        &mut self,
+        id: NodeId,
+        verified_hash: u64,
+    ) -> Result<(), SessionError> {
+        let node = self
+            .nodes
+            .get_mut(&id)
+            .ok_or(SessionError::UnknownNode(id))?;
+        node.judge_verified_hash = Some(verified_hash);
+        Ok(())
+    }
+
+    /// Sum of all recorded cost_micros in this session.
+    pub fn total_cost_micros(&self) -> u64 {
+        self.nodes.values().filter_map(|n| n.cost_micros).sum()
+    }
+
+    /// Sum of all recorded latency_ms in this session.
+    pub fn total_latency_ms(&self) -> u64 {
+        self.nodes.values().filter_map(|n| n.latency_ms).sum()
+    }
+
     /// Serialize to a JSONL-compatible string: one node per line.
+    /// Uses strict RFC-8259 escaping via serde_json to ensure arbitrary payloads
+    /// with nested braces, quotes, Windows CRLF, and Unicode round-trip cleanly.
     pub fn to_jsonl(&self) -> String {
         let mut out = String::new();
         for node in self.nodes.values() {
-            let parents = node
-                .parents
-                .iter()
-                .map(|p| p.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            out.push_str("{\"id\":");
-            out.push_str(&node.id.to_string());
-            out.push_str(",\"parents\":[");
-            out.push_str(&parents);
-            out.push_str("],\"label\":\"");
-            out.push_str(node.kind.label());
-            out.push_str("\",\"content_hash\":");
-            out.push_str(&node.content_hash.to_string());
-            out.push_str(",\"state_hash\":");
-            out.push_str(&node.state_hash.to_string());
-            out.push_str("}\n");
+            if let Ok(line) = serde_json::to_string(node) {
+                out.push_str(&line);
+                out.push('\n');
+            }
         }
         out
     }
 
-    /// Parse the `to_jsonl` form back. Ids and parents are restored; node
-    /// kinds are recorded by label only (see `kind_labels`), so a replay keeps
-    /// structure and hash integrity without needing full payloads.
+    /// Parse the `to_jsonl` form back.
+    /// Uses serde_json for strict RFC-8259 parsing, and falls back to
+    /// legacy field parsing if a line is from an older version.
     pub fn from_jsonl(raw: &str) -> Result<Session, SessionError> {
         let mut session = Session::new();
 
@@ -491,6 +583,23 @@ impl Session {
             if line.is_empty() {
                 continue;
             }
+            if let Ok(node) = serde_json::from_str::<Node>(line) {
+                if session.nodes.contains_key(&node.id) {
+                    return Err(SessionError::DuplicateNode(node.id));
+                }
+                for parent in &node.parents {
+                    if !session.nodes.contains_key(parent) {
+                        return Err(SessionError::MissingParent(*parent));
+                    }
+                }
+                let id = node.id;
+                session.next_id = session.next_id.max(id + 1);
+                session.head = Some(id);
+                session.nodes.insert(id, node);
+                continue;
+            }
+
+            // Legacy line fallback
             let id = field_u64(line, "id")?;
             let label = field_string(line, "label")?;
             let parents = field_u64_list(line, "parents")?;
@@ -511,6 +620,9 @@ impl Session {
                     kind: NodeKind::Thought { text: label },
                     content_hash: field_u64(line, "content_hash")?,
                     state_hash: field_u64(line, "state_hash")?,
+                    cost_micros: None,
+                    latency_ms: None,
+                    judge_verified_hash: None,
                 },
             );
             session.next_id = session.next_id.max(id + 1);
@@ -579,4 +691,149 @@ fn field_u64_list(line: &str, key: &str) -> Result<Vec<u64>, SessionError> {
         .split(',')
         .filter_map(|p| p.trim().parse::<u64>().ok())
         .collect())
+}
+
+// ---- ContextSurface view layer ----------------------------------------------
+
+/// Upstream durable constant for compacted prompt formatting (pi/packages/durable/src/harness/compaction.ts).
+pub const SUMMARY_PREFIX: &str =
+    "The conversation history before this point was compacted into the following summary:\n\n<summary>\n";
+pub const SUMMARY_SUFFIX: &str = "\n</summary>";
+
+/// An item on the context surface view.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "surface_type", rename_all = "snake_case")]
+pub enum SurfaceItem {
+    /// An uncompacted DAG node on the active branch.
+    Node(Node),
+    /// A compacted range of nodes represented as a summary.
+    Summary {
+        start: NodeId,
+        end: NodeId,
+        summary: String,
+    },
+}
+
+impl SurfaceItem {
+    pub fn id_range(&self) -> (NodeId, NodeId) {
+        match self {
+            SurfaceItem::Node(n) => (n.id, n.id),
+            SurfaceItem::Summary { start, end, .. } => (*start, *end),
+        }
+    }
+}
+
+/// A compaction-aware view layer over the active DAG branch.
+///
+/// Keeps the underlying multi-parent DAG with 64-bit FNV-1a ancestry hashes
+/// intact for full auditability, rollback, and replay, while providing a
+/// collapsed context view for LLM prompt construction without mutating or
+/// losing DAG nodes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextSurface {
+    pub items: Vec<SurfaceItem>,
+}
+
+impl ContextSurface {
+    /// Create a surface view directly from an ordered sequence of nodes on the active branch.
+    pub fn from_nodes(nodes: Vec<Node>) -> Self {
+        Self {
+            items: nodes.into_iter().map(SurfaceItem::Node).collect(),
+        }
+    }
+
+    /// Collapse a range of nodes [start_node, end_node] into a single summary item.
+    pub fn compact_range(
+        &mut self,
+        start_node: NodeId,
+        end_node: NodeId,
+        summary_payload: &str,
+    ) -> Result<(), SessionError> {
+        let start_pos = self.items.iter().position(|item| match item {
+            SurfaceItem::Node(n) => n.id == start_node,
+            SurfaceItem::Summary { start, .. } => *start == start_node,
+        });
+        let end_pos = self.items.iter().position(|item| match item {
+            SurfaceItem::Node(n) => n.id == end_node,
+            SurfaceItem::Summary { end, .. } => *end == end_node,
+        });
+
+        let (s_idx, e_idx) = match (start_pos, end_pos) {
+            (Some(s), Some(e)) if s <= e => (s, e),
+            _ => {
+                return Err(SessionError::InvalidCompactionRange {
+                    start: start_node,
+                    end: end_node,
+                })
+            }
+        };
+
+        let summary_item = SurfaceItem::Summary {
+            start: start_node,
+            end: end_node,
+            summary: summary_payload.to_string(),
+        };
+
+        // Replace the slice with the single summary item
+        self.items
+            .splice(s_idx..=e_idx, std::iter::once(summary_item));
+        Ok(())
+    }
+
+    /// Number of surface items (compacted summaries count as 1 item).
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    /// Render the surface into prompt context for an LLM.
+    pub fn to_prompt_context(&self) -> String {
+        let mut out = String::new();
+        for item in &self.items {
+            match item {
+                SurfaceItem::Summary { summary, .. } => {
+                    out.push_str(SUMMARY_PREFIX);
+                    out.push_str(summary);
+                    out.push_str(SUMMARY_SUFFIX);
+                    out.push_str("\n\n");
+                }
+                SurfaceItem::Node(node) => match &node.kind {
+                    NodeKind::Prompt { role, text } => {
+                        out.push_str(&format!("[{role}]: {text}\n\n"));
+                    }
+                    NodeKind::Thought { text } => {
+                        out.push_str(&format!("[thought]: {text}\n\n"));
+                    }
+                    NodeKind::ToolCall { name, arguments } => {
+                        out.push_str(&format!("[tool_call:{name}]: {arguments}\n\n"));
+                    }
+                    NodeKind::Observation { text } => {
+                        out.push_str(&format!("[observation]: {text}\n\n"));
+                    }
+                    NodeKind::Patch { path, summary } => {
+                        out.push_str(&format!("[patch:{path}]: {summary}\n\n"));
+                    }
+                    NodeKind::Verification { passed, detail } => {
+                        out.push_str(&format!(
+                            "[verification:{}]: {detail}\n\n",
+                            if *passed { "pass" } else { "fail" }
+                        ));
+                    }
+                    NodeKind::Fork { reason } => {
+                        out.push_str(&format!("[fork]: {reason}\n\n"));
+                    }
+                    NodeKind::Compacted { summary, .. } => {
+                        out.push_str(SUMMARY_PREFIX);
+                        out.push_str(summary);
+                        out.push_str(SUMMARY_SUFFIX);
+                        out.push_str("\n\n");
+                    }
+                },
+            }
+        }
+        out
+    }
 }

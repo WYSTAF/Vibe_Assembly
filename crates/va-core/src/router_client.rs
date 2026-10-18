@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub const DEFAULT_HOST: &str = "127.0.0.1";
@@ -44,6 +45,13 @@ pub struct RouterRole {
     pub recommended_ticket_size: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouterTelemetry {
+    pub cost_micros: Option<u64>,
+    pub latency_ms: Option<u64>,
+    pub cache_hit: Option<bool>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RouterAssignment {
     pub status: RouterStatus,
@@ -52,6 +60,8 @@ pub struct RouterAssignment {
     pub recommended_ticket_sizes: BTreeMap<String, String>,
     /// Set when offline: why we gave up, for the doctor command.
     pub detail: Option<String>,
+    #[serde(default)]
+    pub telemetry: RouterTelemetry,
 }
 
 impl RouterAssignment {
@@ -62,6 +72,7 @@ impl RouterAssignment {
             roles: Vec::new(),
             recommended_ticket_sizes: BTreeMap::new(),
             detail: Some(detail.into()),
+            telemetry: RouterTelemetry::default(),
         }
     }
 
@@ -71,6 +82,35 @@ impl RouterAssignment {
 
     pub fn model_names(&self) -> Vec<String> {
         self.roles.iter().map(|r| r.model.clone()).collect()
+    }
+}
+
+/// Outbound context-aware headers attached to Vibe-Link requests.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RequestContext {
+    pub role: Option<String>,
+    pub node_id: Option<u64>,
+    pub profile: Option<String>,
+    pub is_retry: bool,
+}
+
+impl RequestContext {
+    pub fn headers(&self) -> Vec<(String, String)> {
+        let mut h = Vec::new();
+        if let Some(r) = &self.role {
+            h.push(("X-Vibe-Role".to_string(), r.clone()));
+        }
+        if let Some(id) = self.node_id {
+            h.push(("X-Vibe-Node-Id".to_string(), id.to_string()));
+        }
+        if let Some(p) = &self.profile {
+            h.push(("X-Vibe-Profile".to_string(), p.clone()));
+        }
+        if self.is_retry {
+            h.push(("X-Vibe-Retry".to_string(), "1".to_string()));
+            h.push(("Cache-Control".to_string(), "no-cache".to_string()));
+        }
+        h
     }
 }
 
@@ -106,6 +146,47 @@ impl RouterAuth {
         }
     }
 
+    /// Auto-handshake: check environment first, then search for local token files.
+    pub fn discover(workspace_root: Option<&Path>) -> Self {
+        let from_env = Self::from_env();
+        if !from_env.is_empty() {
+            return from_env;
+        }
+
+        let mut candidates = Vec::new();
+        if let Some(root) = workspace_root {
+            candidates.push(root.join(".vibe_router_token"));
+            candidates.push(root.join(".ai").join(".vibe_router_token"));
+            candidates.push(root.join("portable_data").join(".vibe_router_token"));
+        }
+        if let Ok(userprofile) = std::env::var("USERPROFILE") {
+            candidates.push(PathBuf::from(userprofile).join(".vibe_router_token"));
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            candidates.push(PathBuf::from(&home).join(".vibe_router_token"));
+            candidates.push(
+                PathBuf::from(&home)
+                    .join(".config")
+                    .join("vibe_router")
+                    .join("token"),
+            );
+        }
+
+        for path in candidates {
+            if let Ok(token) = std::fs::read_to_string(&path) {
+                let trimmed = token.trim().to_string();
+                if !trimmed.is_empty() {
+                    return Self {
+                        bearer: Some(trimmed),
+                        api_key: None,
+                    };
+                }
+            }
+        }
+
+        from_env
+    }
+
     pub fn is_empty(&self) -> bool {
         self.bearer.is_none() && self.api_key.is_none()
     }
@@ -128,14 +209,49 @@ impl RouterAuth {
     }
 }
 
-/// Perform the HTTP GET and return `(status, body)`.
+/// Discover active host proxies or local VPN tunnel ports.
+pub fn discover_host_proxies() -> Vec<String> {
+    let mut proxies = Vec::new();
+
+    for var in &[
+        "HTTPS_PROXY",
+        "HTTP_PROXY",
+        "ALL_PROXY",
+        "https_proxy",
+        "http_proxy",
+        "all_proxy",
+    ] {
+        if let Ok(val) = std::env::var(var) {
+            let trimmed = val.trim();
+            if !trimmed.is_empty() && !proxies.contains(&trimmed.to_string()) {
+                proxies.push(trimmed.to_string());
+            }
+        }
+    }
+
+    for port in [10808, 10809, 7890, 2080] {
+        let addr_str = format!("127.0.0.1:{port}");
+        if let Ok(mut addrs) = addr_str.to_socket_addrs() {
+            if let Some(addr) = addrs.next() {
+                if TcpStream::connect_timeout(&addr, Duration::from_millis(40)).is_ok() {
+                    proxies.push(format!("http://127.0.0.1:{port}"));
+                }
+            }
+        }
+    }
+
+    proxies
+}
+
+/// Perform the HTTP GET and return `(status, headers, body)`.
 fn http_get(
     host: &str,
     port: u16,
     path: &str,
     auth: &RouterAuth,
+    ctx: &RequestContext,
     timeout: Duration,
-) -> Result<(u16, String), String> {
+) -> Result<(u16, BTreeMap<String, String>, String), String> {
     let addr = format!("{host}:{port}")
         .to_socket_addrs()
         .map_err(|e| format!("resolve {host}:{port}: {e}"))?
@@ -153,6 +269,9 @@ fn http_get(
 
     let mut req = format!("GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\n");
     for (k, v) in auth.headers() {
+        req.push_str(&format!("{k}: {v}\r\n"));
+    }
+    for (k, v) in ctx.headers() {
         req.push_str(&format!("{k}: {v}\r\n"));
     }
     req.push_str("Connection: close\r\n\r\n");
@@ -175,7 +294,15 @@ fn http_get(
         .and_then(|l| l.split_whitespace().nth(1))
         .and_then(|c| c.parse::<u16>().ok())
         .ok_or_else(|| "no status code".to_string())?;
-    Ok((status, body.to_string()))
+
+    let mut headers = BTreeMap::new();
+    for line in head.lines().skip(1) {
+        if let Some((k, v)) = line.split_once(':') {
+            headers.insert(k.trim().to_lowercase(), v.trim().to_string());
+        }
+    }
+
+    Ok((status, headers, body.to_string()))
 }
 
 /// Decode chunked transfer encoding, which the Next.js gateway uses.
@@ -300,28 +427,140 @@ pub fn parse_assignment(body: &str) -> Result<RouterAssignment, String> {
         roles,
         recommended_ticket_sizes: sizes,
         detail: None,
+        telemetry: RouterTelemetry::default(),
     })
 }
 
-/// Query the gateway, falling back to offline on any failure.
-pub fn fetch_assignment(
+fn extract_telemetry(headers: &BTreeMap<String, String>) -> RouterTelemetry {
+    let cost_micros = headers
+        .get("x-vr-cost-micros")
+        .and_then(|v| v.parse::<u64>().ok());
+    let latency_ms = headers
+        .get("x-vr-latency-ms")
+        .and_then(|v| v.parse::<u64>().ok());
+    let cache_hit = headers
+        .get("x-vr-cache")
+        .map(|v| v.eq_ignore_ascii_case("hit"));
+    RouterTelemetry {
+        cost_micros,
+        latency_ms,
+        cache_hit,
+    }
+}
+
+/// Parse OpenAI-compatible /v1/models response body.
+pub fn parse_v1_models(body: &str) -> Result<Vec<String>, String> {
+    let raw = body.trim();
+    if raw.is_empty() {
+        return Err("empty body in /v1/models".to_string());
+    }
+    let json: serde_json::Value =
+        serde_json::from_str(raw).map_err(|e| format!("invalid JSON in /v1/models: {e}"))?;
+    let mut model_ids = Vec::new();
+
+    if let Some(data) = json.get("data").and_then(|v| v.as_array()) {
+        for item in data {
+            if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
+                model_ids.push(id.to_string());
+            }
+        }
+    } else if let Some(models) = json.get("models").and_then(|v| v.as_array()) {
+        for item in models {
+            if let Some(id) = item
+                .as_str()
+                .or_else(|| item.get("name").and_then(|v| v.as_str()))
+            {
+                model_ids.push(id.to_string());
+            }
+        }
+    }
+
+    if model_ids.is_empty() {
+        return Err("no models found in /v1/models response".to_string());
+    }
+
+    Ok(model_ids)
+}
+
+/// Construct a live RouterAssignment covering all 6 roles from a model list using knowledge auto-combo.
+pub fn assignment_from_models(models: &[String], source: &str) -> RouterAssignment {
+    let assignments = crate::knowledge::auto_combo(models, 0.5);
+    let mut roles = Vec::new();
+    let mut sizes = BTreeMap::new();
+
+    for a in assignments {
+        let mode = a.role.as_str().to_string();
+        roles.push(RouterRole {
+            mode: mode.clone(),
+            model: a.model,
+            class: Some(a.role.as_str().to_string()),
+            recommended_ticket_size: Some("M".to_string()),
+        });
+        sizes.insert(mode, "M".to_string());
+    }
+
+    roles.sort_by(|a, b| a.mode.cmp(&b.mode));
+
+    RouterAssignment {
+        status: RouterStatus::Live,
+        source: source.to_string(),
+        roles,
+        recommended_ticket_sizes: sizes,
+        detail: None,
+        telemetry: RouterTelemetry::default(),
+    }
+}
+
+/// Query the gateway with contextual Vibe-Link headers, falling back to /v1/models on 404.
+pub fn fetch_assignment_with_context(
     host: &str,
     port: u16,
     path: &str,
     auth: &RouterAuth,
+    ctx: &RequestContext,
     timeout_ms: u64,
 ) -> RouterAssignment {
     let timeout = Duration::from_millis(timeout_ms);
-    let (status, body) = match http_get(host, port, path, auth, timeout) {
+    let (status, headers, body) = match http_get(host, port, path, auth, ctx, timeout) {
         Ok(v) => v,
-        Err(e) => return RouterAssignment::offline(format!("gateway unreachable: {e}")),
+        Err(e) => {
+            let proxies = discover_host_proxies();
+            let proxy_note = if !proxies.is_empty() {
+                format!(" (detected active host proxy: {})", proxies[0])
+            } else {
+                String::new()
+            };
+            return RouterAssignment::offline(format!("gateway unreachable: {e}{proxy_note}"));
+        }
     };
+
+    let telemetry = extract_telemetry(&headers);
 
     if status == 401 || status == 403 {
         return RouterAssignment::offline(format!(
-            "gateway returned {status} — set VIBE_ROUTER_TOKEN or VIBE_ROUTER_API_KEY"
+            "gateway returned {status} — set VIBE_ROUTER_TOKEN, VIBE_ROUTER_API_KEY, or place .vibe_router_token in workspace"
         ));
     }
+
+    // 404 Fallback: Universal OpenAI-compatible gateway (9router, LiteLLM, Ollama, OpenRouter)
+    if status == 404 {
+        if let Ok((m_status, m_headers, m_body)) =
+            http_get(host, port, "/v1/models", auth, ctx, timeout)
+        {
+            if (200..300).contains(&m_status) {
+                if let Ok(models) = parse_v1_models(&m_body) {
+                    let mut assignment =
+                        assignment_from_models(&models, "Universal Gateway (/v1/models fallback)");
+                    assignment.telemetry = extract_telemetry(&m_headers);
+                    return assignment;
+                }
+            }
+        }
+        return RouterAssignment::offline(format!(
+            "gateway returned HTTP 404 for {path} and /v1/models fallback failed"
+        ));
+    }
+
     if !(200..300).contains(&status) {
         return RouterAssignment::offline(format!("gateway returned HTTP {status}"));
     }
@@ -337,12 +576,33 @@ pub fn fetch_assignment(
     };
 
     match parse_assignment(&body) {
-        Ok(a) => a,
+        Ok(mut a) => {
+            a.telemetry = telemetry;
+            a
+        }
         Err(e) => RouterAssignment::offline(format!("unusable assignment payload: {e}")),
     }
 }
 
-/// Query using the defaults, reading credentials from the environment.
+/// Query the gateway, falling back to offline on any failure.
+pub fn fetch_assignment(
+    host: &str,
+    port: u16,
+    path: &str,
+    auth: &RouterAuth,
+    timeout_ms: u64,
+) -> RouterAssignment {
+    fetch_assignment_with_context(
+        host,
+        port,
+        path,
+        auth,
+        &RequestContext::default(),
+        timeout_ms,
+    )
+}
+
+/// Query using the defaults, reading credentials via auto-handshake.
 pub fn fetch_default() -> RouterAssignment {
     let host = std::env::var("VIBE_ROUTER_HOST").unwrap_or_else(|_| DEFAULT_HOST.to_string());
     let port = std::env::var("VIBE_ROUTER_PORT")
@@ -354,7 +614,7 @@ pub fn fetch_default() -> RouterAssignment {
         &host,
         port,
         &path,
-        &RouterAuth::from_env(),
+        &RouterAuth::discover(None),
         DEFAULT_TIMEOUT_MS,
     )
 }
@@ -437,6 +697,75 @@ mod tests {
         let raw = "{\"roles\":{\"code\":\"m\"}}";
         let enc = format!("{:x}\r\n{}\r\n0\r\n\r\n", raw.len(), raw);
         assert_eq!(decode_chunked(&enc), raw);
+    }
+
+    #[test]
+    fn parses_v1_models_and_populates_all_roles() {
+        let body = r#"{
+            "data": [
+                {"id": "claude-3-5-sonnet-20241022"},
+                {"id": "deepseek-coder-v2"},
+                {"id": "gpt-4o-mini"},
+                {"id": "gemini-1.5-pro"}
+            ]
+        }"#;
+        let models = parse_v1_models(body).unwrap();
+        assert_eq!(models.len(), 4);
+        let a = assignment_from_models(&models, "test gateway");
+        assert!(a.is_live());
+        assert_eq!(a.roles.len(), 6, "all 6 roles must be assigned");
+        let roles: Vec<&str> = a.roles.iter().map(|r| r.mode.as_str()).collect();
+        assert!(roles.contains(&"boss"));
+        assert!(roles.contains(&"code"));
+        assert!(roles.contains(&"debug"));
+        assert!(roles.contains(&"judge"));
+        assert!(roles.contains(&"chat"));
+        assert!(roles.contains(&"hermes"));
+    }
+
+    #[test]
+    fn context_headers_emission() {
+        let ctx = RequestContext {
+            role: Some("code".into()),
+            node_id: Some(42),
+            profile: Some("portable".into()),
+            is_retry: true,
+        };
+        let headers = ctx.headers();
+        assert!(headers.contains(&("X-Vibe-Role".into(), "code".into())));
+        assert!(headers.contains(&("X-Vibe-Node-Id".into(), "42".into())));
+        assert!(headers.contains(&("X-Vibe-Profile".into(), "portable".into())));
+        assert!(headers.contains(&("X-Vibe-Retry".into(), "1".into())));
+        assert!(headers.contains(&("Cache-Control".into(), "no-cache".into())));
+    }
+
+    #[test]
+    fn telemetry_header_extraction() {
+        let mut headers = BTreeMap::new();
+        headers.insert("x-vr-cost-micros".into(), "250".into());
+        headers.insert("x-vr-latency-ms".into(), "180".into());
+        headers.insert("x-vr-cache".into(), "hit".into());
+
+        let t = extract_telemetry(&headers);
+        assert_eq!(t.cost_micros, Some(250));
+        assert_eq!(t.latency_ms, Some(180));
+        assert_eq!(t.cache_hit, Some(true));
+    }
+
+    #[test]
+    fn local_shared_token_file_discovery() {
+        let temp = std::env::temp_dir().join("va_test_token_discovery");
+        let _ = std::fs::create_dir_all(&temp);
+        let token_file = temp.join(".vibe_router_token");
+        std::fs::write(&token_file, "secret-auto-handshake-token-123\n").unwrap();
+
+        let auth = RouterAuth::discover(Some(&temp));
+        assert_eq!(
+            auth.bearer.as_deref(),
+            Some("secret-auto-handshake-token-123")
+        );
+
+        let _ = std::fs::remove_dir_all(&temp);
     }
 
     #[test]

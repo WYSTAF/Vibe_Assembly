@@ -52,8 +52,10 @@ cargo run -p va-cli -- init my-project
 # Inspect it
 cd my-project
 vibe-assembly status          # ticket queue + resume point
-vibe-assembly models          # model allocation for the five modes
+vibe-assembly models          # model allocation for the modes
 vibe-assembly doctor          # workspace health check
+vibe-assembly profile         # hardware specs & adaptive storage mode
+vibe-assembly tui             # lightweight terminal dashboard (alias: top)
 vibe-assembly --json          # machine-readable status
 
 # Launch the desktop dashboard
@@ -67,9 +69,9 @@ Vibe Assembly/
 ├── .ai/                    # The AI contract — authoritative state
 ├── crates/
 │   ├── va-core/            # State engine: parser, allocator, router, lock, prompts,
-│   │                       #   knowledge (model scoring), bootstrap
-│   ├── va-harness/         # Execution engine: session, patcher, review, judge, engine
-│   ├── va-cli/             # `vibe-assembly` binary — terminal operations room
+│   │                       #   knowledge (model scoring), runtime (hardware profiler)
+│   ├── va-harness/         # Execution engine: session, patcher, review, judge, sandbox, engine
+│   ├── va-cli/             # `vibe-assembly` binary — terminal operations room & MCP server
 │   └── va-desktop/         # `vibe-assembly-desktop` — native GPUI dashboard
 ├── templates/              # Seeded project starters (planner, todo, website)
 └── references/             # Upstream harnesses (not built)
@@ -81,11 +83,12 @@ Vibe Assembly/
 
 | Module | Role |
 |---|---|
-| `session` | Append-only transactional trajectory DAG. Per-node state hashing, `fork`, `rollback`, `replay`. Replay reuses stored results — no tool re-runs. |
-| `patcher` | Edits address **per-block hashes**, never line numbers. Recovers from a uniform line shift; hard-rejects an ambiguous hash rather than guessing. |
+| `session` | Append-only transactional trajectory DAG. Per-node state hashing, `fork`, `rollback`, `replay`, `ContextSurface` compaction. Replay reuses stored results — no tool re-runs. |
+| `patcher` | Edits address **per-block hashes**, never line numbers. Whole-file drift assertion (from `oh-my-pi`), 1-hop recovery from line shifts, and hard rejection on ambiguity. |
 | `review` | Git checkpoint per phase, isolating each step's exact delta for review. |
 | `judge` | Deterministic gate before commit: slop comments, placeholders, `unwrap()` in production, import-only churn, excessive churn. One targeted retry, then abort. |
-| `engine` | Observe → Think → Patch → Verify → Judge. Model-agnostic via a `Planner` trait. |
+| `sandbox` | Confined command execution with wall-clock timeouts, directory confinement, and bounded output capture. |
+| `engine` | Observe → Think → Patch → Verify → Judge loop with durable `onYield` completion gate and `judge_verified_hash`. |
 
 ```bash
 # Discover block hashes in a file
@@ -96,16 +99,29 @@ vibe-assembly patch src/main.rs --target 159A <<< 'pub fn beta(y: i32) -> i32 {
     y * 42
 }'
 
-# Zero-config role assignment from Vibe Router
-vibe-assembly run --auto-combo
+# Zero-config role assignment with JSONL stream for Hermes Agent / external automation
+vibe-assembly run --auto-combo --stream-jsonl
+
+# Manage trajectory DAG
+vibe-assembly session status --json
+vibe-assembly session rollback --to-verified
+vibe-assembly session compact --from 2 --to 4 --summary "Collapsed failed attempts"
+
+# Start Model Context Protocol (MCP) server over stdio
+vibe-assembly mcp
 ```
 
-**Vibe Router.** The client targets `/api/assignment` (the `/v1` path does not
-exist on the gateway) and honours `VIBE_ROUTER_TOKEN` (Bearer) or
-`VIBE_ROUTER_API_KEY` (`X-API-Key`). Without credentials it falls back to
-`.ai/model_combo.txt` and says so. Models the curated table has never seen are
-scored from their name — version progression and behavioural tags — so
-`gemini-3.8-flash` or `glm-5.3` still allocates sensibly.
+## 🚀 Hardware-aware adaptive runtime
+
+Vibe Assembly adapts seamlessly to execution hardware:
+
+- **Mode 1: Disk-First (VPS Ultra-Low-RAM Mode)** (`--profile vps` or available RAM < 1GB):
+  Worker threads constrained to 2 cores; session DAG, state updates, and checkpoints stream directly to disk with minimal buffering, maintaining total resident memory (RSS) strictly under ~35MB.
+- **Mode 2: RAM-First (Portable Zero-Wear Mode)** (`--profile portable` on host with >= 4GB RAM):
+  Hydrates workspace state and DAG into host RAM; performs intermediate edits, retries, and hash checks 100% in memory to prevent USB flash drive write amplification; flushes state to storage on verified checkpoints using crash-safe atomic write-to-temp + `fsync` + rename.
+- **Drive-Letter Independence**: Workspace-relative paths are normalized using the `{{PORTABLE_ROOT}}` token and resolved dynamically against the executable, allowing USB drives to switch host drive letters without broken links.
+- **Universal Gateway Fallback**: If the Vibe Router assignment endpoint returns `404 Not Found` (common on standard OpenAI proxies like `9router`, LiteLLM, or Ollama), the client automatically queries `GET /v1/models` and computes optimal 6-role allocations via heuristic auto-combo.
+- **Vibe-Link Synergy**: Outbound requests attach contextual headers (`X-Vibe-Role`, `X-Vibe-Node-Id`, `X-Vibe-Profile`, `X-Vibe-Retry`), support automatic zero-401 handshake via local `.vibe_router_token`, and ingest micro-dollar cost and latency telemetry (`X-VR-Cost-Micros`, `X-VR-Latency-Ms`) directly into session DAG nodes.
 
 ## 🧩 Feature parity with the legacy JS tooling
 

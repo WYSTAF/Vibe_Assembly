@@ -1,8 +1,11 @@
 //! Vibe Assembly CLI — the terminal operations room.
 //!
-//! Pure Rust. Surface: status, models, doctor, init, reset, --json, --summary.
+//! Pure Rust. Surface: status, models, doctor, init, reset, --json, --summary,
+//! tui/top, profile, session, mcp, patch, blocks, run.
 
+mod mcp;
 mod render;
+mod tui;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -13,7 +16,9 @@ use va_core::bootstrap;
 use va_core::lock::check_task_lock;
 use va_core::parser::{parse_active_task, validate_contract, verified_steps};
 use va_core::router::fetch_live_assignment;
+use va_core::runtime::{detect_system_specs, AtomicStateSync};
 use va_core::state::Workspace;
+use va_harness::session::{NodeKind, Session};
 
 use render::{queue_lines, role_icon, Palette};
 
@@ -69,7 +74,36 @@ enum Command {
         /// Maximum steps before the loop stops
         #[arg(long, default_value_t = 50)]
         max_steps: u32,
+        /// Stream structured JSONL events for Hermes Agent / external automation
+        #[arg(long)]
+        stream_jsonl: bool,
+        /// Override hardware execution profile (auto|vps|portable|workstation)
+        #[arg(long)]
+        profile: Option<String>,
     },
+    /// Launch the interactive terminal dashboard (alias: top)
+    #[command(alias = "top")]
+    Tui {
+        /// Force execution profile (auto|vps|portable|workstation)
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    /// Display detected hardware capabilities, portable status, and active storage strategy
+    Profile {
+        /// Force execution profile (auto|vps|portable|workstation)
+        #[arg(long)]
+        profile: Option<String>,
+        /// Emit machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect or mutate the transactional session trajectory DAG
+    Session {
+        #[command(subcommand)]
+        action: SessionCommand,
+    },
+    /// Start the Model Context Protocol (MCP) server over stdio
+    Mcp,
     /// Apply a hash-anchored patch, addressing the target by block hash
     Patch {
         /// File to patch
@@ -87,6 +121,50 @@ enum Command {
     Blocks {
         /// File to inspect
         file: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum SessionCommand {
+    /// Show current session DAG trajectory status
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Fork a new branch from a specific node ID
+    Fork {
+        /// Node ID to fork from
+        node_id: u64,
+        /// Reason for fork
+        #[arg(long)]
+        reason: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Roll back to last verified node or a specific node ID
+    Rollback {
+        /// Roll back to the last passing verification node
+        #[arg(long)]
+        to_verified: bool,
+        /// Specific node ID to roll back to
+        #[arg(long)]
+        to: Option<u64>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compact a range of intermediate DAG nodes on the context surface
+    Compact {
+        /// Start node ID
+        #[arg(long)]
+        from: u64,
+        /// End node ID
+        #[arg(long)]
+        to: u64,
+        /// Compacted summary text
+        #[arg(long)]
+        summary: String,
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -123,9 +201,26 @@ fn main() -> ExitCode {
         };
     }
 
-    // `patch` and `blocks` operate on any file, so they run before workspace
-    // discovery — an agent patches source before `.ai/` necessarily exists.
+    // Commands that don't strictly require an existing .ai/ directory
     match &cli.command {
+        Some(Command::Mcp) => {
+            let root = Workspace::discover(&start);
+            if let Err(e) = mcp::run_mcp_server(root.as_deref()) {
+                eprintln!("❌ MCP server error: {e}");
+                return ExitCode::from(1);
+            }
+            return ExitCode::SUCCESS;
+        }
+        Some(Command::Tui { profile }) => {
+            let root = Workspace::discover(&start).unwrap_or(start);
+            let p_override = profile.as_deref().and_then(|s| s.parse().ok());
+            tui::run_tui(&root, p_override);
+            return ExitCode::SUCCESS;
+        }
+        Some(Command::Profile { profile, json }) => {
+            let root = Workspace::discover(&start).unwrap_or(start);
+            return run_profile(&root, profile.as_deref(), *json);
+        }
         Some(Command::Blocks { file }) => {
             return run_blocks(file);
         }
@@ -137,9 +232,21 @@ fn main() -> ExitCode {
         }) => {
             return run_patch(file, target, replacement.as_deref(), *list);
         }
+        Some(Command::Session { action }) => {
+            let root = match Workspace::discover(&start) {
+                Some(r) => r,
+                None => {
+                    eprintln!("❌ No .ai/ directory found at or above {}", start.display());
+                    return ExitCode::from(1);
+                }
+            };
+            return run_session(&root, action);
+        }
         Some(Command::Run {
             auto_combo,
             max_steps,
+            stream_jsonl,
+            profile,
         }) => {
             let root = match Workspace::discover(&start) {
                 Some(r) => r,
@@ -148,7 +255,13 @@ fn main() -> ExitCode {
                     return ExitCode::from(1);
                 }
             };
-            return run_execute(&root, *auto_combo, *max_steps);
+            return run_execute(
+                &root,
+                *auto_combo,
+                *max_steps,
+                *stream_jsonl,
+                profile.as_deref(),
+            );
         }
         _ => {}
     }
@@ -378,10 +491,16 @@ fn run_models(root: &Path, p: &Palette) -> ExitCode {
     };
 
     let combo_path = root.join(".ai").join("model_combo.txt");
+    let example_path = root.join(".ai").join("model_combo.example.txt");
+    let active_path = if combo_path.exists() {
+        combo_path
+    } else {
+        example_path
+    };
     let mut combo: Vec<String> = Vec::new();
     let mut locked = std::collections::BTreeMap::new();
 
-    if let Ok(text) = std::fs::read_to_string(&combo_path) {
+    if let Ok(text) = std::fs::read_to_string(&active_path) {
         for raw in text.lines() {
             let line = raw.trim();
             if line.is_empty() || line.starts_with('#') {
@@ -405,7 +524,7 @@ fn run_models(root: &Path, p: &Palette) -> ExitCode {
     if combo.is_empty() && locked.is_empty() {
         eprintln!(
             "❌ No model combo found. Create {} with one router model per line.",
-            combo_path.display()
+            root.join(".ai").join("model_combo.txt").display()
         );
         eprintln!("   gemini-2.0-flash");
         eprintln!("   deepseek-r1:free");
@@ -736,11 +855,7 @@ fn run_patch(file: &Path, target: &str, replacement: Option<&str>, list: bool) -
     // Record signatures so drift inside this file can be recovered once.
     va_harness::patcher::record_signatures(&source);
 
-    let op = va_harness::patcher::PatchOp {
-        target_hash: block.hash,
-        replacement: text,
-    }
-    .with_signature(&block.signature);
+    let op = va_harness::patcher::PatchOp::new(block.hash, text).with_signature(&block.signature);
 
     match va_harness::patcher::apply_patch(&source, &op) {
         Ok(updated) => match std::fs::write(file, &updated) {
@@ -767,11 +882,16 @@ fn run_patch(file: &Path, target: &str, replacement: Option<&str>, list: bool) -
 }
 
 /// Zero-config role resolution, then report the plan the harness will use.
-fn run_execute(root: &Path, auto_combo: bool, max_steps: u32) -> ExitCode {
+fn run_execute(
+    root: &Path,
+    auto_combo: bool,
+    max_steps: u32,
+    stream_jsonl: bool,
+    profile: Option<&str>,
+) -> ExitCode {
     use va_core::knowledge::{auto_combo as plan, score_model};
     use va_core::router_client::fetch_default;
 
-    let p = Palette::detect();
     let gateway = fetch_default();
 
     let mut models: Vec<String> = Vec::new();
@@ -781,7 +901,8 @@ fn run_execute(root: &Path, auto_combo: bool, max_steps: u32) -> ExitCode {
         if gateway.is_live() {
             models = gateway.model_names();
             source = format!("Vibe Router ({} role(s))", models.len());
-        } else {
+        } else if !stream_jsonl {
+            let p = Palette::detect();
             eprintln!(
                 "{}⚠{} Vibe Router unavailable ({}), falling back to .ai/model_combo.txt",
                 p.yellow,
@@ -793,7 +914,15 @@ fn run_execute(root: &Path, auto_combo: bool, max_steps: u32) -> ExitCode {
 
     if models.is_empty() {
         let combo = root.join(".ai").join("model_combo.txt");
-        if let Ok(text) = std::fs::read_to_string(&combo) {
+        let example = root.join(".ai").join("model_combo.example.txt");
+        let path_to_read = if combo.exists() {
+            source = ".ai/model_combo.txt".to_string();
+            combo
+        } else {
+            source = ".ai/model_combo.example.txt".to_string();
+            example
+        };
+        if let Ok(text) = std::fs::read_to_string(&path_to_read) {
             for line in text.lines() {
                 let l = line.trim();
                 if l.is_empty() || l.starts_with('#') {
@@ -806,19 +935,79 @@ fn run_execute(root: &Path, auto_combo: bool, max_steps: u32) -> ExitCode {
                 models.push(clean.to_string());
             }
         }
-        if source.is_empty() {
-            source = ".ai/model_combo.txt".to_string();
-        }
     }
 
     if models.is_empty() {
-        eprintln!(
-            "❌ No models available — Vibe Router is offline and .ai/model_combo.txt is missing."
-        );
+        if stream_jsonl {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "event": "error",
+                    "message": "No models available — Vibe Router is offline and .ai/model_combo.txt is missing"
+                })
+            );
+        } else {
+            eprintln!(
+                "❌ No models available — Vibe Router is offline and .ai/model_combo.txt is missing."
+            );
+        }
         return ExitCode::from(1);
     }
 
     let assignments = plan(&models, 0.5);
+
+    if stream_jsonl {
+        let p_parsed = profile.and_then(|s| s.parse().ok());
+        let specs = detect_system_specs(
+            p_parsed,
+            std::env::current_exe().ok().as_deref(),
+            Some(root),
+        );
+        println!(
+            "{}",
+            serde_json::json!({
+                "event": "profile",
+                "profile": specs.active_profile.as_str(),
+                "storage_mode": specs.storage_mode.as_str(),
+                "total_ram_bytes": specs.total_ram_bytes,
+                "available_ram_bytes": specs.available_ram_bytes,
+                "cpu_cores": specs.cpu_cores,
+                "worker_threads": specs.worker_threads,
+                "is_portable": specs.is_portable
+            })
+        );
+        println!(
+            "{}",
+            serde_json::json!({
+                "event": "observe",
+                "source": source,
+                "models_available": models.len()
+            })
+        );
+        for a in &assignments {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "event": "plan",
+                    "role": a.role.as_str(),
+                    "model": a.model,
+                    "score": a.score
+                })
+            );
+        }
+        println!(
+            "{}",
+            serde_json::json!({
+                "event": "done",
+                "status": "ready",
+                "roles_assigned": assignments.len(),
+                "max_steps": max_steps
+            })
+        );
+        return ExitCode::SUCCESS;
+    }
+
+    let p = Palette::detect();
     println!();
     println!(
         " {}🎯 EXECUTION PLAN{}  {}·  {}{}",
@@ -856,4 +1045,246 @@ fn run_execute(root: &Path, auto_combo: bool, max_steps: u32) -> ExitCode {
     );
     println!();
     ExitCode::SUCCESS
+}
+
+fn run_profile(root: &Path, profile: Option<&str>, json: bool) -> ExitCode {
+    let p_parsed = profile.and_then(|s| s.parse().ok());
+    let specs = detect_system_specs(
+        p_parsed,
+        std::env::current_exe().ok().as_deref(),
+        Some(root),
+    );
+
+    if json {
+        match serde_json::to_string_pretty(&specs) {
+            Ok(s) => {
+                println!("{s}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("❌ Serialization error: {e}");
+                ExitCode::from(1)
+            }
+        }
+    } else {
+        let p = Palette::detect();
+        println!();
+        println!(
+            " {}⚙ HARDWARE PROFILE & ADAPTIVE RUNTIME ENGINE{}",
+            p.bold, p.reset
+        );
+        println!(
+            "   {}Active Profile:{}    {}",
+            p.dim,
+            p.reset,
+            specs.active_profile.as_str()
+        );
+        println!(
+            "   {}Storage Strategy:{}  {}",
+            p.dim,
+            p.reset,
+            specs.storage_mode.as_str()
+        );
+        println!(
+            "   {}System RAM:{}        {:.2} GB total  ·  {:.2} GB available",
+            p.dim,
+            p.reset,
+            specs.total_ram_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
+            specs.available_ram_bytes as f64 / (1024.0 * 1024.0 * 1024.0)
+        );
+        println!(
+            "   {}CPU Cores:{}         {}",
+            p.dim, p.reset, specs.cpu_cores
+        );
+        println!(
+            "   {}Worker Threads:{}    {}",
+            p.dim, p.reset, specs.worker_threads
+        );
+        println!(
+            "   {}Portable Drive:{}    {}",
+            p.dim, p.reset, specs.is_portable
+        );
+        println!(
+            "   {}Zero Flash Wear:{}   {}",
+            p.dim,
+            p.reset,
+            specs.is_zero_wear_active()
+        );
+        println!();
+        ExitCode::SUCCESS
+    }
+}
+
+fn run_session(root: &Path, command: &SessionCommand) -> ExitCode {
+    let session_path = root.join(".ai").join("session.jsonl");
+    let mut session = if session_path.exists() {
+        let raw = std::fs::read_to_string(&session_path).unwrap_or_default();
+        Session::from_jsonl(&raw).unwrap_or_default()
+    } else {
+        Session::new()
+    };
+
+    match command {
+        SessionCommand::Status { json } => {
+            let path = session.current_path().unwrap_or_default();
+            let labels = session.kind_labels();
+            let cost = session.total_cost_micros();
+            let latency = session.total_latency_ms();
+
+            if *json {
+                let status_val = serde_json::json!({
+                    "len": session.len(),
+                    "head": session.head(),
+                    "current_path": path,
+                    "labels": labels,
+                    "total_cost_micros": cost,
+                    "total_latency_ms": latency
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&status_val).unwrap_or_default()
+                );
+            } else {
+                let p = Palette::detect();
+                println!();
+                println!(" {}📈 SESSION DAG STATUS{}", p.bold, p.reset);
+                println!(
+                    "   {}Nodes:{}        {} committed",
+                    p.dim,
+                    p.reset,
+                    session.len()
+                );
+                println!("   {}Head:{}         {:?}", p.dim, p.reset, session.head());
+                println!("   {}Branch Path:{}  {:?}", p.dim, p.reset, path);
+                println!(
+                    "   {}Total Spend:{}  {} micros (${:.6})",
+                    p.green,
+                    p.reset,
+                    cost,
+                    cost as f64 / 1_000_000.0
+                );
+                println!("   {}Total Latency:{} {} ms", p.dim, p.reset, latency);
+                println!();
+            }
+            ExitCode::SUCCESS
+        }
+        SessionCommand::Fork {
+            node_id,
+            reason,
+            json,
+        } => {
+            let r = reason.as_deref().unwrap_or("cli fork");
+            match session.fork(*node_id, r) {
+                Ok(new_id) => {
+                    let jsonl = session.to_jsonl();
+                    let _ = AtomicStateSync::write_atomic(&session_path, jsonl.as_bytes());
+                    if *json {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "status": "forked",
+                                "node_id": node_id,
+                                "new_head": new_id
+                            })
+                        );
+                    } else {
+                        println!("✅ Forked at node {node_id} -> new head is {new_id}");
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("❌ Fork error: {e}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+        SessionCommand::Rollback {
+            to_verified,
+            to,
+            json,
+        } => {
+            let outcome = if *to_verified {
+                session
+                    .rollback_to_last_verified()
+                    .map(|opt| opt.unwrap_or(0))
+            } else if let Some(target) = to {
+                session.rollback(*target).map(|_| *target)
+            } else {
+                eprintln!("❌ Must specify either --to-verified or --to <node_id>");
+                return ExitCode::from(1);
+            };
+
+            match outcome {
+                Ok(new_head) => {
+                    let jsonl = session.to_jsonl();
+                    let _ = AtomicStateSync::write_atomic(&session_path, jsonl.as_bytes());
+                    if *json {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "status": "rolled_back",
+                                "new_head": new_head
+                            })
+                        );
+                    } else {
+                        println!("✅ Rolled back -> head is now node {new_head}");
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("❌ Rollback error: {e}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+        SessionCommand::Compact {
+            from,
+            to,
+            summary,
+            json,
+        } => {
+            let mut surface = match session.context_surface() {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("❌ Context surface error: {e}");
+                    return ExitCode::from(1);
+                }
+            };
+
+            match surface.compact_range(*from, *to, summary) {
+                Ok(()) => {
+                    session.push(NodeKind::Compacted {
+                        start: *from,
+                        end: *to,
+                        summary: summary.clone(),
+                    });
+                    let _ = session.commit();
+                    let jsonl = session.to_jsonl();
+                    let _ = AtomicStateSync::write_atomic(&session_path, jsonl.as_bytes());
+
+                    if *json {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "status": "compacted",
+                                "from": from,
+                                "to": to,
+                                "surface_len": surface.len()
+                            })
+                        );
+                    } else {
+                        println!(
+                            "✅ Compacted nodes {from}..{to} on context surface ({} items remain)",
+                            surface.len()
+                        );
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("❌ Compaction error: {e}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+    }
 }

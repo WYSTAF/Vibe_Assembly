@@ -64,6 +64,35 @@ pub fn hash_block(lines: &[&str]) -> u64 {
     fnv1a64(buf.as_bytes())
 }
 
+/// Hash an entire file's normalized content.
+/// Ported from oh-my-pi's whole-file staleness assertion (XXH32 -> 64-bit FNV-1a).
+pub fn hash_file(source: &str) -> u64 {
+    let mut buf = String::with_capacity(source.len());
+    for line in source.lines() {
+        buf.push_str(normalize_line(line));
+        buf.push('\n');
+    }
+    fnv1a64(buf.as_bytes())
+}
+
+/// Check if a line opens a multi-line raw string literal, returning the expected closer.
+fn detect_raw_string_open(line: &str) -> Option<&'static str> {
+    if let Some(pos) = line.find("r##\"") {
+        if !line[pos + 4..].contains("\"##") {
+            return Some("\"##");
+        }
+    } else if let Some(pos) = line.find("r#\"") {
+        if !line[pos + 3..].contains("\"#") {
+            return Some("\"#");
+        }
+    } else if let Some(pos) = line.find("r\"") {
+        if !line[pos + 2..].contains('"') {
+            return Some("\"");
+        }
+    }
+    None
+}
+
 /// Split `source` into semantic blocks.
 ///
 /// A block starts at a line with lower indentation than its predecessor (a
@@ -76,24 +105,62 @@ pub fn segment_blocks(source: &str) -> Vec<Block> {
         return Vec::new();
     }
 
-    let indent = |line: &str| -> usize {
+    let mut in_block_comment = false;
+    let mut raw_string_closer: Option<&'static str> = None;
+
+    let mut indents: Vec<usize> = Vec::with_capacity(lines.len());
+    for line in &lines {
         let trimmed = line.trim_start();
-        if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with("/*") {
-            return usize::MAX; // neutral: never opens a block
+        if trimmed.is_empty() {
+            indents.push(usize::MAX);
+            continue;
         }
-        // A closing brace dedents to column 0, which would otherwise open a
+
+        // Multi-line block comment tracking
+        if in_block_comment {
+            if line.contains("*/") {
+                in_block_comment = false;
+            }
+            indents.push(usize::MAX);
+            continue;
+        } else if trimmed.starts_with("/*") && !line.contains("*/") {
+            in_block_comment = true;
+            indents.push(usize::MAX);
+            continue;
+        }
+
+        // Multi-line raw string tracking (e.g. r#"..."# or r"...")
+        if let Some(closer) = raw_string_closer {
+            if line.contains(closer) {
+                raw_string_closer = None;
+            }
+            indents.push(usize::MAX);
+            continue;
+        } else if let Some(closer) = detect_raw_string_open(line) {
+            raw_string_closer = Some(closer);
+        }
+
+        // Single-line comments, doc comments, block comment continuations
+        if trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*') {
+            indents.push(usize::MAX);
+            continue;
+        }
+
+        // A closing brace/bracket/paren dedents to column 0, which would otherwise open a
         // new block and orphan it from the body it terminates. Braces are part
         // of the scope they close, so give them the body's depth.
         if trimmed.starts_with('}') || trimmed.starts_with(')') || trimmed.starts_with(']') {
-            return usize::MAX;
+            indents.push(usize::MAX);
+            continue;
         }
-        line.len() - trimmed.len()
-    };
+
+        indents.push(line.len() - trimmed.len());
+    }
 
     let mut starts: Vec<usize> = vec![0];
     for i in 1..lines.len() {
-        let cur = indent(lines[i]);
-        let prev = indent(lines[i - 1]);
+        let cur = indents[i];
+        let prev = indents[i - 1];
         if cur != usize::MAX && cur < prev {
             starts.push(i);
         }
@@ -155,6 +222,8 @@ pub enum PatchError {
     },
     /// A 1-hop rebase was attempted but the enclosing context changed.
     ContextMismatch { expected: String, actual: String },
+    /// Whole file drifted since discovery — external modification detected (oh-my-pi).
+    FileDrifted { expected: u64, actual: u64 },
 }
 
 impl std::fmt::Display for PatchError {
@@ -187,6 +256,10 @@ impl std::fmt::Display for PatchError {
                 f,
                 "enclosing context changed: expected `{expected}`, found `{actual}` — refusing to rebase"
             ),
+            PatchError::FileDrifted { expected, actual } => write!(
+                f,
+                "whole file drifted since discovery: expected hash {expected:#018x}, found {actual:#018x}"
+            ),
         }
     }
 }
@@ -198,6 +271,9 @@ impl std::error::Error for PatchError {}
 pub struct PatchOp {
     pub target_hash: u64,
     pub replacement: String,
+    /// Whole-file hash at discovery time. If set, catches external file drift
+    /// before block resolution (ported from oh-my-pi).
+    pub expected_file_hash: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -220,11 +296,19 @@ pub enum RecoveryKind {
 /// Apply `op` to `source`, addressing the target by hash.
 ///
 /// Resolution order:
-/// 1. Exact hash match — unambiguous, applied directly.
-/// 2. Single-hop recovery when the hash is gone but the block's opening
+/// 1. Whole-file staleness check (if `expected_file_hash` supplied).
+/// 2. Exact hash match — unambiguous, applied directly.
+/// 3. Single-hop recovery when the hash is gone but the block's opening
 ///    signature appears exactly once at a different position.
-/// 3. Hard failure. Ambiguity at any step is an error, never a guess.
+/// 4. Hard failure. Ambiguity at any step is an error, never a guess.
 pub fn apply_patch(source: &str, op: &PatchOp) -> Result<String, PatchError> {
+    if let Some(expected) = op.expected_file_hash {
+        let actual = hash_file(source);
+        if actual != expected {
+            return Err(PatchError::FileDrifted { expected, actual });
+        }
+    }
+
     if op.replacement.trim().is_empty() {
         return Err(PatchError::EmptyReplacement);
     }
@@ -306,6 +390,19 @@ thread_local! {
 type HashMapT = std::collections::HashMap<u64, String>;
 
 impl PatchOp {
+    pub fn new(target_hash: u64, replacement: impl Into<String>) -> Self {
+        Self {
+            target_hash,
+            replacement: replacement.into(),
+            expected_file_hash: None,
+        }
+    }
+
+    pub fn with_expected_file_hash(mut self, hash: u64) -> Self {
+        self.expected_file_hash = Some(hash);
+        self
+    }
+
     /// Record the block's opening signature at hash time, enabling drift
     /// recovery later.
     pub fn with_signature(self, signature: &str) -> Self {
@@ -413,10 +510,7 @@ mod tests {
             .into_iter()
             .find(|b| b.signature == "fn beta() {")
             .unwrap();
-        let op = PatchOp {
-            target_hash: block.hash,
-            replacement: "fn beta() {\n    let y = 99;\n    y\n}".to_string(),
-        };
+        let op = PatchOp::new(block.hash, "fn beta() {\n    let y = 99;\n    y\n}");
         let out = apply_patch(SAMPLE, &op).unwrap();
         assert!(out.contains("let y = 99;"));
         assert!(!out.contains("let y = 2;"));
@@ -426,10 +520,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_hash() {
-        let op = PatchOp {
-            target_hash: 0xdead_beef,
-            replacement: "x".to_string(),
-        };
+        let op = PatchOp::new(0xdead_beef, "x");
         assert!(matches!(
             apply_patch(SAMPLE, &op),
             Err(PatchError::NotFound { .. })
@@ -439,10 +530,7 @@ mod tests {
     #[test]
     fn rejects_empty_replacement() {
         let block = segment_blocks(SAMPLE)[0].clone();
-        let op = PatchOp {
-            target_hash: block.hash,
-            replacement: "   ".to_string(),
-        };
+        let op = PatchOp::new(block.hash, "   ");
         assert_eq!(apply_patch(SAMPLE, &op), Err(PatchError::EmptyReplacement));
     }
 
@@ -460,10 +548,7 @@ mod tests {
             2,
             "duplicate scopes must collide so the rejection path is exercised"
         );
-        let op = PatchOp {
-            target_hash: shared,
-            replacement: "fn a() {\n    2\n}".to_string(),
-        };
+        let op = PatchOp::new(shared, "fn a() {\n    2\n}");
         assert!(matches!(
             apply_patch(dup, &op),
             Err(PatchError::Ambiguous { count: 2, .. })
@@ -479,13 +564,34 @@ mod tests {
             .find(|b| b.signature == "fn beta() {")
             .unwrap();
         let drifted = format!("// new header comment\n\n{}", SAMPLE);
-        let op = PatchOp {
-            target_hash: block.hash,
-            replacement: "fn beta() {\n    let y = 42;\n    y\n}".to_string(),
-        }
-        .with_signature("fn beta() {");
+        let op = PatchOp::new(block.hash, "fn beta() {\n    let y = 42;\n    y\n}")
+            .with_signature("fn beta() {");
         let out = apply_patch(&drifted, &op).unwrap();
         assert!(out.contains("let y = 42;"));
         assert!(out.contains("fn alpha() {"));
+    }
+
+    #[test]
+    fn rejects_when_whole_file_drifted() {
+        let block = segment_blocks(SAMPLE)[0].clone();
+        let file_hash = hash_file(SAMPLE);
+        let op = PatchOp::new(block.hash, "fn alpha() { 42 }").with_expected_file_hash(file_hash);
+
+        let drifted = format!("// header\n{}", SAMPLE);
+        assert!(matches!(
+            apply_patch(&drifted, &op),
+            Err(PatchError::FileDrifted { .. })
+        ));
+    }
+
+    #[test]
+    fn raw_string_literal_does_not_split_scope() {
+        let code = "fn make_query() -> &'static str {\n    r#\"\nSELECT *\nFROM users\n\"#\n}\n";
+        let blocks = segment_blocks(code);
+        assert_eq!(
+            blocks.len(),
+            1,
+            "raw string literal must not split the function into orphaned blocks"
+        );
     }
 }

@@ -12,11 +12,11 @@
 //! enforced by `Judge::record_failure`.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::judge::{Judge, JudgeConfig, Verdict};
 use crate::patcher::{apply_patch, PatchOp};
 use crate::review::{ReviewError, Reviewer};
+use crate::sandbox::{SandboxConfig, SandboxExecutor};
 use crate::session::{NodeKind, Session};
 
 /// The sentinel that terminates a review loop, mirroring the upstream's
@@ -124,6 +124,8 @@ pub struct Engine {
     repo: PathBuf,
     reviewer: Reviewer,
     judge: Judge,
+    sandbox: SandboxExecutor,
+    verification_commands: Vec<String>,
     stats: EngineStats,
     /// Hard cap so a misbehaving planner cannot loop forever.
     max_steps: u32,
@@ -131,10 +133,13 @@ pub struct Engine {
 
 impl Engine {
     pub fn new(repo: &Path) -> Self {
+        let sandbox_config = SandboxConfig::default_for(repo);
         Self {
             repo: repo.to_path_buf(),
             reviewer: Reviewer::new(repo),
             judge: Judge::with_defaults(),
+            sandbox: SandboxExecutor::new(sandbox_config),
+            verification_commands: Vec::new(),
             stats: EngineStats::default(),
             max_steps: 50,
         }
@@ -142,6 +147,16 @@ impl Engine {
 
     pub fn with_judge_config(mut self, config: JudgeConfig) -> Self {
         self.judge = Judge::new(config);
+        self
+    }
+
+    pub fn with_sandbox_config(mut self, config: SandboxConfig) -> Self {
+        self.sandbox = SandboxExecutor::new(config);
+        self
+    }
+
+    pub fn with_verification_command(mut self, cmd: impl Into<String>) -> Self {
+        self.verification_commands.push(cmd.into());
         self
     }
 
@@ -182,11 +197,75 @@ impl Engine {
 
             match action {
                 Action::Done => {
-                    session.push(NodeKind::Verification {
+                    // Durable onYield verification gate (ported from pi/packages/durable)
+                    if self.reviewer.is_repository() {
+                        let verdict = self.reviewer.review_since_checkpoint(&self.judge)?;
+                        if let Verdict::Reject(findings) = verdict {
+                            let feedback = Judge::feedback(&findings);
+                            self.stats.judge_rejections += 1;
+                            records.push(StepRecord {
+                                action: label.clone(),
+                                verified: false,
+                                judge: Some(feedback.clone()),
+                            });
+                            if self.judge.record_failure() {
+                                self.stats.retries_used += 1;
+                                session.push(NodeKind::Thought {
+                                    text: format!("onYield judge feedback: {feedback}"),
+                                });
+                                session.commit()?;
+                                continue;
+                            } else {
+                                session.push(NodeKind::Verification {
+                                    passed: false,
+                                    detail: "onYield judge rejected diff".to_string(),
+                                });
+                                session.commit()?;
+                                session.rollback_to_last_verified()?;
+                                return Err(EngineError::Rejected(feedback));
+                            }
+                        }
+                    }
+
+                    // Run configured verification commands through sandboxed executor
+                    for cmd in &self.verification_commands {
+                        self.stats.verifications_run += 1;
+                        let res = self
+                            .sandbox
+                            .execute(cmd, None)
+                            .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?;
+                        if !res.success {
+                            session.push(NodeKind::Verification {
+                                passed: false,
+                                detail: format!("onYield verify `{cmd}` failed: {}", res.stderr),
+                            });
+                            session.commit()?;
+                            session.rollback_to_last_verified()?;
+                            return Err(EngineError::Verify {
+                                command: cmd.clone(),
+                                code: res.exit_code.unwrap_or(-1),
+                                stderr: res.stderr,
+                            });
+                        }
+                    }
+
+                    // All gates passed: record deterministic judge_verified_hash
+                    let verified_hash = crate::session::fnv1a64(
+                        format!(
+                            "verified:{}:{}",
+                            session.head().unwrap_or(0),
+                            self.stats.steps
+                        )
+                        .as_bytes(),
+                    );
+
+                    let v_id = session.push(NodeKind::Verification {
                         passed: true,
-                        detail: "planner reported Done".to_string(),
+                        detail: "planner reported Done; all verification gates passed".to_string(),
                     });
                     session.commit()?;
+                    let _ = session.record_judge_verified(v_id, verified_hash);
+
                     records.push(StepRecord {
                         action: label,
                         verified: true,
@@ -251,16 +330,16 @@ impl Engine {
                 }
                 Action::Verify { command } => {
                     self.stats.verifications_run += 1;
-                    let output = Command::new("cmd")
-                        .args(["/C", command.as_str()])
-                        .current_dir(&self.repo)
-                        .output()?;
-                    let passed = output.status.success();
-                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    let res = self
+                        .sandbox
+                        .execute(&command, None)
+                        .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))?;
+                    let passed = res.success;
+                    let stderr = res.stderr;
 
                     session.push(NodeKind::Verification {
                         passed,
-                        detail: format!("{command} → {}", output.status),
+                        detail: format!("{command} → exit {:?}", res.exit_code),
                     });
                     session.commit()?;
 
@@ -276,7 +355,7 @@ impl Engine {
                         session.rollback_to_last_verified()?;
                         return Err(EngineError::Verify {
                             command,
-                            code: output.status.code().unwrap_or(-1),
+                            code: res.exit_code.unwrap_or(-1),
                             stderr,
                         });
                     }

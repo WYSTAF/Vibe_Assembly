@@ -9,6 +9,7 @@ pub mod parser;
 pub mod prompts;
 pub mod router;
 pub mod router_client;
+pub mod runtime;
 pub mod state;
 
 // Re-export common types
@@ -27,5 +28,9 @@ pub use router::{fetch_live_assignment, resolve_assignment, RoleAllocation, Rout
 pub use router_client::{
     fetch_assignment, fetch_default, RouterAssignment as GatewayAssignment, RouterAuth,
     RouterStatus,
+};
+pub use runtime::{
+    detect_system_specs, from_portable_path, to_portable_path, HardwareProfile, StorageMode,
+    SystemSpecs, PORTABLE_ROOT_TOKEN,
 };
 pub use state::Workspace;
