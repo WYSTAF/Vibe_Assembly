@@ -1,9 +1,48 @@
-# 🐞 Forensic Anomaly Log
+# Forensic Anomaly Log
 
-## KB-001 — Electron dev launch dies with `SyntaxError: ... does not provide an export named 'BrowserWindow'`
-- **Date:** 2026-08-25 (T-401)
-- **Symptom:** `bun run dev` in `app/opencode-dev/packages/desktop` crashed at startup: `SyntaxError: The requested module 'electron' does not provide an export named 'BrowserWindow'` from `electron-dl@4.0.0/index.js:5`.
-- **Root cause:** `ELECTRON_RUN_AS_NODE=1` present in the launch environment. Editors and agent harnesses that themselves run inside Electron (VS Code, Roo Code, Cursor) inject this var into spawned shells/terminals. electron-vite spawns the Electron binary with inherited env, so electron.exe booted as plain Node instead of Electron. Named ESM imports from `'electron'` then resolve against the npm stub package (default export only, no named exports). `electron-dl@4.0.0` — a transitive dependency of `electron-context-menu` — uses `import { BrowserWindow } from 'electron'`, so module load failed before any app code ran.
-- **Evidence:** reproduced byte-for-byte via `ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe .`; clean env launches the app normally; probe confirmed the stub exposes no named exports under `ELECTRON_RUN_AS_NODE=1`.
-- **Fix:** `scripts/dev.ts` sanitizes `ELECTRON_RUN_AS_NODE` out of a copied env object and spawns `electron-vite dev` with the explicit sanitized `env`. `"dev"` script routes through it. Explicit-env is mandatory: mutating `process.env` under Bun does not reliably propagate to child processes.
-- **Lesson:** when an Electron toolchain crashes with "module 'electron' does not provide an export named X", check for `ELECTRON_RUN_AS_NODE` leakage first — it is an environment defect, not a code defect.
+## KB-002 - Live planner parsed 4-hex block hashes as decimal
+- **Date:** 2026-10-23
+- **Symptom:** A live Code response referencing a short hash such as `C8C7`
+  failed with `code referenced unknown block hash`, even though the RepoMap
+  printed that exact hash.
+- **Root cause:** `lookup_block` used `str::parse::<u16>()` (decimal) for
+  short hashes, while `patcher::short_hash` emits hexadecimal.
+- **Fix:** Parse with `u16::from_str_radix(&cleaned, 16)`. Covered by the
+  `live_planner_boss_code_verify_against_real_http` integration test.
+- **Lesson:** A hash display format and its parser are one contract; test them
+  against a real HTTP response, not only synthetic strings.
+
+## KB-003 - Repeated-body ambiguity guard missed indented duplicates
+- **Date:** 2026-10-23
+- **Symptom:** A 1-hop patch recovery could still target a block whose body
+  appeared again nested at a deeper indentation.
+- **Root cause:** The repeat guard normalized trailing whitespace but preserved
+  leading indentation, so the nested copy did not compare equal.
+- **Fix:** Repeat detection trims each line before counting occurrences and
+  rejects with `PatchError::AmbiguousRepeatedAnchor`. Regression test:
+  `repeated_body_rejects_even_a_correctly_shifted_anchor`.
+- **Lesson:** Ambiguity checks must be stricter than hash matching; otherwise a
+  correct-looking recovery can silently edit the wrong scope.
+
+## KB-004 - EXPERIENCE.md round-trip lost language/domain
+- **Date:** 2026-10-23
+- **Symptom:** Lessons reloaded from `EXPERIENCE.md` were never rendered for
+  `rust`/`workspace` because the parsed language field was
+  `"rust / workspace"`.
+- **Root cause:** The parser split the date header with `splitn(3, " - ")`
+  while the rendered header packs language and domain after a single separator.
+- **Fix:** Split the scope on ` / ` after the date separator. Covered by
+  `experience_round_trips_through_markdown`.
+- **Lesson:** Markdown persistence needs a round-trip test for every field, not
+  just the primary payload.
+
+## Open Environment Caveats
+
+- **GPUI stack on Windows:** the workspace builds with the MSVC toolchain and VS
+  Build Tools. If a machine still hits `STATUS_STACK_BUFFER_OVERRUN`, build from
+  a shell with `ulimit -s unlimited`; `RUST_MIN_STACK` is not sufficient.
+- **Raw HTTP client scope:** `va-core::router_client` speaks HTTP/1.1 without
+  TLS by design. Point it at a local router or a TLS-terminating proxy; do not
+  send credentials to a remote plaintext endpoint.
+- **No remote telemetry:** cost and latency are read only from router response
+  headers and stored in the local session DAG.

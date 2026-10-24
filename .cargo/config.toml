@@ -1,7 +1,6 @@
-# Reuse the dependency build cache from the probe crate so gpui's ~700
-# transitive crates are compiled once, not once per project.
-[build]
-target-dir = "Q:/va-rust/gpui-probe/target"
-# Single job prevents mmap paging file exhaustion on Windows when multiple
-# rustc instances simultaneously mmap the multi-gigabyte gpui rlibs.
-jobs = 1
+# Workspace-relative build directory. Cargo's default lives at
+# `<workspace>/target`, so builds work on any drive (C:, D:, …) without a
+# machine-specific absolute path.
+#
+# Parallel codegen is restored to Cargo's default: the previous `jobs = 1`
+# guard existed only to protect the Q: probe cache and is no longer needed.

@@ -1,12 +1,32 @@
 # Current Operational State
-- **Active Milestone:** Architectural Expansion Wave (ADR-014, ADR-015, ADR-016, ADR-017)
-- **Current Assignment:** Expansion Complete — Hash-Anchored RepoMap, Diagnostic Pinpointer, Live Router Planner, and Speculative Tournament Subsystems operational.
-- **Planning Status:** Complete across all architectural waves.
+
+- **Active Milestone:** v2.0.0 Production Hardening and Feature Completion (ADR-018)
+- **Current Assignment:** Complete - real live planner, execution modes,
+  language lens, context compaction, safety guards, durable experience, and
+  interactive CLI/TUI/desktop selectors.
+- **Planning Status:** Complete.
 - **Implementation Status:**
-  - `va-core`: Single-writer task lock guard, parser, allocator, `knowledge.rs` (benchmarks + version heuristics + 6-role auto-combo), `router_client.rs` (Vibe-Link, 9router/OpenAI fallback, auto-handshake, telemetry), and `runtime.rs` (hardware profiler, disk-first VPS mode, RAM-first portable zero-wear, `{{PORTABLE_ROOT}}` path normalization, crash-safe atomic flush).
-  - `va-harness`: Multi-parent session trajectory DAG with FNV-1a ancestry hashes, `ContextSurface` range compaction, hash-anchored patcher with whole-file drift detection and scope-bound closing braces, git review isolation, `judge` anti-slop review with 1-retry budget, `sandbox` executor with timeouts and confinement, durable `onYield` verification loop with `judge_verified_hash`, `repomap.rs` (token-budgeted symbol scanner binding symbols to block hashes), `diagnostics.rs` (dual-format compiler error to block pinpointer), `live_planner.rs` (production Observe-Think-Patch-Verify-Judge runner with Vibe Router role headers), and `tournament.rs` (speculative multi-branch tournament runner and scorer).
-  - `va-cli`: Native terminal operations room (`vibe-assembly` ~3.8MB), `tui` / `top` dashboard, `profile [--json]`, `up [--json]`, `repomap [--max-tokens]`, `diagnose [--command]`, `session` (status, fork, rollback, compact), `run --auto-combo [--tournament] [--live] [--stream-jsonl]`, and expanded stdio JSON-RPC 2.0 MCP server (`vibe-assembly mcp`) exposing 8 native tools.
-  - `va-desktop`: Native GPUI GPU-accelerated desktop operations room (`vibe-assembly-desktop` ~11MB) with live Execution Harness panel (roles, live RepoMap symbol/block counts, tournament status).
-- **Verification Status:** 164/164 tests passing across the workspace. 0 compiler warnings. 0 clippy warnings (`cargo clippy --workspace --all-targets -- -D warnings`). `cargo fmt --all -- --check` clean. Release binaries built and verified.
-- **Resume Anchor:** n/a — all expansion wave subsystems verified and completed.
+  - `va-core`: parser, single-writer task lock, allocator, model knowledge,
+    real OpenAI-compatible chat-completions client with Vibe-Link headers and
+    telemetry, hardware-aware runtime, bootstrap, and `modes.rs` (four modes,
+    six language lenses, accents, contracts, guardrails, verification commands,
+    manifest/extension detection).
+  - `va-harness`: immutable session DAG with JSONL persistence, automatic
+    compaction at 75% of the model window, think-trace eviction, head/tail
+    observation slicing, pinned working-set tail, hash-anchored patcher with
+    repeated-anchor rejection, RepoMap, diagnostic pinpointer, review, judge
+    with language/mode guardrails, sandbox, tournament, Harness^2 surfaces,
+    contrastive recovery, `.ai/EXPERIENCE.md`, the execution engine with
+    read-only/stagnation enforcement, and the production live planner
+    (Boss -> Code -> Verify -> Debug -> Judge).
+  - `va-cli`: `vibe-assembly` with `status`, `models`, `doctor`, `init`,
+    `reset`, `up`, `repomap`, `diagnose`, `run`, `prompt`, `chat`, `tui`/`top`,
+    `profile`, `session`, `mcp`, `patch`, `blocks`, `fork`, `rollback`, and
+    `compact`. `init` and `run --auto-combo` auto-seed `.ai/model_combo.txt`.
+  - `va-desktop`: native GPUI Mission Control with clickable mode and language
+    selectors, a model picker, dynamic mode accents, and a real context-window
+    meter computed from `.ai/session.jsonl`.
+- **Verification Status:** 188 tests passing, 0 failed; clippy clean with
+  `-D warnings`; formatting clean; release build produced both binaries.
+- **Resume Anchor:** n/a - wave verified and complete.
 - **Blockers:** None.

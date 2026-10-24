@@ -3,10 +3,11 @@
 //! entirely for *status* so it always carries meaning.
 
 use gpui::{hsla, rgb, Hsla, Rgba};
+use va_core::modes::ExecutionMode;
 
 pub fn surface_0() -> Rgba {
-    // Window background — deepest layer.
-    rgb(0x0d0e10)
+    // Window background - deepest layer (#0C0D0E canvas).
+    rgb(0x0c0d0e)
 }
 
 pub fn surface_1() -> Rgba {
@@ -42,6 +43,12 @@ pub fn text_muted() -> Rgba {
 pub fn accent() -> Rgba {
     // Zed's blue.
     rgb(0x3b8eea)
+}
+
+/// Dynamic accent for the active execution mode. The four accents are chosen
+/// to stay readable on the #0C0D0E canvas.
+pub fn accent_for(mode: ExecutionMode) -> Rgba {
+    rgb(mode.accent_rgb())
 }
 
 /// Status colors. These are the only saturated hues in the app, so a red

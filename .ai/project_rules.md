@@ -1,14 +1,30 @@
-# 🛠️ Absolute Project Conventions & Directives
+# Absolute Project Conventions & Directives
 
 ## Code Architecture
-- Prefer explicit, declarative code over complex, shorthand abstractions.
-- Keep third-party package dependencies to a bare minimum unless explicitly authorized by the developer.
 
-## Project Stack Constraints
-- [Insert preferred package manager, e.g., Always use pnpm / Never use npm]
-- [Insert preferred database / ORM, e.g., Prefer PostgreSQL + Drizzle ORM]
-- [Insert styling guidelines, e.g., Strict Tailwind CSS, avoid inline styles]
+- Prefer explicit, declarative Rust over clever shorthand or macro-heavy abstractions.
+- Keep third-party dependencies to a bare minimum; add one only with explicit developer approval and a Cargo.lock update.
+- Preserve the four-crate split: `va-core` (state/router), `va-harness` (execution), `va-cli` (terminal), `va-desktop` (GPUI).
+- Keep the `.ai/` parser and the ticket contract in sync; the Rust parser is the implementation.
+
+## Stack Constraints
+
+- Build with Cargo on the stable MSVC toolchain. No other package manager or runtime is required.
+- UI is native GPUI or ANSI terminal only. Do not introduce a webview or browser process.
+- Router access uses the OpenAI-compatible HTTP client in `va-core::router_client`; TLS is terminated by a local proxy.
+- Default to workspace-relative paths and the `{{PORTABLE_ROOT}}` token.
 
 ## Execution Guardrails
-- Never introduce new architectural libraries or design patterns without explicit Developer approval.
-- Code Mode must write accompanying isolated test files for all new utility or backend logic components.
+
+- Never introduce a new architectural library or design pattern without explicit developer approval.
+- Code mode must add isolated tests for new utility, parser, router, or engine behavior.
+- Address edits by block hash, never by line number.
+- Chat mode is read-only; the engine enforces it.
+- Run the full gates before claiming completion:
+
+```text
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo build --release
+```

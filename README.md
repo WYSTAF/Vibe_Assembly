@@ -1,178 +1,222 @@
-# 🏗️ Vibe Assembly
+# Vibe Assembly
+> **Zero-dollar, infinite-context vibe coding architecture - now 100% native Rust.**
 
-> **Zero-Dollar, Infinite-Context Vibe Coding Architecture — now 100% native Rust.**
+Build large software projects on free or local model tiers without exhausting a
+single chat context. Vibe Assembly is a strict multi-agent workspace contract
+with native tooling: a state engine, an execution harness, a CLI/TUI, and a GPUI
+desktop dashboard.
 
-Build massive software projects using free API tiers without ever hitting context
-limits or AI hallucinations. Vibe Assembly is a strict multi-agent workspace
-contract with native tooling: a state engine, a CLI, and a GPUI desktop dashboard.
+Everything is Rust. There is no browser runtime, no webview, and no separate
+package-manager toolchain.
 
-There is no Node.js, no npm, and no `package.json`. Everything is Rust.
+## The problem
 
-## 🛑 The problem
+Keeping an entire project history in one chat exhausts token limits, loses
+architectural detail, and invites stale edits. The failure is contextual, not a
+model-quality problem.
 
-When coding with LLMs, keeping the entire project history in a single chat
-exhausts the token limits of free APIs (OpenRouter, Cloudflare Workers AI,
-Gemini free tier). The AI loses track of the architecture, hallucinates, and
-breaks the codebase. This is a **context** problem, not a model problem.
+## The solution
 
-## 💡 The solution
+Use focused roles that communicate through regulated markdown state in `.ai/`,
+and execute every edit through a verifiable harness.
 
-Stop using one AI employee. Use **five, who never share a chat**. They
-communicate only through regulated markdown files in `.ai/`.
+| Role / Mode | Owns |
+|---|---|
+| Boss (phase inside Code/Web/Debug) | Ticket blueprints and `.ai/` planning state. Never production code. |
+| Code (`--mode code`) | Implements only the active ticket, inside `files_allowed`. |
+| Web (`--mode web`) | HTML5, CSS, Tailwind, TypeScript, React, and `templates/`. |
+| Debug (`--mode debug`) | Compiler diagnostics, root-cause analysis, security audit. |
+| Chat (`--mode chat`) | Read-only architecture, explanation, and planning. |
+| Judge | Deterministic anti-slop gate, independent of the coding model. |
+| Hermes | Documentation and release notes, written from disk evidence. |
 
-| Mode | Role | Owns |
-|---|---|---|
-| 👑 Boss | Architect + PM. Writes ticket blueprints. | All `.ai/` planning state. **Never production code.** |
-| 💬 Chat | Product brainstorming. | Conversation only. |
-| 💻 Code | Implements only what Boss authorized. | One pointed ticket, inside `files_allowed`. |
-| 🐞 Debug | Surgical fixes when things break. | `known_bugs.md`. |
-| 📣 Hermes | Docs and release notes, from disk evidence. | Root `*.md`, `docs/`, `plans/`, `changelog.md`. |
+Because each task starts fresh and tickets are small, the limit moves from
+"chat length" to "ticket size" - and tickets are small by design.
 
-Because each mode starts with a fresh context, none of them hits the limit. The
-limit moves from "chat length" to "ticket size" — and tickets are small by design.
+## Execution modes
 
-## 🧠 The `.ai/` contract
+| Mode | Accent | Writes | Verification |
+|---|---|---|---|
+| Code | `#F5B800` amber | yes | language lens command |
+| Web | `#06B6D4` cyan | yes | language lens command |
+| Chat | `#3B82F6` blue | no (hard boundary) | none; read-only |
+| Debug | `#EF4444` red | yes | compiler/test command |
 
-`.ai/active_task.md` holds the queue and **exactly one Active Ticket pointer**,
-which is the sole execution authority ([ADR-007](.ai/decisions.md)). Each ticket
-carries an allowlist, verification-gated steps, and append-only `relay_notes`.
+Accents are carried through the CLI header, TUI panels, and the desktop header,
+selectors, context strip, and active panels.
 
-After each step, Code appends one note with the step number, changed paths, exact
-command, and exit code. A step counts as **verified** only when a *single* note
-both references that step (word-boundary matched) and carries success evidence.
-The **resume point** is the first unverified step — so an interrupted session
-resumes exactly where it stopped.
+## Language lens
 
-## ⚡ Quick start
+`--lang auto|rust|c|python|ts|go` selects a language lens. `auto` resolves from
+manifests (`Cargo.toml`, `go.mod`, `pyproject.toml`, `package.json`,
+`CMakeLists.txt`) and a bounded extension census. Each lens injects its
+verification command and judge guardrails into the prompt and the judge.
+
+## The `.ai/` contract
+
+`.ai/active_task.md` holds the queue and exactly one Active Ticket pointer, the
+sole execution authority ([ADR-007](.ai/decisions.md)). Each ticket carries an
+allowlist, verification-gated steps, and append-only `relay_notes`.
+
+A step counts as verified only when a single note references that step and
+carries success evidence. The resume point is the first unverified step, so an
+interrupted session resumes exactly where it stopped. Durable recovery lessons
+live in `.ai/EXPERIENCE.md`; the trajectory DAG lives in `.ai/session.jsonl`.
+
+## Quick start
 
 ```bash
-# Create a workspace
-cargo run -p va-cli -- init my-project
+# Build both binaries
+cargo build --release
 
-# Inspect it
+# Create a workspace (seeds .ai/model_combo.txt if absent)
+./target/release/vibe-assembly init my-project
 cd my-project
+
+# Inspect
 vibe-assembly status          # ticket queue + resume point
-vibe-assembly models          # model allocation for the modes
+vibe-assembly models          # model allocation for the six roles
 vibe-assembly doctor          # workspace health check
-vibe-assembly profile         # hardware specs & adaptive storage mode
-vibe-assembly tui             # lightweight terminal dashboard (alias: top)
-vibe-assembly --json          # machine-readable status
+vibe-assembly profile         # hardware specs and adaptive storage mode
+vibe-assembly tui             # terminal dashboard with selectors (alias: top)
 
-# Launch the desktop dashboard
-cargo run -p va-desktop
+# Execute one task
+vibe-assembly prompt "Add a health endpoint and its test" \
+  --mode code --lang rust
+
+# Read-only architect session
+vibe-assembly chat --lang rust
+
+# Full live loop with router auto-combo
+vibe-assembly run --live --auto-combo --tournament
+
+# Deterministic offline smoke test (never calls the router)
+vibe-assembly run --offline-mock
+
+# Desktop Mission Control
+cargo run -p va-desktop -- --mode web --lang ts
 ```
 
-## 📦 Workspace layout
+## Workspace layout
 
-```
+```text
 Vibe Assembly/
-├── .ai/                    # The AI contract — authoritative state
-├── crates/
-│   ├── va-core/            # State engine: parser, allocator, router, lock, prompts,
-│   │                       #   knowledge (model scoring), runtime (hardware profiler)
-│   ├── va-harness/         # Execution engine: session, patcher, review, judge, sandbox, engine
-│   ├── va-cli/             # `vibe-assembly` binary — terminal operations room & MCP server
-│   └── va-desktop/         # `vibe-assembly-desktop` — native GPUI dashboard
-├── templates/              # Seeded project starters (planner, todo, website)
-└── references/             # Upstream harnesses (not built)
+  .ai/                    # AI contract and authoritative state
+  crates/
+    va-core/              # parser, allocator, router client, lock, prompts,
+                          # bootstrap, runtime, execution modes
+    va-harness/           # session DAG, patcher, repomap, diagnostics, review,
+                          # judge, sandbox, tournament, experience, engine,
+                          # live planner
+    va-cli/               # vibe-assembly binary: CLI, TUI, chat, MCP
+    va-desktop/           # vibe-assembly-desktop: native GPUI dashboard
+  templates/              # seeded project starters
+  references/             # upstream study material (not built)
 ```
 
-## ⚙️ The execution harness
+## The execution harness
 
-`va-harness` is the part that makes an agent's edits safe to trust.
+`va-harness` makes agent edits safe to trust.
 
 | Module | Role |
 |---|---|
-| `session` | Append-only transactional trajectory DAG. Per-node state hashing, `fork`, `rollback`, `replay`, `ContextSurface` compaction. Replay reuses stored results — no tool re-runs. |
-| `patcher` | Edits address **per-block hashes**, never line numbers. Whole-file drift assertion (from `oh-my-pi`), 1-hop recovery from line shifts, and hard rejection on ambiguity. |
-| `repomap` | Fast workspace symbol scanner binding functions, structs, traits, and classes to deterministic block hashes within a configurable token budget. |
-| `diagnostics` | Dual-format compiler error pinpointer (`cargo --message-format=json` & text), mapping error line spans directly to target block hashes and snippets. |
-| `review` | Git checkpoint per phase, isolating each step's exact delta for review. |
-| `judge` | Deterministic gate before commit: slop comments, placeholders, `unwrap()` in production, import-only churn, excessive churn. One targeted retry, then abort. |
-| `sandbox` | Confined command execution with wall-clock timeouts, directory confinement, and bounded output capture. |
-| `tournament` | Multi-branch speculative tournament runner scoring candidate branches by zero warnings and minimal line churn, merging winner into the DAG. |
-| `live_planner` | Production Observe → Think (`boss`) → Patch (`code`) → Verify (`debug`) → Judge (`judge`) loop runner. |
-| `engine` | Orchestration loop with durable `onYield` completion gate, diagnostic pinpointer feedback, and `judge_verified_hash`. |
+| `session` | Append-only transactional trajectory DAG with per-node hashes, fork, rollback, replay, JSONL persistence, auto-compaction at 75%, think-trace eviction, observation slicing, and a pinned working-set tail. |
+| `patcher` | Edits address per-block hashes, never line numbers. Whole-file drift assertion, 1-hop recovery, and hard rejection of ambiguous or repeated anchors. |
+| `repomap` | Token-budgeted workspace symbol scanner binding functions, structs, traits, and classes to deterministic block hashes. |
+| `diagnostics` | Dual-format compiler pinpointer (`cargo --message-format=json` and text) mapping error spans to block hashes and snippets. |
+| `review` | Git checkpoint per phase, isolating each step's exact delta. |
+| `judge` | Deterministic gate: slop comments, placeholders, unsafe primitives in production, import-only churn, excessive churn, trailing whitespace, plus language and mode guardrails. One targeted retry, then abort. |
+| `sandbox` | Confined command execution with wall-clock timeouts, directory confinement, and bounded output. |
+| `tournament` | Multi-branch speculative runner scoring candidates by warnings and line churn, merging the winner into the DAG. |
+| `experience` | Harness^2 c1..c8 surfaces with strict reset-to-base, contrastive recovery, and durable `.ai/EXPERIENCE.md` lessons. |
+| `live_planner` | Real `POST /v1/chat/completions` Boss -> Code -> Verify -> Debug -> Judge loop with Vibe-Link headers and telemetry. |
+| `engine` | Orchestration with auto-compaction, read-only enforcement, stagnation detection, and judge-verified hashes. |
 
 ```bash
-# Ensure router readiness and perform Zero-401 handshake
+# Router readiness and token handshake
 vibe-assembly up
 
-# Discover symbols and block hashes across workspace
+# Discover symbols and block hashes
 vibe-assembly repomap --max-tokens 2048
 
-# Pinpoint compiler diagnostics directly to code block hashes
+# Pinpoint compiler diagnostics to block hashes
 vibe-assembly diagnose
 
-# Discover block hashes in a single file
+# Discover block hashes in one file
 vibe-assembly blocks src/main.rs
 
-# Patch by hash (4-hex short form or the full 64-bit value)
+# Patch by hash (4-hex short form or full 64-bit value)
 vibe-assembly patch src/main.rs --target 159A <<< 'pub fn beta(y: i32) -> i32 {
     y * 42
 }'
 
-# Zero-config role assignment with speculative tournament mode
-vibe-assembly run --auto-combo --tournament
-
-# Manage trajectory DAG
+# Session DAG operations
 vibe-assembly session status --json
 vibe-assembly session rollback --to-verified
 vibe-assembly session compact --from 2 --to 4 --summary "Collapsed failed attempts"
 
-# Start Model Context Protocol (MCP) server over stdio
+# MCP server over stdio
 vibe-assembly mcp
 ```
 
-## 🚀 Hardware-aware adaptive runtime
+## Router integration
 
-Vibe Assembly adapts seamlessly to execution hardware:
+`va-core::router_client` performs a real OpenAI-compatible
+`POST /v1/chat/completions` over raw HTTP/1.1 (no TLS stack; point it at a local
+router or a TLS-terminating proxy). Requests carry `X-Vibe-Role`,
+`X-Vibe-Node-Id`, `X-Vibe-Profile`, and `X-Vibe-Retry`, plus optional
+`Authorization: Bearer` or `X-API-Key`. Cost and latency are read from
+`X-Vibe-Router-Cost-Micros` / `X-VR-Cost-Micros` and the matching latency headers
+and recorded in the session DAG.
 
-- **Mode 1: Disk-First (VPS Ultra-Low-RAM Mode)** (`--profile vps` or available RAM < 1GB):
-  Worker threads constrained to 2 cores; session DAG, state updates, and checkpoints stream directly to disk with minimal buffering, maintaining total resident memory (RSS) strictly under ~35MB.
-- **Mode 2: RAM-First (Portable Zero-Wear Mode)** (`--profile portable` on host with >= 4GB RAM):
-  Hydrates workspace state and DAG into host RAM; performs intermediate edits, retries, and hash checks 100% in memory to prevent USB flash drive write amplification; flushes state to storage on verified checkpoints using crash-safe atomic write-to-temp + `fsync` + rename.
-- **Drive-Letter Independence**: Workspace-relative paths are normalized using the `{{PORTABLE_ROOT}}` token and resolved dynamically against the executable, allowing USB drives to switch host drive letters without broken links.
-- **Universal Gateway Fallback**: If the Vibe Router assignment endpoint returns `404 Not Found` (common on standard OpenAI proxies like `9router`, LiteLLM, or Ollama), the client automatically queries `GET /v1/models` and computes optimal 6-role allocations via heuristic auto-combo.
-- **Vibe-Link Synergy**: Outbound requests attach contextual headers (`X-Vibe-Role`, `X-Vibe-Node-Id`, `X-Vibe-Profile`, `X-Vibe-Retry`), support automatic zero-401 handshake via local `.vibe_router_token`, and ingest micro-dollar cost and latency telemetry (`X-VR-Cost-Micros`, `X-VR-Latency-Ms`) directly into session DAG nodes.
+Model resolution order: pinned `--model`, per-mode override
+(`.ai/models/<mode>.txt`), router assignment, `.ai/model_combo.txt`, then a
+conservative default. `init` and `run --auto-combo` auto-seed the combo file.
+The judge is always deterministic and independent; `--judge-model` is reported
+for audit and display.
 
-## 🧩 Feature parity with the legacy JS tooling
+## Context safety
 
-Every capability from the original Node.js implementation is now native Rust:
+- Auto-compaction triggers at 75% of the active model's context window.
+- Older verified steps and failed retries collapse into surface summaries while
+  the DAG remains intact for `replay()` and `rollback_to_last_verified()`.
+- Reasoning traces are evicted from prompts but retained in DAG nodes.
+- Large observations render head 30 + `[... elided N lines ...]` + tail 30.
+- The prompt always ends with fresh block hashes and line ranges for modified
+  files.
+- Two identical failures trigger `StagnationDetected`; policy can pivot or
+  escalate to `SpeculativeTournament`.
 
-| Legacy (JS) | Native (Rust) |
-|---|---|
-| `bin/lib/parser.js` | `va-core/src/parser.rs` |
-| `bin/allocate-models.js` | `va-core/src/allocator.rs` |
-| `bin/lib/router.js` | `va-core/src/router.rs` |
-| `bin/lib/lock.js` | `va-core/src/lock.rs` |
-| `bin/reset-template-state.js` | `va-core/src/bootstrap.rs` |
-| `bin/va.js` (the `va` CLI) | `vibe-assembly` binary — `va-cli/src/main.rs` |
-| `.roo/rules/*.md`, `.roomodes` | `va-core/src/prompts.rs` |
-| `app/desktop-rust/` | `va-desktop/` |
+## Hardware-aware runtime
 
-## 🔨 Building on Windows
+- **Disk-first VPS mode** (`--profile vps`, or available RAM < 1 GB): bounded
+  workers and disk-streamed state to keep resident memory low.
+- **RAM-first portable mode** (`--profile portable`, host RAM >= 4 GB): hydrate
+  state into RAM, perform intermediate edits in memory, and flush on verified
+  checkpoints with crash-safe atomic writes to reduce flash wear.
+- **Drive-letter independence:** workspace-relative paths normalize through the
+  `{{PORTABLE_ROOT}}` token.
+- **Universal gateway fallback:** if the assignment endpoint returns 404, the
+  client queries `GET /v1/models` and computes a six-role allocation heuristically.
 
-GPUI pulls ~700 transitive crates. On Windows, `rustc` can abort with
-`STATUS_STACK_BUFFER_OVERRUN` compiling a few heavy dependencies. Raise the
-stack before invoking cargo:
+## Verification
 
 ```bash
-bash -c 'ulimit -s unlimited; cargo build'
-```
-
-`RUST_MIN_STACK` does **not** fix this — the overflow is in the compiler
-process, not a worker thread. Build in debug; `opt-level=2` uses far more
-codegen stack.
-
-## 🧪 Verification
-
-```bash
-cargo fmt --all
-cargo clippy --workspace --all-targets   # 0 warnings
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+cargo build --release
 ```
 
-## 📄 License
+Current workspace: 188 tests passing, clippy clean, both release binaries built.
+
+## Building on Windows
+
+Install the MSVC toolchain and Visual Studio Build Tools (C++ workload), then
+run Cargo from a normal shell. If a machine still hits
+`STATUS_STACK_BUFFER_OVERRUN` while compiling GPUI dependencies, build from a
+shell with `ulimit -s unlimited`; `RUST_MIN_STACK` is not sufficient.
+
+## License
 
 MIT

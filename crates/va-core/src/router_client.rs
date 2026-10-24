@@ -27,6 +27,10 @@ pub const DEFAULT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_PORT: u16 = 20128;
 pub const DEFAULT_PATH: &str = "/api/assignment";
 pub const DEFAULT_TIMEOUT_MS: u64 = 400;
+/// OpenAI-compatible chat endpoint used by live planners.
+pub const DEFAULT_CHAT_PATH: &str = "/v1/chat/completions";
+/// Chat completions are slow on free tiers; the assignment probe stays short.
+pub const DEFAULT_CHAT_TIMEOUT_MS: u64 = 180_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RouterStatus {
@@ -209,6 +213,87 @@ impl RouterAuth {
     }
 }
 
+/// A single OpenAI-compatible chat message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
+impl ChatMessage {
+    pub fn system(content: impl Into<String>) -> Self {
+        Self {
+            role: "system".to_string(),
+            content: content.into(),
+        }
+    }
+
+    pub fn user(content: impl Into<String>) -> Self {
+        Self {
+            role: "user".to_string(),
+            content: content.into(),
+        }
+    }
+
+    pub fn assistant(content: impl Into<String>) -> Self {
+        Self {
+            role: "assistant".to_string(),
+            content: content.into(),
+        }
+    }
+}
+
+/// Parsed result of a real chat completion.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChatCompletion {
+    /// The assistant message content, verbatim.
+    pub content: String,
+    /// Model id echoed by the gateway, when present.
+    pub model: Option<String>,
+    /// `finish_reason` from the first choice, when present.
+    pub finish_reason: Option<String>,
+    /// Cost / latency / cache telemetry scraped from response headers.
+    pub telemetry: RouterTelemetry,
+    /// Raw decoded JSON body, kept for diagnostics and tolerant re-parsing.
+    pub raw: serde_json::Value,
+}
+
+impl ChatCompletion {
+    /// Extract `<think>...</think>` reasoning text, if the model emitted any.
+    pub fn reasoning(&self) -> Option<String> {
+        let lower = self.content.to_lowercase();
+        let start = lower.find("<think>")? + "<think>".len();
+        let end = lower[start..].find("</think>")? + start;
+        Some(self.content[start..end].trim().to_string())
+    }
+
+    /// Content with any `<think>...</think>` blocks removed.
+    pub fn content_without_reasoning(&self) -> String {
+        strip_think_blocks(&self.content)
+    }
+}
+
+/// Remove every `<think>...</think>` block from `text` (case-insensitive).
+pub fn strip_think_blocks(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    loop {
+        let lower = rest.to_lowercase();
+        let Some(start) = lower.find("<think>") else {
+            out.push_str(rest);
+            break;
+        };
+        out.push_str(&rest[..start]);
+        let after_open = start + "<think>".len();
+        let Some(rel_end) = lower[after_open..].find("</think>") else {
+            // Unclosed trace: drop the remainder rather than leak it.
+            break;
+        };
+        rest = &rest[after_open + rel_end + "</think>".len()..];
+    }
+    out.trim().to_string()
+}
+
 /// Discover active host proxies or local VPN tunnel ports.
 pub fn discover_host_proxies() -> Vec<String> {
     let mut proxies = Vec::new();
@@ -243,13 +328,20 @@ pub fn discover_host_proxies() -> Vec<String> {
     proxies
 }
 
-/// Perform the HTTP GET and return `(status, headers, body)`.
-fn http_get(
+/// Perform an HTTP/1.1 request and return `(status, headers, body)`.
+///
+/// Routing is intentionally dependency-free: the gateway is a local
+/// OpenAI-compatible HTTP endpoint, so a raw `TcpStream` keeps the workspace
+/// offline-buildable (no TLS stack) and avoids pulling a full HTTP client.
+#[allow(clippy::too_many_arguments)]
+fn http_request(
+    method: &str,
     host: &str,
     port: u16,
     path: &str,
     auth: &RouterAuth,
     ctx: &RequestContext,
+    body: Option<&str>,
     timeout: Duration,
 ) -> Result<(u16, BTreeMap<String, String>, String), String> {
     let addr = format!("{host}:{port}")
@@ -267,14 +359,21 @@ fn http_get(
         .set_write_timeout(Some(timeout))
         .map_err(|e| e.to_string())?;
 
-    let mut req = format!("GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\n");
+    let mut req = format!("{method} {path} HTTP/1.1\r\nHost: {host}:{port}\r\n");
     for (k, v) in auth.headers() {
         req.push_str(&format!("{k}: {v}\r\n"));
     }
     for (k, v) in ctx.headers() {
         req.push_str(&format!("{k}: {v}\r\n"));
     }
+    if let Some(payload) = body {
+        req.push_str("Content-Type: application/json\r\n");
+        req.push_str(&format!("Content-Length: {}\r\n", payload.len()));
+    }
     req.push_str("Connection: close\r\n\r\n");
+    if let Some(payload) = body {
+        req.push_str(payload);
+    }
     stream
         .write_all(req.as_bytes())
         .map_err(|e| format!("write: {e}"))?;
@@ -285,7 +384,7 @@ fn http_get(
         .map_err(|e| format!("read: {e}"))?;
     let text = String::from_utf8_lossy(&buf).to_string();
 
-    let (head, body) = text
+    let (head, raw_body) = text
         .split_once("\r\n\r\n")
         .ok_or_else(|| "malformed HTTP response".to_string())?;
     let status = head
@@ -302,7 +401,126 @@ fn http_get(
         }
     }
 
-    Ok((status, headers, body.to_string()))
+    let body_is_chunked = headers
+        .get("transfer-encoding")
+        .is_some_and(|v| v.to_ascii_lowercase().contains("chunked"));
+    let decoded = if body_is_chunked {
+        decode_chunked(raw_body)
+    } else {
+        raw_body.to_string()
+    };
+
+    Ok((status, headers, decoded))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn http_get(
+    host: &str,
+    port: u16,
+    path: &str,
+    auth: &RouterAuth,
+    ctx: &RequestContext,
+    timeout: Duration,
+) -> Result<(u16, BTreeMap<String, String>, String), String> {
+    http_request("GET", host, port, path, auth, ctx, None, timeout)
+}
+
+/// POST an OpenAI-compatible chat completion and parse content plus telemetry.
+///
+/// The request carries the full Vibe-Link header set (`X-Vibe-Role`,
+/// `X-Vibe-Node-Id`, `X-Vibe-Profile`, `X-Vibe-Retry`), optional
+/// `Authorization: Bearer` / `X-API-Key`, and a JSON body in the standard
+/// `{"model", "messages", "temperature"}` shape used by OpenAI-compatible
+/// routers (Vibe Router, 9router, LiteLLM, Ollama, OpenRouter proxies).
+#[allow(clippy::too_many_arguments)]
+pub fn chat_completion(
+    host: &str,
+    port: u16,
+    path: &str,
+    auth: &RouterAuth,
+    ctx: &RequestContext,
+    model: &str,
+    messages: &[ChatMessage],
+    temperature: f32,
+    max_tokens: Option<u32>,
+    timeout_ms: u64,
+) -> Result<ChatCompletion, String> {
+    let payload = serde_json::json!({
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "stream": false,
+    });
+    let body = serde_json::to_string(&payload).map_err(|e| format!("encode request: {e}"))?;
+
+    let (status, headers, response_body) = http_request(
+        "POST",
+        host,
+        port,
+        path,
+        auth,
+        ctx,
+        Some(&body),
+        Duration::from_millis(timeout_ms),
+    )?;
+
+    if status == 401 || status == 403 {
+        return Err(format!(
+            "gateway returned {status} — set VIBE_ROUTER_TOKEN, VIBE_ROUTER_API_KEY, or place .vibe_router_token in the workspace"
+        ));
+    }
+    if !(200..300).contains(&status) {
+        return Err(format!(
+            "chat completion failed with HTTP {status}: {}",
+            response_body.trim()
+        ));
+    }
+
+    parse_chat_completion(&response_body, &headers)
+}
+
+/// Parse an OpenAI-compatible chat completion body plus telemetry headers.
+pub fn parse_chat_completion(
+    body: &str,
+    headers: &BTreeMap<String, String>,
+) -> Result<ChatCompletion, String> {
+    let json: serde_json::Value =
+        serde_json::from_str(body.trim()).map_err(|e| format!("invalid JSON: {e}"))?;
+
+    let choice = json
+        .get("choices")
+        .and_then(|v| v.as_array())
+        .and_then(|v| v.first());
+
+    // Tolerate both the OpenAI chat shape and the legacy completions shape.
+    let content = choice
+        .and_then(|c| {
+            c.get("message")
+                .and_then(|m| m.get("content"))
+                .or_else(|| c.get("text"))
+        })
+        .or_else(|| json.get("content"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| "chat completion contained no assistant content".to_string())?;
+
+    let finish_reason = choice
+        .and_then(|c| c.get("finish_reason"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let model = json
+        .get("model")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+
+    Ok(ChatCompletion {
+        content,
+        model,
+        finish_reason,
+        telemetry: extract_telemetry(headers),
+        raw: json,
+    })
 }
 
 /// Decode chunked transfer encoding, which the Next.js gateway uses.
@@ -432,14 +650,23 @@ pub fn parse_assignment(body: &str) -> Result<RouterAssignment, String> {
 }
 
 fn extract_telemetry(headers: &BTreeMap<String, String>) -> RouterTelemetry {
-    let cost_micros = headers
-        .get("x-vr-cost-micros")
-        .and_then(|v| v.parse::<u64>().ok());
-    let latency_ms = headers
-        .get("x-vr-latency-ms")
-        .and_then(|v| v.parse::<u64>().ok());
+    let pick_u64 = |keys: &[&str]| -> Option<u64> {
+        keys.iter()
+            .find_map(|k| headers.get(*k).and_then(|v| v.parse::<u64>().ok()))
+    };
+    let cost_micros = pick_u64(&[
+        "x-vibe-router-cost-micros",
+        "x-vr-cost-micros",
+        "x-vibe-cost-micros",
+    ]);
+    let latency_ms = pick_u64(&[
+        "x-vibe-router-latency-ms",
+        "x-vr-latency-ms",
+        "x-vibe-latency-ms",
+    ]);
     let cache_hit = headers
         .get("x-vr-cache")
+        .or_else(|| headers.get("x-vibe-cache"))
         .map(|v| v.eq_ignore_ascii_case("hit"));
     RouterTelemetry {
         cost_micros,
@@ -565,16 +792,6 @@ pub fn fetch_assignment_with_context(
         return RouterAssignment::offline(format!("gateway returned HTTP {status}"));
     }
 
-    let body = if body
-        .trim_start()
-        .starts_with(|c: char| c.is_ascii_hexdigit() && c != '"')
-        && body.contains("chunked")
-    {
-        decode_chunked(&body)
-    } else {
-        body
-    };
-
     match parse_assignment(&body) {
         Ok(mut a) => {
             a.telemetry = telemetry;
@@ -616,6 +833,41 @@ pub fn fetch_default() -> RouterAssignment {
         &path,
         &RouterAuth::discover(None),
         DEFAULT_TIMEOUT_MS,
+    )
+}
+
+/// Resolve router connection settings from the environment.
+pub fn router_endpoint() -> (String, u16, String) {
+    let host = std::env::var("VIBE_ROUTER_HOST").unwrap_or_else(|_| DEFAULT_HOST.to_string());
+    let port = std::env::var("VIBE_ROUTER_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(DEFAULT_PORT);
+    let path =
+        std::env::var("VIBE_ROUTER_CHAT_PATH").unwrap_or_else(|_| DEFAULT_CHAT_PATH.to_string());
+    (host, port, path)
+}
+
+/// Chat completion against the configured default gateway.
+pub fn chat_completion_default(
+    ctx: &RequestContext,
+    model: &str,
+    messages: &[ChatMessage],
+    temperature: f32,
+    max_tokens: Option<u32>,
+) -> Result<ChatCompletion, String> {
+    let (host, port, path) = router_endpoint();
+    chat_completion(
+        &host,
+        port,
+        &path,
+        &RouterAuth::discover(None),
+        ctx,
+        model,
+        messages,
+        temperature,
+        max_tokens,
+        DEFAULT_CHAT_TIMEOUT_MS,
     )
 }
 

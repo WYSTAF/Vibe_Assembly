@@ -1,4 +1,24 @@
-# 📝 Project Overview
-Core Vision: [Provide a concise summary of what this application is and the core problem it solves]
-Target Core Features: [High-level checklist of foundational product requirements]
-Strategic Non-Goals: [Explicitly outline what this project will NOT attempt to build to prevent scope creep]
+# Project Overview
+
+**Core vision:** Vibe Assembly is a native Rust workspace that lets small,
+focused agents build and maintain large software projects without exhausting a
+single chat context. Roles communicate through regulated `.ai/` state, and every
+edit passes through a deterministic, hash-anchored execution harness.
+
+**Target core features:**
+
+- Four execution modes: Code, Web, Chat (read-only), Debug.
+- Six language lenses: Auto, Rust, C/C++, Python, TS/JS, Go.
+- Real OpenAI-compatible live planner with Boss, Code, Verify, and Debug phases.
+- Immutable session DAG with replay, rollback, compaction, and telemetry.
+- Hash-anchored patching with drift recovery and ambiguity rejection.
+- Deterministic judge with language and mode guardrails.
+- Durable `.ai/EXPERIENCE.md` recovery lessons.
+- CLI, TUI, MCP server, and native GPUI Mission Control.
+
+**Strategic non-goals:**
+
+- No webview, browser process, or second package-manager toolchain.
+- No cloud service or remote state store; `.ai/` is the source of truth.
+- No silent edits: a live run never fabricates a patch.
+- No automatic publishing or commit attribution.

@@ -514,6 +514,17 @@ impl Session {
         Ok(ContextSurface::from_nodes(nodes))
     }
 
+    /// Return the active branch already compacted to the configured budget.
+    /// The DAG itself is never mutated — only the returned view is collapsed.
+    pub fn context_surface_with_budget(
+        &self,
+        config: &ContextWindowConfig,
+    ) -> Result<(ContextSurface, usize), SessionError> {
+        let mut surface = self.context_surface()?;
+        let compacted = surface.auto_compact_to_budget(config.budget_tokens());
+        Ok((surface, compacted))
+    }
+
     /// Record cost and latency telemetry on an existing node.
     pub fn record_telemetry(
         &mut self,
@@ -729,9 +740,168 @@ impl SurfaceItem {
 /// intact for full auditability, rollback, and replay, while providing a
 /// collapsed context view for LLM prompt construction without mutating or
 /// losing DAG nodes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextSurface {
     pub items: Vec<SurfaceItem>,
+}
+
+/// Automatic context-window management policy.
+///
+/// Vibe Assembly compacts on its own: the user never has to click `/compact`.
+/// The default watermark is 75% of the active model's window.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ContextWindowConfig {
+    /// Model context window in tokens.
+    pub window_tokens: usize,
+    /// Fraction of the window at which compaction triggers (default 0.75).
+    pub watermark: f64,
+    /// Recent items that are never compacted away.
+    pub keep_recent: usize,
+}
+
+impl Default for ContextWindowConfig {
+    fn default() -> Self {
+        Self {
+            window_tokens: 128_000,
+            watermark: 0.75,
+            keep_recent: 8,
+        }
+    }
+}
+
+impl ContextWindowConfig {
+    pub fn new(window_tokens: usize) -> Self {
+        Self {
+            window_tokens,
+            ..Default::default()
+        }
+    }
+
+    /// Token budget at the watermark (never below 1).
+    pub fn budget_tokens(&self) -> usize {
+        ((self.window_tokens as f64) * self.watermark).max(1.0) as usize
+    }
+}
+
+/// A block of a modified file, pinned to the tail of the context surface so a
+/// model can never edit a stale hash.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkingSetBlock {
+    pub hash: u64,
+    pub start_line: usize,
+    pub end_line: usize,
+}
+
+/// One file in the pinned working set.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkingSetEntry {
+    pub path: String,
+    pub blocks: Vec<WorkingSetBlock>,
+}
+
+impl WorkingSetEntry {
+    pub fn new(path: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            blocks: Vec::new(),
+        }
+    }
+
+    pub fn with_block(mut self, hash: u64, start_line: usize, end_line: usize) -> Self {
+        self.blocks.push(WorkingSetBlock {
+            hash,
+            start_line,
+            end_line,
+        });
+        self
+    }
+}
+
+/// Render a large observation as a deterministic head/tail slice.
+///
+/// The full text is still stored in the immutable DAG node; this is only the
+/// prompt-facing rendering. Thresholds: >80 lines or >4,000 bytes.
+pub fn slice_observation(text: &str) -> String {
+    const MAX_LINES: usize = 80;
+    const MAX_BYTES: usize = 4_000;
+    const EDGE_LINES: usize = 30;
+
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.len() <= MAX_LINES && text.len() <= MAX_BYTES {
+        return text.to_string();
+    }
+    if lines.len() <= EDGE_LINES * 2 {
+        return text.to_string();
+    }
+    let head = lines[..EDGE_LINES].join("\n");
+    let tail = lines[lines.len() - EDGE_LINES..].join("\n");
+    let elided = lines.len() - EDGE_LINES * 2;
+    format!("{head}\n[... elided {elided} lines ...]\n{tail}")
+}
+
+/// Classify a surface item for the compaction summary.
+fn summarize_items(items: &[SurfaceItem]) -> String {
+    use std::fmt::Write as _;
+    let mut patches = 0usize;
+    let mut verifications = 0usize;
+    let mut failures = 0usize;
+    let mut thoughts = 0usize;
+    let mut summaries = 0usize;
+    let mut paths: Vec<String> = Vec::new();
+    let mut last_verified: Option<NodeId> = None;
+    let (start, end) = items
+        .first()
+        .map(|i| i.id_range().0)
+        .zip(items.last().map(|i| i.id_range().1))
+        .unwrap_or((0, 0));
+
+    for item in items {
+        match item {
+            SurfaceItem::Summary { .. } => summaries += 1,
+            SurfaceItem::Node(node) => match &node.kind {
+                NodeKind::Patch { path, .. } => {
+                    patches += 1;
+                    if !paths.contains(path) {
+                        paths.push(path.clone());
+                    }
+                }
+                NodeKind::Verification { passed, .. } => {
+                    verifications += 1;
+                    if *passed {
+                        last_verified = Some(node.id);
+                    } else {
+                        failures += 1;
+                    }
+                }
+                NodeKind::Thought { .. } => thoughts += 1,
+                _ => {}
+            },
+        }
+    }
+
+    let mut out = String::new();
+    let _ = write!(
+        out,
+        "Compacted {} earlier step(s) (nodes {start}–{end}): {patches} patch(es), \
+         {verifications} verification(s) ({failures} failed), {thoughts} reasoning step(s)",
+        items.len()
+    );
+    if summaries > 0 {
+        let _ = write!(out, ", {summaries} previously compacted block(s)");
+    }
+    if !paths.is_empty() {
+        let _ = write!(out, ". Files touched: {}", paths.join(", "));
+    }
+    match last_verified {
+        Some(id) => {
+            let _ = write!(out, ". Last verified node: {id}");
+        }
+        None => {
+            let _ = write!(out, ". No verified node in this range");
+        }
+    }
+    out.push('.');
+    out
 }
 
 impl ContextSurface {
@@ -740,6 +910,173 @@ impl ContextSurface {
         Self {
             items: nodes.into_iter().map(SurfaceItem::Node).collect(),
         }
+    }
+
+    /// Rough token estimate for the rendered surface: ~4 characters/token plus
+    /// a small per-item overhead.
+    pub fn estimate_tokens(&self) -> usize {
+        let mut chars = 0usize;
+        for item in &self.items {
+            chars += match item {
+                SurfaceItem::Summary { summary, .. } => summary.len(),
+                SurfaceItem::Node(node) => match &node.kind {
+                    NodeKind::Prompt { role, text } => role.len() + text.len(),
+                    NodeKind::Thought { text } | NodeKind::Observation { text } => text.len(),
+                    NodeKind::ToolCall { name, arguments } => name.len() + arguments.len(),
+                    NodeKind::Patch { path, summary } => path.len() + summary.len(),
+                    NodeKind::Verification { detail, .. } => detail.len(),
+                    NodeKind::Fork { reason } => reason.len(),
+                    NodeKind::Compacted { summary, .. } => summary.len(),
+                },
+            };
+        }
+        chars.div_ceil(4) + self.items.len() * 4
+    }
+
+    /// Whether the current surface has crossed the configured watermark.
+    pub fn should_compact(&self, config: &ContextWindowConfig) -> bool {
+        self.estimate_tokens() > config.budget_tokens()
+    }
+
+    /// Automatically collapse older verified steps and failed retry loops into
+    /// structured summaries until the surface fits the budget.
+    ///
+    /// The underlying DAG is untouched: this only mutates the *view*. Returns
+    /// the number of surface items removed (summaries replace ranges).
+    pub fn auto_compact_to_budget(&mut self, budget_tokens: usize) -> usize {
+        let before = self.items.len();
+        if budget_tokens == 0 || self.items.len() < 3 {
+            return 0;
+        }
+
+        // Pass 1 keeps the first item (the task prompt) and the most recent
+        // steps. Pass 2 keeps progressively less so a single huge block can
+        // still be brought under budget.
+        for keep_recent in [8usize, 4, 1] {
+            while self.estimate_tokens() > budget_tokens && self.items.len() > keep_recent + 1 {
+                let end_idx = self.items.len().saturating_sub(keep_recent + 1);
+                let start_idx = 1usize.min(end_idx);
+                if end_idx <= start_idx {
+                    break;
+                }
+                let summary = summarize_items(&self.items[start_idx..=end_idx]);
+                let (start_node, _) = self.items[start_idx].id_range();
+                let (_, end_node) = self.items[end_idx].id_range();
+                if self.compact_range(start_node, end_node, &summary).is_err() {
+                    break;
+                }
+            }
+            if self.estimate_tokens() <= budget_tokens {
+                break;
+            }
+        }
+        before.saturating_sub(self.items.len())
+    }
+
+    /// Render observations with a head/tail slice while keeping reasoning
+    /// traces out of subsequent prompts (`<think>` eviction).
+    fn render_node_text(text: &str, slice: bool) -> String {
+        let cleaned = va_core::router_client::strip_think_blocks(text);
+        if slice {
+            slice_observation(&cleaned)
+        } else {
+            cleaned
+        }
+    }
+
+    /// Number of surface items (compacted summaries count as 1 item).
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    /// Render the surface into prompt context for an LLM.
+    pub fn to_prompt_context(&self) -> String {
+        self.render_with_working_set(&[])
+    }
+
+    /// Render the surface plus a pinned working-set tail.
+    ///
+    /// The tail is always last and contains fresh hashes + line ranges, so a
+    /// model that compacts history still knows exactly which blocks are live.
+    pub fn render_with_working_set(&self, working_set: &[WorkingSetEntry]) -> String {
+        let mut out = self.render_items();
+        if !working_set.is_empty() {
+            out.push_str("<working_set>\n");
+            out.push_str("Fresh snapshot of modified files. Address patches by block hash only.\n");
+            for entry in working_set {
+                out.push_str(&format!("{}\n", entry.path));
+                for block in &entry.blocks {
+                    out.push_str(&format!(
+                        "  {} lines {}-{}\n",
+                        crate::patcher::short_hash(block.hash),
+                        block.start_line,
+                        block.end_line
+                    ));
+                }
+            }
+            out.push_str("</working_set>\n\n");
+        }
+        out
+    }
+
+    fn render_items(&self) -> String {
+        let mut out = String::new();
+        for item in &self.items {
+            match item {
+                SurfaceItem::Summary { summary, .. } => {
+                    out.push_str(SUMMARY_PREFIX);
+                    out.push_str(summary);
+                    out.push_str(SUMMARY_SUFFIX);
+                    out.push_str("\n\n");
+                }
+                SurfaceItem::Node(node) => match &node.kind {
+                    NodeKind::Prompt { role, text } => {
+                        out.push_str(&format!(
+                            "[{role}]: {}\n\n",
+                            Self::render_node_text(text, false)
+                        ));
+                    }
+                    NodeKind::Thought { text } => {
+                        out.push_str(&format!(
+                            "[thought]: {}\n\n",
+                            Self::render_node_text(text, false)
+                        ));
+                    }
+                    NodeKind::ToolCall { name, arguments } => {
+                        out.push_str(&format!("[tool_call:{name}]: {arguments}\n\n"));
+                    }
+                    NodeKind::Observation { text } => {
+                        out.push_str(&format!(
+                            "[observation]: {}\n\n",
+                            Self::render_node_text(text, true)
+                        ));
+                    }
+                    NodeKind::Patch { path, summary } => {
+                        out.push_str(&format!("[patch:{path}]: {summary}\n\n"));
+                    }
+                    NodeKind::Verification { passed, detail } => {
+                        out.push_str(&format!(
+                            "[verification:{}]: {detail}\n\n",
+                            if *passed { "pass" } else { "fail" }
+                        ));
+                    }
+                    NodeKind::Fork { reason } => {
+                        out.push_str(&format!("[fork]: {reason}\n\n"));
+                    }
+                    NodeKind::Compacted { summary, .. } => {
+                        out.push_str(SUMMARY_PREFIX);
+                        out.push_str(summary);
+                        out.push_str(SUMMARY_SUFFIX);
+                        out.push_str("\n\n");
+                    }
+                },
+            }
+        }
+        out
     }
 
     /// Collapse a range of nodes [start_node, end_node] into a single summary item.
@@ -779,61 +1116,112 @@ impl ContextSurface {
             .splice(s_idx..=e_idx, std::iter::once(summary_item));
         Ok(())
     }
+}
 
-    /// Number of surface items (compacted summaries count as 1 item).
-    pub fn len(&self) -> usize {
-        self.items.len()
-    }
+#[cfg(test)]
+mod auto_context_tests {
+    use super::*;
 
-    pub fn is_empty(&self) -> bool {
-        self.items.is_empty()
-    }
-
-    /// Render the surface into prompt context for an LLM.
-    pub fn to_prompt_context(&self) -> String {
-        let mut out = String::new();
-        for item in &self.items {
-            match item {
-                SurfaceItem::Summary { summary, .. } => {
-                    out.push_str(SUMMARY_PREFIX);
-                    out.push_str(summary);
-                    out.push_str(SUMMARY_SUFFIX);
-                    out.push_str("\n\n");
-                }
-                SurfaceItem::Node(node) => match &node.kind {
-                    NodeKind::Prompt { role, text } => {
-                        out.push_str(&format!("[{role}]: {text}\n\n"));
-                    }
-                    NodeKind::Thought { text } => {
-                        out.push_str(&format!("[thought]: {text}\n\n"));
-                    }
-                    NodeKind::ToolCall { name, arguments } => {
-                        out.push_str(&format!("[tool_call:{name}]: {arguments}\n\n"));
-                    }
-                    NodeKind::Observation { text } => {
-                        out.push_str(&format!("[observation]: {text}\n\n"));
-                    }
-                    NodeKind::Patch { path, summary } => {
-                        out.push_str(&format!("[patch:{path}]: {summary}\n\n"));
-                    }
-                    NodeKind::Verification { passed, detail } => {
-                        out.push_str(&format!(
-                            "[verification:{}]: {detail}\n\n",
-                            if *passed { "pass" } else { "fail" }
-                        ));
-                    }
-                    NodeKind::Fork { reason } => {
-                        out.push_str(&format!("[fork]: {reason}\n\n"));
-                    }
-                    NodeKind::Compacted { summary, .. } => {
-                        out.push_str(SUMMARY_PREFIX);
-                        out.push_str(summary);
-                        out.push_str(SUMMARY_SUFFIX);
-                        out.push_str("\n\n");
-                    }
-                },
+    fn session_with_steps(count: usize) -> Session {
+        let mut s = Session::new();
+        s.push(NodeKind::Prompt {
+            role: "user".into(),
+            text: "build the feature".into(),
+        });
+        s.commit().unwrap();
+        for i in 0..count {
+            let text = format!("step {i}: {}", "detail ".repeat(200));
+            if i % 3 == 0 {
+                s.push(NodeKind::Patch {
+                    path: format!("src/file{i}.rs"),
+                    summary: text,
+                });
+            } else if i % 3 == 1 {
+                s.push(NodeKind::Verification {
+                    passed: i % 2 == 0,
+                    detail: text,
+                });
+            } else {
+                s.push(NodeKind::Thought { text });
             }
+            s.commit().unwrap();
         }
-        out
+        s
+    }
+
+    #[test]
+    fn compaction_triggers_at_the_watermark_and_preserves_the_dag() {
+        let session = session_with_steps(30);
+        let dag_before = session.len();
+        let config = ContextWindowConfig {
+            window_tokens: 2_000,
+            watermark: 0.75,
+            keep_recent: 4,
+        };
+        let (surface, compacted) = session.context_surface_with_budget(&config).unwrap();
+        assert!(surface.estimate_tokens() <= config.budget_tokens());
+        assert!(compacted > 0, "long histories must compact automatically");
+        assert_eq!(session.len(), dag_before, "DAG nodes must stay intact");
+        let rendered = surface.to_prompt_context();
+        assert!(rendered.contains("Compacted"), "summary must be structured");
+        assert!(
+            rendered.contains("failed"),
+            "failed retries must be summarized"
+        );
+        assert!(session.replay(None).is_ok(), "replay must still work");
+    }
+
+    #[test]
+    fn below_the_watermark_nothing_is_compacted() {
+        let session = session_with_steps(2);
+        let mut surface = session.context_surface().unwrap();
+        let before = surface.len();
+        assert_eq!(surface.auto_compact_to_budget(1_000_000), 0);
+        assert_eq!(surface.len(), before);
+    }
+
+    #[test]
+    fn think_blocks_are_evicted_from_rendered_prompts() {
+        let mut session = Session::new();
+        session.push(NodeKind::Thought {
+            text: "<think>hidden chain of thought</think>Visible answer".into(),
+        });
+        session.commit().unwrap();
+        let rendered = session.context_surface().unwrap().to_prompt_context();
+        assert!(!rendered.contains("hidden chain of thought"));
+        assert!(rendered.contains("Visible answer"));
+    }
+
+    #[test]
+    fn large_observations_render_head_and_tail_only() {
+        let mut session = Session::new();
+        let log: Vec<String> = (0..200).map(|i| format!("log line {i}")).collect();
+        session.push(NodeKind::Observation {
+            text: log.join("\n"),
+        });
+        session.commit().unwrap();
+        let rendered = session.context_surface().unwrap().to_prompt_context();
+        assert!(rendered.contains("log line 0"));
+        assert!(rendered.contains("log line 199"));
+        assert!(rendered.contains("[... elided 140 lines ...]"));
+        assert!(!rendered.contains("log line 100"));
+    }
+
+    #[test]
+    fn pinned_working_set_is_the_last_thing_in_the_prompt() {
+        let mut session = Session::new();
+        session.push(NodeKind::Thought {
+            text: "working".into(),
+        });
+        session.commit().unwrap();
+        let ws = vec![WorkingSetEntry::new("src/main.rs").with_block(0xABCD_1234_5678_9ABC, 1, 9)];
+        let rendered = session
+            .context_surface()
+            .unwrap()
+            .render_with_working_set(&ws);
+        assert!(rendered.trim_end().ends_with("</working_set>"));
+        assert!(rendered.contains("src/main.rs"));
+        assert!(rendered.contains("lines 1-9"));
+        assert!(rendered.contains("ABCD"));
     }
 }

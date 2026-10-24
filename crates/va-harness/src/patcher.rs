@@ -55,6 +55,36 @@ fn normalize_line(line: &str) -> &str {
     line.trim_end_matches([' ', '\t', '\r'])
 }
 
+/// Normalized whole-file text, used by the repeated-anchor guard.
+fn normalized_source(source: &str) -> String {
+    source
+        .lines()
+        .map(|l| l.trim())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Normalized body of one block.
+fn normalized_block_body(source: &str, block: &Block) -> String {
+    let lines: Vec<&str> = source.lines().collect();
+    if block.start_line == 0 || block.end_line > lines.len() || block.start_line > block.end_line {
+        return String::new();
+    }
+    lines[block.start_line - 1..block.end_line]
+        .iter()
+        .map(|l| l.trim())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Count non-overlapping occurrences of `needle` in `haystack`.
+fn occurrences(haystack: &str, needle: &str) -> usize {
+    if needle.is_empty() || needle.len() > haystack.len() {
+        return 0;
+    }
+    haystack.match_indices(needle).count()
+}
+
 /// Hash a block's normalized content. Leading indentation is *preserved*
 /// because it is semantic in Rust; trailing whitespace is not.
 pub fn hash_block(lines: &[&str]) -> u64 {
@@ -226,6 +256,9 @@ pub enum PatchError {
     ContextMismatch { expected: String, actual: String },
     /// Whole file drifted since discovery — external modification detected (oh-my-pi).
     FileDrifted { expected: u64, actual: u64 },
+    /// Structural recovery found more than one block with the same normalized
+    /// body. Even a correctly shifted anchor is rejected on repeated content.
+    AmbiguousRepeatedAnchor { signature: String, count: usize },
 }
 
 impl std::fmt::Display for PatchError {
@@ -261,6 +294,10 @@ impl std::fmt::Display for PatchError {
             PatchError::FileDrifted { expected, actual } => write!(
                 f,
                 "whole file drifted since discovery: expected hash {expected:#018x}, found {actual:#018x}"
+            ),
+            PatchError::AmbiguousRepeatedAnchor { signature, count } => write!(
+                f,
+                "repeated anchor `{signature}` appears {count} times — structurally shifted anchor rejected"
             ),
         }
     }
@@ -348,6 +385,18 @@ fn recover_or_fail(source: &str, op: &PatchOp) -> Result<String, PatchError> {
     match candidates.len() {
         1 => {
             let block = candidates[0].clone();
+            // Strict repeated-content guard: even a correctly shifted anchor
+            // is rejected when the same normalized body appears more than once
+            // in the file. A hash that no longer exists plus repeated content
+            // is exactly the case where guessing corrupts code.
+            let body = normalized_block_body(source, &block);
+            let repeats = occurrences(&normalized_source(source), &body);
+            if repeats > 1 {
+                return Err(PatchError::AmbiguousRepeatedAnchor {
+                    signature: expected,
+                    count: repeats,
+                });
+            }
             // Single-hop structural rebase: confirm the drift is a pure line
             // shift by checking the block still opens with the same text.
             let lines: Vec<&str> = source.lines().collect();
@@ -584,6 +633,25 @@ mod tests {
             apply_patch(&drifted, &op),
             Err(PatchError::FileDrifted { .. })
         ));
+    }
+
+    #[test]
+    fn repeated_body_rejects_even_a_correctly_shifted_anchor() {
+        // The body of `fn alpha` appears twice (once as a block, once nested in
+        // a comment-bearing block), but only one block has its signature. The
+        // strict guard must still refuse rather than guess which copy to edit.
+        let repeated = "fn alpha() {\n    let x = 1;\n    let y = 2;\n    x\n}\n\nfn beta() {\n    let marker = 0;\n    fn alpha() {\n        let x = 1;\n        let y = 2;\n        x\n    }\n}\n";
+        let block = segment_blocks(SAMPLE)
+            .into_iter()
+            .find(|b| b.signature == "fn alpha() {")
+            .unwrap();
+        let op = PatchOp::new(block.hash, "fn alpha() {\n    2\n}").with_signature("fn alpha() {");
+        match apply_patch(repeated, &op) {
+            Err(PatchError::AmbiguousRepeatedAnchor { count, .. }) => {
+                assert_eq!(count, 2, "both copies must be counted")
+            }
+            other => panic!("expected AmbiguousRepeatedAnchor, got {other:?}"),
+        }
     }
 
     #[test]

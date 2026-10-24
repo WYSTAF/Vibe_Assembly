@@ -5,17 +5,90 @@
 //! * 6-role model assignments and router connectivity state (Vibe-Link, 9router/Universal Gateway, or Offline).
 //! * Live Session DAG trajectory, verification status, judge verdicts, and micro-dollar spend.
 
+use std::io::Write;
 use std::path::Path;
 
-use va_core::knowledge::auto_combo;
+use va_core::knowledge::{auto_combo, context_window_tokens};
+use va_core::modes::{ExecutionMode, LanguageLens};
 use va_core::router_client::fetch_default;
 use va_core::runtime::{detect_system_specs, HardwareProfile, StorageMode};
 use va_core::state::Workspace;
-use va_harness::session::Session;
+use va_harness::session::{ContextWindowConfig, Session};
 
 use crate::render::{role_icon, Palette};
 
-pub fn run_tui(root: &Path, requested_profile: Option<HardwareProfile>) {
+pub fn run_tui(
+    root: &Path,
+    requested_profile: Option<HardwareProfile>,
+    mut mode: ExecutionMode,
+    mut language: LanguageLens,
+    mut model: Option<String>,
+) {
+    let interactive = std::io::IsTerminal::is_terminal(&std::io::stdin());
+    loop {
+        render_dashboard(root, requested_profile, mode, language, model.clone());
+        if !interactive {
+            break;
+        }
+        println!();
+        println!(" [1] Mode  [2] Language  [3] Model  [4] Refresh  [5] Quit");
+        print!(" select> ");
+        let _ = std::io::stdout().flush();
+        let mut line = String::new();
+        if std::io::stdin().read_line(&mut line).unwrap_or(0) == 0 {
+            break;
+        }
+        match line.trim() {
+            "1" => {
+                for (i, m) in ExecutionMode::ALL.iter().enumerate() {
+                    println!("   [{}] {} ({})", i + 1, m.label(), m.accent_hex());
+                }
+                print!("   mode> ");
+                let _ = std::io::stdout().flush();
+                let mut choice = String::new();
+                let _ = std::io::stdin().read_line(&mut choice);
+                if let Ok(idx) = choice.trim().parse::<usize>() {
+                    if let Some(m) = ExecutionMode::ALL.get(idx.saturating_sub(1)) {
+                        mode = *m;
+                    }
+                }
+            }
+            "2" => {
+                for (i, l) in LanguageLens::ALL.iter().enumerate() {
+                    println!("   [{}] {}", i + 1, l.label());
+                }
+                print!("   language> ");
+                let _ = std::io::stdout().flush();
+                let mut choice = String::new();
+                let _ = std::io::stdin().read_line(&mut choice);
+                if let Ok(idx) = choice.trim().parse::<usize>() {
+                    if let Some(l) = LanguageLens::ALL.get(idx.saturating_sub(1)) {
+                        language = *l;
+                    }
+                }
+            }
+            "3" => {
+                print!("   model (blank = auto-combo)> ");
+                let _ = std::io::stdout().flush();
+                let mut choice = String::new();
+                let _ = std::io::stdin().read_line(&mut choice);
+                let clean = choice.trim().to_string();
+                model = if clean.is_empty() { None } else { Some(clean) };
+            }
+            "4" => {}
+            "5" | "q" | "quit" => break,
+            _ => {}
+        }
+    }
+}
+
+fn render_dashboard(
+    root: &Path,
+    requested_profile: Option<HardwareProfile>,
+    mode: ExecutionMode,
+    language: LanguageLens,
+    model: Option<String>,
+) {
     let p = Palette::detect();
     let specs = detect_system_specs(
         requested_profile,
@@ -24,6 +97,17 @@ pub fn run_tui(root: &Path, requested_profile: Option<HardwareProfile>) {
     );
     let ws = Workspace::load(root);
     let gateway = fetch_default();
+    let accent = if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let rgb = mode.accent_rgb();
+        format!(
+            "\x1b[38;2;{};{};{}m",
+            (rgb >> 16) & 0xFF,
+            (rgb >> 8) & 0xFF,
+            rgb & 0xFF
+        )
+    } else {
+        String::new()
+    };
 
     println!();
     println!(
@@ -37,6 +121,65 @@ pub fn run_tui(root: &Path, requested_profile: Option<HardwareProfile>) {
     println!(
         "{}└────────────────────────────────────────────────────────────────────────┘{}",
         p.dim, p.reset
+    );
+
+    // Section 0: active execution profile, accent theme, and context meter.
+    let session_path = root.join(".ai").join("session.jsonl");
+    let session = if session_path.exists() {
+        let raw = std::fs::read_to_string(&session_path).unwrap_or_default();
+        Session::from_jsonl(&raw).unwrap_or_default()
+    } else {
+        Session::new()
+    };
+    let active_model = model.clone().unwrap_or_else(|| "auto-combo".to_string());
+    let window = context_window_tokens(&active_model);
+    let context = ContextWindowConfig::new(window);
+    let (surface, compacted) = session
+        .context_surface_with_budget(&context)
+        .unwrap_or_default();
+    let tokens = surface.estimate_tokens();
+    let pct = tokens
+        .saturating_mul(100)
+        .checked_div(window)
+        .unwrap_or(0)
+        .min(100);
+    let bar_width = (pct / 5).clamp(1, 20);
+    println!();
+    println!(" {}◆ EXECUTION PROFILE{}", accent, p.reset);
+    println!(
+        "   {}Mode:{}        {}{}{}",
+        p.dim,
+        p.reset,
+        accent,
+        mode.label(),
+        p.reset
+    );
+    println!(
+        "   {}Accent:{}      {}{}{}",
+        p.dim,
+        p.reset,
+        accent,
+        mode.accent_hex(),
+        p.reset
+    );
+    println!(
+        "   {}Language:{}    {}",
+        p.dim,
+        p.reset,
+        language.resolve(root).label()
+    );
+    println!("   {}Model:{}       {}", p.dim, p.reset, active_model);
+    println!(
+        "   {}Context:{}     {}% of {}-token window  {}{}{}  ({} tokens, {} auto-compaction(s))",
+        p.dim,
+        p.reset,
+        pct,
+        window,
+        accent,
+        "█".repeat(bar_width),
+        p.reset,
+        tokens,
+        compacted
     );
 
     // Section 1: Hardware & Storage Profile

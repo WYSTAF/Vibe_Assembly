@@ -1,11 +1,22 @@
 # Verification Record & Proven Baselines
-Current Feature Proven: Base AI Operating System Initialized
-Test Suites & Checks Executed:
-[x] Generation script validated cleanly.
-[ ] Compiler / Build verification checklist.
 
-Runtime Environment Specs:
-Engine Host: [e.g., Node 24, Python 3.12]
-Persistence: [e.g., PostgreSQL 17]
+**Current feature proven:** v2.0.0 production hardening (ADR-018)
 
-Last Date Proven Working: 2026-07-07
+**Test suites and checks executed:**
+
+- [x] `cargo fmt --all -- --check`
+- [x] `cargo clippy --workspace --all-targets -- -D warnings`
+- [x] `cargo test --workspace` - 188 passed, 0 failed
+- [x] `cargo build --release` - `vibe-assembly` and `vibe-assembly-desktop`
+- [x] Live HTTP integration test against a local mock OpenAI-compatible server
+- [x] Compaction, think eviction, observation slicing, repeated-anchor,
+      read-only, stagnation, language-lens, and EXPERIENCE.md tests
+
+**Runtime environment:**
+
+- Rust stable MSVC toolchain with Visual Studio Build Tools (C++ workload)
+- Windows 10/11 host; Linux builds use the same Cargo workspace
+- State: `.ai/*.md` and `.ai/session.jsonl`
+- Router: local OpenAI-compatible HTTP gateway
+
+**Last date proven working:** 2026-10-23

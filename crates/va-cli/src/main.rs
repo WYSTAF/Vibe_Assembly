@@ -13,12 +13,16 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use va_core::allocator::{allocate, load_knowledge};
 use va_core::bootstrap;
+use va_core::knowledge::context_window_tokens;
 use va_core::lock::check_task_lock;
+use va_core::modes::{ExecutionMode, LanguageLens};
 use va_core::parser::{parse_active_task, validate_contract, verified_steps};
 use va_core::router::fetch_live_assignment;
 use va_core::runtime::{detect_system_specs, AtomicStateSync};
 use va_core::state::Workspace;
-use va_harness::session::{NodeKind, Session};
+use va_harness::engine::{Engine, EngineError, StagnationPolicy};
+use va_harness::live_planner::{LivePlannerConfig, LiveRouterPlanner};
+use va_harness::session::{ContextWindowConfig, NodeKind, Session};
 
 use render::{queue_lines, role_icon, Palette};
 
@@ -49,7 +53,7 @@ struct Cli {
 enum Command {
     /// Show the ticket queue and resume point (default)
     Status,
-    /// Resolve model allocations for the five modes
+    /// Resolve model allocations for the six roles
     Models,
     /// Run a workspace health check
     Doctor,
@@ -116,6 +120,62 @@ enum Command {
         /// Run live against Vibe Router with live planner
         #[arg(long)]
         live: bool,
+        /// Execution mode: code | web | chat | debug
+        #[arg(long, default_value = "code")]
+        mode: String,
+        /// Language lens: auto | rust | c | python | ts | go
+        #[arg(long, default_value = "auto")]
+        lang: String,
+        /// Pin a router model/alias for every role (default: auto-combo)
+        #[arg(long)]
+        model: Option<String>,
+        /// Independent judge model (default: deterministic judge)
+        #[arg(long)]
+        judge_model: Option<String>,
+        /// Deterministic offline synthesis; never calls the router
+        #[arg(long)]
+        offline_mock: bool,
+        /// Explicit task text instead of .ai/active_task.md
+        #[arg(long)]
+        prompt: Option<String>,
+    },
+    /// Run one task in a chosen execution mode and print the result
+    Prompt {
+        /// Task text
+        text: String,
+        /// Execution mode: code | web | chat | debug
+        #[arg(long, default_value = "code")]
+        mode: String,
+        /// Language lens: auto | rust | c | python | ts | go
+        #[arg(long, default_value = "auto")]
+        lang: String,
+        /// Pin a router model/alias (default: auto-combo)
+        #[arg(long)]
+        model: Option<String>,
+        /// Independent judge model
+        #[arg(long)]
+        judge_model: Option<String>,
+        /// Maximum engine steps
+        #[arg(long, default_value_t = 50)]
+        max_steps: u32,
+        /// Deterministic offline synthesis; never calls the router
+        #[arg(long)]
+        offline_mock: bool,
+        /// Emit machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Start an interactive read-only architect chat
+    Chat {
+        /// Language lens: auto | rust | c | python | ts | go
+        #[arg(long, default_value = "auto")]
+        lang: String,
+        /// Pin a router model/alias (default: auto-combo)
+        #[arg(long)]
+        model: Option<String>,
+        /// Independent judge model
+        #[arg(long)]
+        judge_model: Option<String>,
     },
     /// Launch the interactive terminal dashboard (alias: top)
     #[command(alias = "top")]
@@ -123,6 +183,15 @@ enum Command {
         /// Force execution profile (auto|vps|portable|workstation)
         #[arg(long)]
         profile: Option<String>,
+        /// Initial execution mode: code | web | chat | debug
+        #[arg(long, default_value = "code")]
+        mode: String,
+        /// Initial language lens: auto | rust | c | python | ts | go
+        #[arg(long, default_value = "auto")]
+        lang: String,
+        /// Initially pinned model
+        #[arg(long)]
+        model: Option<String>,
     },
     /// Display detected hardware capabilities, portable status, and active storage strategy
     Profile {
@@ -226,6 +295,7 @@ fn main() -> ExitCode {
             .unwrap_or_else(|| PathBuf::from("templates"));
         return match bootstrap::init_workspace(&target, name, template.as_deref(), Some(&tdir)) {
             Ok(()) => {
+                seed_model_combo(&target);
                 println!("✅ Created Vibe Assembly workspace at {}", target.display());
                 println!("   Next: open it in your editor and switch to 👑 Boss.");
                 ExitCode::SUCCESS
@@ -263,10 +333,29 @@ fn main() -> ExitCode {
             }
             return ExitCode::SUCCESS;
         }
-        Some(Command::Tui { profile }) => {
+        Some(Command::Tui {
+            profile,
+            mode,
+            lang,
+            model,
+        }) => {
             let root = Workspace::discover(&start).unwrap_or(start);
             let p_override = profile.as_deref().and_then(|s| s.parse().ok());
-            tui::run_tui(&root, p_override);
+            let mode = match mode.parse::<ExecutionMode>() {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("❌ {e}");
+                    return ExitCode::from(2);
+                }
+            };
+            let language = match lang.parse::<LanguageLens>() {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("❌ {e}");
+                    return ExitCode::from(2);
+                }
+            };
+            tui::run_tui(&root, p_override, mode, language, model.clone());
             return ExitCode::SUCCESS;
         }
         Some(Command::Profile { profile, json }) => {
@@ -301,6 +390,12 @@ fn main() -> ExitCode {
             profile,
             tournament,
             live,
+            mode,
+            lang,
+            model,
+            judge_model,
+            offline_mock,
+            prompt,
         }) => {
             let root = match Workspace::discover(&start) {
                 Some(r) => r,
@@ -309,15 +404,104 @@ fn main() -> ExitCode {
                     return ExitCode::from(1);
                 }
             };
+            let mode = match mode.parse::<ExecutionMode>() {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("❌ {e}");
+                    return ExitCode::from(2);
+                }
+            };
+            let language = match lang.parse::<LanguageLens>() {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("❌ {e}");
+                    return ExitCode::from(2);
+                }
+            };
+            if *auto_combo {
+                seed_model_combo(&root);
+            }
             return run_execute(
                 &root,
-                *auto_combo,
-                *max_steps,
-                *stream_jsonl,
-                profile.as_deref(),
-                *tournament,
-                *live,
+                ExecutionOptions {
+                    auto_combo: *auto_combo,
+                    max_steps: *max_steps,
+                    stream_jsonl: *stream_jsonl,
+                    profile: profile.as_deref(),
+                    tournament: *tournament,
+                    live: *live,
+                    mode,
+                    language,
+                    model: model.clone(),
+                    judge_model: judge_model.clone(),
+                    offline_mock: *offline_mock,
+                    task_prompt: prompt.clone(),
+                },
             );
+        }
+        Some(Command::Prompt {
+            text,
+            mode,
+            lang,
+            model,
+            judge_model,
+            max_steps,
+            offline_mock,
+            json,
+        }) => {
+            let root = match Workspace::discover(&start) {
+                Some(r) => r,
+                None => {
+                    eprintln!("❌ No .ai/ directory found at or above {}", start.display());
+                    return ExitCode::from(1);
+                }
+            };
+            let mode = match mode.parse::<ExecutionMode>() {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("❌ {e}");
+                    return ExitCode::from(2);
+                }
+            };
+            let language = match lang.parse::<LanguageLens>() {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("❌ {e}");
+                    return ExitCode::from(2);
+                }
+            };
+            return run_prompt(
+                &root,
+                text,
+                mode,
+                language,
+                model.clone(),
+                judge_model.clone(),
+                *max_steps,
+                *offline_mock,
+                *json,
+            );
+        }
+        Some(Command::Chat {
+            lang,
+            model,
+            judge_model,
+        }) => {
+            let root = match Workspace::discover(&start) {
+                Some(r) => r,
+                None => {
+                    eprintln!("❌ No .ai/ directory found at or above {}", start.display());
+                    return ExitCode::from(1);
+                }
+            };
+            let language = match lang.parse::<LanguageLens>() {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("❌ {e}");
+                    return ExitCode::from(2);
+                }
+            };
+            return run_chat(&root, language, model.clone(), judge_model.clone());
         }
         _ => {}
     }
@@ -938,15 +1122,36 @@ fn run_patch(file: &Path, target: &str, replacement: Option<&str>, list: bool) -
 }
 
 /// Zero-config role resolution, then report the plan the harness will use.
-fn run_execute(
-    root: &Path,
+struct ExecutionOptions<'a> {
     auto_combo: bool,
     max_steps: u32,
     stream_jsonl: bool,
-    profile: Option<&str>,
+    profile: Option<&'a str>,
     tournament: bool,
     live: bool,
-) -> ExitCode {
+    mode: ExecutionMode,
+    language: LanguageLens,
+    model: Option<String>,
+    judge_model: Option<String>,
+    offline_mock: bool,
+    task_prompt: Option<String>,
+}
+
+fn run_execute(root: &Path, opts: ExecutionOptions<'_>) -> ExitCode {
+    let ExecutionOptions {
+        auto_combo,
+        max_steps,
+        stream_jsonl,
+        profile,
+        tournament,
+        live,
+        mode,
+        language,
+        model,
+        judge_model,
+        offline_mock,
+        task_prompt,
+    } = opts;
     use va_core::knowledge::{auto_combo as plan, score_model};
     use va_core::router_client::fetch_default;
 
@@ -1067,37 +1272,88 @@ fn run_execute(
         return ExitCode::SUCCESS;
     }
 
-    if live {
+    if live || offline_mock {
         let p = Palette::detect();
+        let accent = accent_ansi(mode);
         println!();
         println!(
-            " {}⚡ RUNNING LIVE AGAINST VIBE ROUTER{}  {}·  {}{}",
-            p.bold,
+            " {}LIVE RUN | {}{}  {}*  {}{}",
+            accent,
+            mode.label(),
             p.reset,
             p.dim,
             root.display(),
             p.reset
         );
+        let mut planner = build_planner(
+            root,
+            mode,
+            language,
+            model.clone(),
+            judge_model.clone(),
+            offline_mock,
+            task_prompt.clone(),
+        );
+        planner.begin_task();
+        let active_model = if offline_mock {
+            "offline-mock".to_string()
+        } else {
+            planner.active_model("code")
+        };
+        let context = ContextWindowConfig::new(context_window_tokens(&active_model));
         let mut session = Session::new();
-        let mut planner = va_harness::live_planner::LiveRouterPlanner::new(root);
-        let mut engine = va_harness::engine::Engine::new(root).with_max_steps(max_steps);
+        let mut engine = Engine::new(root)
+            .with_max_steps(max_steps)
+            .with_profile(mode, language)
+            .with_context_window(context)
+            .with_stagnation_policy(if tournament {
+                StagnationPolicy::EscalateTournament
+            } else {
+                StagnationPolicy::Fail
+            });
         match engine.run(&mut session, &mut planner) {
             Ok(records) => {
+                persist_session(root, &session);
+                let stats = engine.stats();
                 println!(
-                    " {}✅ Live execution completed: {} step(s) recorded.{}",
+                    " {}OK Live execution completed: {} step(s), {} patch(es), {} verification(s).{}",
                     p.green,
                     records.len(),
+                    stats.patches_applied,
+                    stats.verifications_run,
                     p.reset
+                );
+                print_run_meter(
+                    &p,
+                    stats.context_tokens,
+                    &context,
+                    stats.context_compactions,
                 );
                 return ExitCode::SUCCESS;
             }
+            Err(EngineError::StagnationDetected {
+                signature,
+                attempts,
+                escalate_tournament,
+            }) => {
+                eprintln!(
+                    " {}WARN Stagnation detected after {} attempts: {}{}",
+                    p.yellow, attempts, signature, p.reset
+                );
+                if escalate_tournament {
+                    eprintln!(
+                        " {}-> Escalating to SpeculativeTournament (re-run with --tournament to keep branches).{}",
+                        p.dim, p.reset
+                    );
+                }
+                return ExitCode::from(3);
+            }
             Err(e) => {
-                eprintln!(" {}❌ Execution error: {}{}", p.red, e, p.reset);
+                eprintln!(" {}ERR Execution error: {}{}", p.red, e, p.reset);
                 return ExitCode::from(1);
             }
         }
     }
-
     let p = Palette::detect();
     println!();
     println!(
@@ -1141,6 +1397,403 @@ fn run_execute(
         p.reset
     );
     println!();
+    ExitCode::SUCCESS
+}
+
+const DEFAULT_MODEL_COMBO: &str = "\
+# Vibe Assembly offline model fallback (auto-combo seed)
+# One model id/alias per line; comments and `role=model` overrides are ignored
+# by the allocator. The router maps these aliases when it is online.
+gpt-4o-mini
+claude-3-5-sonnet
+deepseek-chat
+gemini-2.0-flash
+";
+
+/// Seed `.ai/model_combo.txt` from the example, or a sensible default.
+fn seed_model_combo(root: &Path) {
+    let ai = root.join(".ai");
+    let combo = ai.join("model_combo.txt");
+    if combo.exists() {
+        return;
+    }
+    let example = ai.join("model_combo.example.txt");
+    let body =
+        std::fs::read_to_string(&example).unwrap_or_else(|_| DEFAULT_MODEL_COMBO.to_string());
+    let _ = std::fs::create_dir_all(&ai);
+    let _ = std::fs::write(&combo, body);
+}
+
+/// Truecolor accent for the active mode; empty on non-terminal output.
+fn accent_ansi(mode: ExecutionMode) -> String {
+    if !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        return String::new();
+    }
+    let rgb = mode.accent_rgb();
+    format!(
+        "\x1b[38;2;{};{};{}m",
+        (rgb >> 16) & 0xFF,
+        (rgb >> 8) & 0xFF,
+        rgb & 0xFF
+    )
+}
+
+fn build_planner(
+    root: &Path,
+    mode: ExecutionMode,
+    language: LanguageLens,
+    model: Option<String>,
+    judge_model: Option<String>,
+    offline_mock: bool,
+    task_prompt: Option<String>,
+) -> LiveRouterPlanner {
+    let mut config = LivePlannerConfig::default_for(root);
+    config.mode = mode;
+    config.language = language;
+    config.model = model;
+    config.judge_model = judge_model;
+    config.offline_mock = offline_mock;
+    config.task_prompt = task_prompt;
+    LiveRouterPlanner::with_config(config)
+}
+
+fn persist_session(root: &Path, session: &Session) {
+    let path = root.join(".ai").join("session.jsonl");
+    let jsonl = session.to_jsonl();
+    let _ = AtomicStateSync::write_atomic(&path, jsonl.as_bytes());
+}
+
+fn context_percent(tokens: usize, config: &ContextWindowConfig) -> usize {
+    if config.window_tokens == 0 {
+        return 0;
+    }
+    ((tokens.saturating_mul(100)) / config.window_tokens).min(100)
+}
+
+fn print_run_meter(p: &Palette, tokens: usize, config: &ContextWindowConfig, compactions: u32) {
+    let pct = context_percent(tokens, config);
+    let color = if pct >= 75 { p.yellow } else { p.green };
+    println!(
+        " {}Context:{} {}% of a {}-token window · auto-compactions: {}",
+        p.dim, p.reset, pct, config.window_tokens, compactions
+    );
+    println!(
+        " {}{}{}  {}[{}]{}",
+        color,
+        "█".repeat((pct / 5).clamp(1, 20)),
+        p.reset,
+        p.dim,
+        if pct >= 75 { "watermark" } else { "ok" },
+        p.reset,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_prompt(
+    root: &Path,
+    text: &str,
+    mode: ExecutionMode,
+    language: LanguageLens,
+    model: Option<String>,
+    judge_model: Option<String>,
+    max_steps: u32,
+    offline_mock: bool,
+    json: bool,
+) -> ExitCode {
+    let p = Palette::detect();
+    let accent = accent_ansi(mode);
+    let mut planner = build_planner(
+        root,
+        mode,
+        language,
+        model,
+        judge_model,
+        offline_mock,
+        Some(text.to_string()),
+    );
+    planner.begin_task();
+
+    if !json {
+        println!();
+        println!(
+            " {}◆ {} · {}{}",
+            accent,
+            mode.label(),
+            language.resolve(root).label(),
+            p.reset
+        );
+    }
+
+    let mut session = Session::new();
+    session.push(NodeKind::Prompt {
+        role: "user".to_string(),
+        text: text.to_string(),
+    });
+    let _ = session.commit();
+
+    let role = if mode == ExecutionMode::Chat {
+        "chat"
+    } else {
+        "code"
+    };
+    let active_model = if offline_mock {
+        "offline-mock".to_string()
+    } else {
+        planner.active_model(role)
+    };
+    let context = ContextWindowConfig::new(context_window_tokens(&active_model));
+
+    if mode == ExecutionMode::Chat {
+        return match planner.ask(text, &session) {
+            Ok(answer) => {
+                if !json {
+                    println!("{answer}");
+                }
+                let cleaned = va_core::router_client::strip_think_blocks(&answer);
+                session.push(NodeKind::Thought { text: answer });
+                let _ = session.commit();
+                persist_session(root, &session);
+                let (surface, compacted) = session
+                    .context_surface_with_budget(&context)
+                    .unwrap_or_default();
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "mode": mode.as_str(),
+                            "language": language.resolve(root).as_str(),
+                            "model": active_model,
+                            "read_only": true,
+                            "answer": cleaned,
+                            "context_tokens": surface.estimate_tokens(),
+                            "context_percent": context_percent(surface.estimate_tokens(), &context),
+                            "context_compactions": compacted,
+                        })
+                    );
+                } else {
+                    print_run_meter(&p, surface.estimate_tokens(), &context, compacted as u32);
+                }
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!(" {}✗ {}{}", p.red, e, p.reset);
+                ExitCode::from(1)
+            }
+        };
+    }
+
+    let mut engine = Engine::new(root)
+        .with_max_steps(max_steps)
+        .with_profile(mode, language)
+        .with_context_window(context)
+        .with_stagnation_policy(StagnationPolicy::EscalateTournament);
+    let result = engine.run(&mut session, &mut planner);
+    let stats = engine.stats().clone();
+    persist_session(root, &session);
+    let pct = context_percent(stats.context_tokens, &context);
+
+    match result {
+        Ok(records) => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "mode": mode.as_str(),
+                        "language": language.resolve(root).as_str(),
+                        "model": active_model,
+                        "judge_model": planner.judge_model(),
+                        "steps": records.len(),
+                        "patches": stats.patches_applied,
+                        "verifications": stats.verifications_run,
+                        "judge_rejections": stats.judge_rejections,
+                        "context_tokens": stats.context_tokens,
+                        "context_percent": pct,
+                        "context_compactions": stats.context_compactions,
+                        "stagnation_events": stats.stagnation_events,
+                    })
+                );
+            } else {
+                println!(
+                    " {}✓ {} step(s) · {} patch(es) · {} verification(s) · {} judge rejection(s){}",
+                    p.green,
+                    records.len(),
+                    stats.patches_applied,
+                    stats.verifications_run,
+                    stats.judge_rejections,
+                    p.reset
+                );
+                print_run_meter(
+                    &p,
+                    stats.context_tokens,
+                    &context,
+                    stats.context_compactions,
+                );
+                if planner.last_cost_micros > 0 || planner.last_latency_ms > 0 {
+                    println!(
+                        " {}Router telemetry:{} {} µ$ · {} ms (last call)",
+                        p.dim, p.reset, planner.last_cost_micros, planner.last_latency_ms
+                    );
+                }
+            }
+            ExitCode::SUCCESS
+        }
+        Err(EngineError::StagnationDetected {
+            signature,
+            attempts,
+            escalate_tournament,
+        }) => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "mode": mode.as_str(),
+                        "status": "stagnation",
+                        "signature": signature,
+                        "attempts": attempts,
+                        "escalate_tournament": escalate_tournament,
+                    })
+                );
+            } else {
+                eprintln!(
+                    " {}⚠ Stagnation after {} attempts: {}{}",
+                    p.yellow, attempts, signature, p.reset
+                );
+                if escalate_tournament {
+                    eprintln!(
+                        " {}→ SpeculativeTournament escalation requested.{}",
+                        p.dim, p.reset
+                    );
+                }
+            }
+            ExitCode::from(3)
+        }
+        Err(e) => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "mode": mode.as_str(),
+                        "status": "error",
+                        "error": e.to_string(),
+                    })
+                );
+            } else {
+                eprintln!(" {}✗ Execution error: {}{}", p.red, e, p.reset);
+            }
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn run_chat(
+    root: &Path,
+    language: LanguageLens,
+    model: Option<String>,
+    judge_model: Option<String>,
+) -> ExitCode {
+    use std::io::BufRead as _;
+    use std::io::Write as _;
+
+    let p = Palette::detect();
+    let accent = accent_ansi(ExecutionMode::Chat);
+    let mut planner = build_planner(
+        root,
+        ExecutionMode::Chat,
+        language,
+        model,
+        judge_model,
+        false,
+        None,
+    );
+    planner.begin_task();
+    let mut session = Session::new();
+    let mut active_model = String::from("auto-combo");
+    let mut context = ContextWindowConfig::default();
+
+    println!();
+    println!(
+        " {}◆ CHAT / ARCHITECT · READ-ONLY{}  {}· {}{}",
+        accent,
+        p.reset,
+        p.dim,
+        language.resolve(root).label(),
+        p.reset
+    );
+    println!(
+        " {}Commands: /exit to quit, /status for context usage.{}",
+        p.dim, p.reset
+    );
+
+    let stdin = std::io::stdin();
+    loop {
+        print!("{}you>{} ", accent, p.reset);
+        let _ = std::io::stdout().flush();
+        let mut line = String::new();
+        match stdin.lock().read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!(" {}✗ stdin: {}{}", p.red, e, p.reset);
+                return ExitCode::from(1);
+            }
+        }
+        let question = line.trim();
+        if question.is_empty() {
+            continue;
+        }
+        if matches!(question, "/exit" | "/quit" | "exit" | "quit") {
+            break;
+        }
+        if question == "/status" {
+            let (surface, compacted) = session
+                .context_surface_with_budget(&context)
+                .unwrap_or_default();
+            println!(
+                " {}model={} · {} tokens · {}% of {} · compactions={}{}",
+                p.dim,
+                active_model,
+                surface.estimate_tokens(),
+                context_percent(surface.estimate_tokens(), &context),
+                context.window_tokens,
+                compacted,
+                p.reset
+            );
+            continue;
+        }
+
+        session.push(NodeKind::Prompt {
+            role: "user".to_string(),
+            text: question.to_string(),
+        });
+        let _ = session.commit();
+
+        if active_model == "auto-combo" {
+            active_model = planner.active_model("chat");
+            context = ContextWindowConfig::new(context_window_tokens(&active_model));
+        }
+
+        match planner.ask(question, &session) {
+            Ok(answer) => {
+                let cleaned = va_core::router_client::strip_think_blocks(&answer);
+                println!("\n{}architect>{} {}\n", accent, p.reset, cleaned);
+                session.push(NodeKind::Thought { text: answer });
+                let _ = session.commit();
+                let (surface, compacted) = session
+                    .context_surface_with_budget(&context)
+                    .unwrap_or_default();
+                print_run_meter(&p, surface.estimate_tokens(), &context, compacted as u32);
+            }
+            Err(e) => {
+                eprintln!(" {}✗ {}{}\n", p.red, e, p.reset);
+            }
+        }
+    }
+
+    persist_session(root, &session);
+    println!(
+        " {}session saved · read-only mode never wrote project files{}",
+        p.dim, p.reset
+    );
     ExitCode::SUCCESS
 }
 

@@ -14,14 +14,22 @@ use gpui::{
     WindowOptions,
 };
 
+use std::path::Path;
+
 use crate::theme::*;
+use va_core::knowledge::context_window_tokens;
+use va_core::modes::{ExecutionMode, LanguageLens};
 use va_core::parser::Step;
 use va_core::state::Workspace;
+use va_harness::session::{ContextWindowConfig, Session};
 
 pub struct MissionControl {
     pub ws: Workspace,
     pub error: Option<String>,
     pub selected_step: Option<i64>,
+    pub mode: ExecutionMode,
+    pub language: LanguageLens,
+    pub model: String,
 }
 
 // ---------------------------------------------------------------- primitives
@@ -96,6 +104,31 @@ fn chip(text: &str, color: gpui::Rgba) -> impl IntoElement {
         .text_xs()
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(color)
+        .child(text.to_string())
+}
+
+/// A clickable selector chip: active chips carry the mode accent, inactive
+/// chips stay muted until selected.
+fn selector_chip(text: &str, active: bool, color: gpui::Rgba) -> impl IntoElement {
+    let fg = if active { color } else { text_secondary() };
+    div()
+        .px_2()
+        .py(px(2.0))
+        .rounded(px(4.0))
+        .border_1()
+        .border_color(if active { color } else { border() })
+        .bg(if active {
+            wash(color, 0.18)
+        } else {
+            wash(text_muted(), 0.08)
+        })
+        .text_xs()
+        .font_weight(if active {
+            FontWeight::SEMIBOLD
+        } else {
+            FontWeight::NORMAL
+        })
+        .text_color(fg)
         .child(text.to_string())
 }
 
@@ -583,6 +616,50 @@ fn extract_field(body: &str, key: &str) -> String {
     String::new()
 }
 
+/// Candidate models for the desktop picker: the router fallback plus the
+/// workspace combo file, de-duplicated, always including the active model.
+fn model_choices(root: &Path, current: &str) -> Vec<String> {
+    let mut out = vec!["auto-combo".to_string()];
+    for path in [
+        root.join(".ai").join("model_combo.txt"),
+        root.join(".ai").join("model_combo.example.txt"),
+    ] {
+        if let Ok(raw) = std::fs::read_to_string(path) {
+            for line in raw.lines() {
+                let clean = line.split('#').next().unwrap_or("").trim();
+                if !clean.is_empty() && !clean.contains('=') && !out.iter().any(|m| m == clean) {
+                    out.push(clean.to_string());
+                }
+            }
+        }
+    }
+    if !out.iter().any(|m| m == current) {
+        out.push(current.to_string());
+    }
+    out
+}
+
+/// `(tokens, window, percent)` for the active session DAG.
+fn context_usage(root: &Path, model: &str) -> (usize, usize, usize) {
+    let path = root.join(".ai").join("session.jsonl");
+    let session = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| Session::from_jsonl(&raw).ok())
+        .unwrap_or_default();
+    let window = context_window_tokens(model);
+    let config = ContextWindowConfig::new(window);
+    let tokens = session
+        .context_surface_with_budget(&config)
+        .map(|(surface, _)| surface.estimate_tokens())
+        .unwrap_or(0);
+    let pct = tokens
+        .saturating_mul(100)
+        .checked_div(window)
+        .unwrap_or(0)
+        .min(100);
+    (tokens, window, pct)
+}
+
 fn truncate(s: &str, max: usize) -> String {
     let clean: String = s.chars().take(max).collect();
     if s.chars().count() > max {
@@ -598,6 +675,12 @@ impl Render for MissionControl {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ws = self.ws.clone();
         let selected = self.selected_step;
+        let mode = self.mode;
+        let language = self.language;
+        let model = self.model.clone();
+        let accent = accent_for(mode);
+        let (ctx_tokens, ctx_window, ctx_pct) = context_usage(&ws.root, &model);
+        let model_choices = model_choices(&ws.root, &model);
 
         let body = if let Some(err) = &self.error {
             div()
@@ -651,14 +734,33 @@ impl Render for MissionControl {
                         .py_2()
                         .bg(surface_1())
                         .border_b_1()
-                        .border_color(border())
+                        .border_color(accent)
                         .child(
                             div()
                                 .text_sm()
                                 .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(text_primary())
+                                .text_color(accent)
                                 .child("MISSION CONTROL"),
                         )
+                        .child(ExecutionMode::ALL.into_iter().fold(
+                            div().flex().items_center().gap_1(),
+                            |row, candidate| {
+                                row.child(
+                                    div()
+                                        .id(("mode", candidate as usize))
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.mode = candidate;
+                                            cx.notify();
+                                        }))
+                                        .child(selector_chip(
+                                            candidate.short_label(),
+                                            mode == candidate,
+                                            accent_for(candidate),
+                                        )),
+                                )
+                            },
+                        ))
                         .child(
                             div().flex_1().text_xs().text_color(text_muted()).child(
                                 ws.active_task
@@ -677,6 +779,62 @@ impl Render for MissionControl {
                         } else {
                             chip("○ ROUTER: OFFLINE", text_muted())
                         }),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .px_4()
+                        .py_1()
+                        .bg(wash(accent, 0.08))
+                        .border_b_1()
+                        .border_color(accent)
+                        .child(LanguageLens::ALL.into_iter().fold(
+                            div().flex().items_center().gap_1(),
+                            |row, candidate| {
+                                row.child(
+                                    div()
+                                        .id(("lang", candidate as usize))
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.language = candidate;
+                                            cx.notify();
+                                        }))
+                                        .child(selector_chip(
+                                            candidate.short_label(),
+                                            language == candidate,
+                                            accent,
+                                        )),
+                                )
+                            },
+                        ))
+                        .child(
+                            div()
+                                .id("model-picker")
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    let index = model_choices
+                                        .iter()
+                                        .position(|m| m == &this.model)
+                                        .unwrap_or(0);
+                                    this.model =
+                                        model_choices[(index + 1) % model_choices.len()].clone();
+                                    cx.notify();
+                                }))
+                                .child(selector_chip(&model, true, accent)),
+                        )
+                        .child(div().flex_1())
+                        .child(div().w(px(260.0)).child(meter(ctx_pct, accent)))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(if ctx_pct >= 75 { status_warn() } else { accent })
+                                .child(format!(
+                                    "CTX {}% · {} / {} tok",
+                                    ctx_pct, ctx_tokens, ctx_window
+                                )),
+                        ),
                 )
                 .child(next_action(&ws, ws.suggested_phrase()))
                 // Two columns: work on the left, context on the right.
@@ -721,6 +879,15 @@ impl Render for MissionControl {
 }
 
 pub fn run(ws: Workspace, error: Option<String>) {
+    let mode = std::env::var("VIBE_MODE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(ExecutionMode::Code);
+    let language = std::env::var("VIBE_LANG")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(LanguageLens::Auto);
+    let model = std::env::var("VIBE_MODEL").unwrap_or_else(|_| "auto-combo".to_string());
     Application::new().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1280.0), px(860.0)), cx);
         cx.open_window(
@@ -733,6 +900,9 @@ pub fn run(ws: Workspace, error: Option<String>) {
                     ws,
                     error,
                     selected_step: None,
+                    mode,
+                    language,
+                    model,
                 })
             },
         )

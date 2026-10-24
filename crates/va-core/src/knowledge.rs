@@ -428,6 +428,50 @@ pub fn scores_by_role(assignments: &[Assignment]) -> BTreeMap<String, (String, f
         .collect()
 }
 
+/// Best-effort context window for a model id, in tokens.
+///
+/// Free-tier routers rarely expose this, so the heuristic reads an explicit
+/// `NNk` / `NNm` marker from the name first, then falls back to family sizes.
+/// The default (128k) is deliberately conservative: compaction triggers at 75%
+/// of the *believed* window, so under-estimating wastes a little budget while
+/// over-estimating risks a context cliff.
+pub fn context_window_tokens(model: &str) -> usize {
+    let norm = normalize(model);
+    // Explicit marker: 32k, 128k, 1m, 262144 tokens.
+    for token in norm.split(|c: char| !c.is_ascii_alphanumeric()) {
+        if let Some(num) = token.strip_suffix('k') {
+            if let Ok(n) = num.parse::<usize>() {
+                if (4..=2_000).contains(&n) {
+                    return n * 1024;
+                }
+            }
+        }
+        if let Some(num) = token.strip_suffix('m') {
+            if let Ok(n) = num.parse::<usize>() {
+                if (1..=10).contains(&n) {
+                    return n * 1_048_576;
+                }
+            }
+        }
+    }
+    if norm.contains("claude") {
+        return 200_000;
+    }
+    if norm.contains("gemini") {
+        return 1_048_576;
+    }
+    if norm.contains("kimi") || norm.contains("nemotron") {
+        return 262_144;
+    }
+    if norm.contains("gpt") || norm.contains("o1") || norm.contains("o3") {
+        return 128_000;
+    }
+    if norm.contains("deepseek") || norm.contains("qwen") || norm.contains("llama") {
+        return 128_000;
+    }
+    128_000
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

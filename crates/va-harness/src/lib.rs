@@ -10,6 +10,7 @@
 
 pub mod diagnostics;
 pub mod engine;
+pub mod experience;
 pub mod judge;
 pub mod live_planner;
 pub mod patcher;

@@ -5,6 +5,7 @@ pub mod allocator;
 pub mod bootstrap;
 pub mod knowledge;
 pub mod lock;
+pub mod modes;
 pub mod parser;
 pub mod prompts;
 pub mod router;
@@ -19,6 +20,7 @@ pub use knowledge::{auto_combo, score_model, Assignment, Fitness, Role as ModelR
 pub use lock::{
     acquire_task_lock, check_task_lock, lock_path, LockInfo, LockStatus, TaskLockGuard,
 };
+pub use modes::{ExecutionMode, LanguageLens, WorkspaceProfile};
 pub use parser::{
     parse_active_task, parse_log_entries, parse_state_file, validate_contract, verified_steps,
     ActiveTask, QueueRow, Step, Ticket,

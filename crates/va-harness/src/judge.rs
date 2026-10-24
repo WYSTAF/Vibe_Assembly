@@ -52,6 +52,8 @@ pub enum FindingKind {
     TrailingWhitespace,
     /// An import added, removed, or reordered.
     ImportChurn,
+    /// A language- or mode-specific guardrail token (see `modes.rs`).
+    LanguageGuardrail,
 }
 
 impl FindingKind {
@@ -63,6 +65,7 @@ impl FindingKind {
             FindingKind::ExcessiveChurn => "excessive-churn",
             FindingKind::TrailingWhitespace => "trailing-whitespace",
             FindingKind::ImportChurn => "import-churn",
+            FindingKind::LanguageGuardrail => "language-guardrail",
         }
     }
 }
@@ -96,6 +99,9 @@ pub struct JudgeConfig {
     pub unsafe_allowed_in: Vec<String>,
     /// Allow boilerplate-looking comments inside doc comments (`///`).
     pub allow_doc_comments: bool,
+    /// `(token, message)` guardrails injected by the language lens and the
+    /// active execution mode.
+    pub extra_guardrails: Vec<(String, String)>,
 }
 
 impl Default for JudgeConfig {
@@ -110,7 +116,19 @@ impl Default for JudgeConfig {
                 "examples".to_string(),
             ],
             allow_doc_comments: true,
+            extra_guardrails: Vec::new(),
         }
+    }
+}
+
+impl JudgeConfig {
+    /// Attach the active language/mode guardrails.
+    pub fn with_guardrails(
+        mut self,
+        guardrails: impl IntoIterator<Item = (String, String)>,
+    ) -> Self {
+        self.extra_guardrails = guardrails.into_iter().collect();
+        self
     }
 }
 
@@ -270,6 +288,17 @@ impl Judge {
                         path: line.path.clone(),
                         line: lineno,
                         detail: format!("`{token}` in a production path — use Result/Option"),
+                    });
+                }
+            }
+            // Language-lens and mode guardrails.
+            for (token, message) in &self.config.extra_guardrails {
+                if text.contains(token.as_str()) {
+                    return Some(Finding {
+                        kind: FindingKind::LanguageGuardrail,
+                        path: line.path.clone(),
+                        line: lineno,
+                        detail: format!("`{token}` — {message}"),
                     });
                 }
             }
