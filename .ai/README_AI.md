@@ -51,8 +51,9 @@ this file before executing a task.
 
 ## Execution Rules
 
-- Work only inside `files_allowed`; forbidden paths are rejected by the patcher
-  and the engine.
+- Work only inside `files_allowed`. Treat every other path as forbidden, even
+  for helpful refactors; the sandbox additionally confines command execution to
+  the workspace root.
 - Address edits by block hash, never by line number.
 - Verify with the active language lens command before claiming success.
 - After two identical failures, stop: the engine raises `StagnationDetected`
