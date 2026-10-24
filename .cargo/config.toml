@@ -1,6 +1,3 @@
-# Workspace-relative build directory. Cargo's default lives at
-# `<workspace>/target`, so builds work on any drive (C:, D:, …) without a
-# machine-specific absolute path.
-#
-# Parallel codegen is restored to Cargo's default: the previous `jobs = 1`
-# guard existed only to protect the Q: probe cache and is no longer needed.
+# Cargo uses the workspace-relative `target/` directory and its default
+# parallel codegen. No machine-specific target directory or job limit is
+# configured here.
