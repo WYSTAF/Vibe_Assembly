@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/vibe-assembly.svg" alt="Vibe Assembly" width="720">
+</p>
+
 # Vibe Assembly
 
 **v2.0.0 - a production-hardened, pure-Rust multi-agent coding workspace.**
