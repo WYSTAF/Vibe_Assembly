@@ -14,7 +14,7 @@ edit passes through a deterministic, hash-anchored execution harness.
 - Hash-anchored patching with drift recovery and ambiguity rejection.
 - Deterministic judge with language and mode guardrails.
 - Durable `.ai/EXPERIENCE.md` recovery lessons.
-- CLI, TUI, MCP server, and native GPUI Mission Control.
+- CLI, TUI, MCP server, and the native GPUI Zed-style workbench.
 
 **Strategic non-goals:**
 

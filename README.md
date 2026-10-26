@@ -11,7 +11,7 @@ projects without exhausting a single chat context. Roles communicate through a
 regulated `.ai/` contract, and every edit passes through a deterministic,
 hash-anchored execution harness.
 
-**Current status:** 188 tests passing, clippy clean with `-D warnings`, both
+**Current status:** 196 tests passing, clippy clean with `-D warnings`, both
 release binaries build. There is no browser runtime, webview, or Node/npm
 toolchain.
 
@@ -37,9 +37,11 @@ size" - and tickets are small by design.
 | Chat | `#3B82F6` blue | **no** | Read-only architecture, explanation, and planning |
 | Debug | `#EF4444` red | yes | Compiler diagnostics, root-cause analysis, security audit |
 
-The desktop canvas uses `#0C0D0E`. The active mode accent is carried through
-the CLI header, TUI panels, and the desktop header, selectors, and context
-strip. The TUI and desktop also expose a live context meter.
+The native desktop workbench uses Zed One Dark surfaces: `#181A1F` sunken
+chrome, `#21252B` editor, `#282C34` / `#2C313A` elevated rows and borders, and
+`#DCDFE4` / `#ABB2BF` / `#5C6370` text. The active mode accent is carried
+through the titlebar, activity strip, editor, composer, and status bar. The TUI
+and desktop also expose a live context meter.
 
 ### Planner roles
 
@@ -115,12 +117,43 @@ vibe-assembly run --live --auto-combo --tournament
 # Deterministic offline smoke run (never calls the router)
 vibe-assembly run --offline-mock
 
-# Native desktop Mission Control
+# Native desktop Zed-style workbench
 cargo run -p va-desktop -- --root . --mode web --lang ts
 ```
 
 `init` and `run --auto-combo` auto-seed `.ai/model_combo.txt` when it is absent.
 The file is gitignored because it is machine-local configuration.
+
+### Desktop workbench
+
+`va-desktop` is a native GPUI 0.2.2 workbench, not a card dashboard. Its six
+zones are:
+
+- a 32px titlebar with workspace breadcrumbs, symbol, block hash, router state,
+  dock toggles, command-palette button, and native window controls;
+- a 36px activity strip plus a 260px project / outline / session dock;
+- a flexible editor with tabs, an 8-character block-hash gutter, Code and Diff
+  views, and an inline patch preview;
+- a 180px bottom drawer for pinned compiler Problems, Verify Output, and the
+  Harness² c1..c8 overlays;
+- a 390px assistant panel with collapsible Observe / Think / Patch / Verify /
+  Judge rows and an interactive composer;
+- a 24px status bar for mode, language lens, `.ai` lock, branch, DAG spend and
+  latency, and the context watermark.
+
+The composer accepts typed text, Space, Backspace, Enter to submit, and
+Shift+Enter for a newline. Mode, language, and model pills cycle real state;
+the judge badge toggles independently. Chat / Architect is enforced read-only:
+it produces an answer but never stages a patch. Keybindings: `Ctrl+P` command
+palette, `Ctrl+B` left dock, `Ctrl+J` bottom drawer, `Ctrl+Shift+A` assistant,
+`Ctrl+W` close tab, `Ctrl+Q` quit.
+
+The workbench is backed by real workspace data: the file tree, RepoMap symbols,
+64-bit FNV-1a `segment_blocks` hashes, the immutable session DAG,
+`ExperienceStore` lessons, pinned diagnostics, and the eight harness surfaces.
+Inline diffs come from `git diff` or `git show HEAD` and fall back to a session
+patch summary. The desktop surface never fabricates a diff and never writes
+files directly; applying patches remains the live CLI's job.
 
 ## Command reference
 
@@ -292,11 +325,13 @@ cargo test --workspace
 cargo build --release
 ```
 
-Current workspace: **188 tests passing**, clippy clean, both release binaries
+Current workspace: **196 tests passing**, clippy clean, both release binaries
 built. The live HTTP planner is tested against a local mock OpenAI-compatible
 TCP server; unit tests cover compaction, think-trace eviction, observation
 slicing, repeated anchors, read-only enforcement, stagnation escalation,
-language detection, and `EXPERIENCE.md` round-tripping.
+language detection, `EXPERIENCE.md` round-tripping, and the desktop workbench
+(real block hashes, mode/language/model cycling, read-only Chat, dock toggles,
+and composer submission).
 
 ## Troubleshooting
 

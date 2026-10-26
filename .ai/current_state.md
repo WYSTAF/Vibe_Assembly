@@ -2,8 +2,8 @@
 
 - **Active Milestone:** v2.0.0 Production Hardening and Feature Completion (ADR-018)
 - **Current Assignment:** Complete - real live planner, execution modes,
-  language lens, context compaction, safety guards, durable experience, and
-  interactive CLI/TUI/desktop selectors.
+  language lens, context compaction, safety guards, durable experience,
+  interactive CLI/TUI selectors, and the modular Zed-style desktop workbench.
 - **Planning Status:** Complete.
 - **Implementation Status:**
   - `va-core`: parser, single-writer task lock, allocator, model knowledge,
@@ -23,10 +23,11 @@
     `reset`, `up`, `repomap`, `diagnose`, `run`, `prompt`, `chat`, `tui`/`top`,
     `profile`, `session`, `mcp`, `patch`, `blocks`, `fork`, `rollback`, and
     `compact`. `init` and `run --auto-combo` auto-seed `.ai/model_combo.txt`.
-  - `va-desktop`: native GPUI Mission Control with clickable mode and language
-    selectors, a model picker, dynamic mode accents, and a real context-window
-    meter computed from `.ai/session.jsonl`.
-- **Verification Status:** 188 tests passing, 0 failed; clippy clean with
+  - `va-desktop`: native GPUI 0.2.2 Zed One Dark workbench (ADR-019) with a
+    six-zone layout, real RepoMap/session-DAG/diagnostics/harness data, an
+    8-character block-hash editor and git diff view, an interactive assistant
+    composer, a floating command palette, and a real context-window meter.
+- **Verification Status:** 196 tests passing, 0 failed; clippy clean with
   `-D warnings`; formatting clean; release build produced both binaries.
 - **Resume Anchor:** n/a - wave verified and complete.
 - **Blockers:** None.

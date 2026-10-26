@@ -16,9 +16,9 @@ sidecar service and no browser/webview layer.
                                   |
 +------------------+   +----------v-----------+   +---------------------+
 | va-cli           |   | va-harness           |   | va-desktop          |
-| prompt / chat    |-->| live_planner         |<--| GPUI Mission Control|
-| run / tui / mcp  |   | engine / session     |   | mode + language     |
-+--------+---------+   | patcher / judge      |   | context meter       |
+| prompt / chat    |-->| live_planner         |<--| GPUI Zed workbench  |
+| run / tui / mcp  |   | engine / session     |   | block hashes + DAG  |
++--------+---------+   | patcher / judge      |   | editor + assistant  |
          |             | repomap / diagnostics|   +---------------------+
          |             | experience/tournament|
          |             +----------+-----------+

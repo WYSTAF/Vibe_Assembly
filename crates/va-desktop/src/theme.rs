@@ -1,92 +1,169 @@
-//! Visual language borrowed from Zed's dark theme: a near-black layered
-//! surface, hairline borders, one accent hue, and color reserved almost
-//! entirely for *status* so it always carries meaning.
+//! Zed One Dark design tokens for the Vibe Assembly workbench.
+//!
+//! The palette is deliberately small: four sunken surfaces, one editor surface,
+//! two elevated tones, three text weights, two diff tones, and four mode accents.
+//! Every border is a 1px hairline; panes are separated by borders, not cards.
 
 use gpui::{hsla, rgb, Hsla, Rgba};
 use va_core::modes::ExecutionMode;
 
-pub fn surface_0() -> Rgba {
-    // Window background - deepest layer (#0C0D0E canvas).
-    rgb(0x0c0d0e)
+// ------------------------------------------------------------------ surfaces
+
+/// Titlebar, activity bar, left dock, assistant dock, bottom drawer, status bar.
+pub fn sunken() -> Rgba {
+    rgb(0x181A1F)
 }
 
-pub fn surface_1() -> Rgba {
-    // Panels sitting on the background.
-    rgb(0x141619)
+/// Editor and primary canvas.
+pub fn editor() -> Rgba {
+    rgb(0x21252B)
 }
 
-pub fn surface_2() -> Rgba {
-    // Raised rows, hover states.
-    rgb(0x1b1e22)
+/// Active tab, command palette, hover states.
+pub fn elevated() -> Rgba {
+    rgb(0x282C34)
 }
 
+/// Composer input and pressed/hover raised rows.
+pub fn elevated_alt() -> Rgba {
+    rgb(0x2C313A)
+}
+
+/// Structural hairline border. Also the raised hover tone in Zed.
 pub fn border() -> Rgba {
-    rgb(0x26292e)
+    rgb(0x2C313A)
 }
 
+/// Slightly stronger border for focused controls.
 pub fn border_strong() -> Rgba {
-    rgb(0x363a41)
+    rgb(0x3E4451)
 }
+
+// -------------------------------------------------------------------- text
 
 pub fn text_primary() -> Rgba {
-    rgb(0xe6e8ec)
+    rgb(0xDCDFE4)
 }
 
 pub fn text_secondary() -> Rgba {
-    rgb(0x9aa0a8)
+    rgb(0xABB2BF)
 }
 
 pub fn text_muted() -> Rgba {
-    rgb(0x6b7178)
+    rgb(0x5C6370)
 }
 
-pub fn accent() -> Rgba {
-    // Zed's blue.
-    rgb(0x3b8eea)
+// -------------------------------------------------------------------- diff
+
+pub fn diff_add_bg() -> Rgba {
+    rgb(0x1E3A29)
 }
 
-/// Dynamic accent for the active execution mode. The four accents are chosen
-/// to stay readable on the #0C0D0E canvas.
-pub fn accent_for(mode: ExecutionMode) -> Rgba {
-    rgb(mode.accent_rgb())
+pub fn diff_add_text() -> Rgba {
+    rgb(0x98C379)
 }
 
-/// Status colors. These are the only saturated hues in the app, so a red
-/// block is never decorative.
-pub fn status_ok() -> Rgba {
-    rgb(0x3fb950)
+pub fn diff_delete_bg() -> Rgba {
+    rgb(0x3E1F24)
 }
 
-pub fn status_warn() -> Rgba {
-    rgb(0xd29922)
+pub fn diff_delete_text() -> Rgba {
+    rgb(0xE06C75)
 }
 
-pub fn status_error() -> Rgba {
-    rgb(0xf85149)
-}
+// ------------------------------------------------------------------ accents
 
-pub fn status_idle() -> Rgba {
-    rgb(0x6b7178)
-}
-
-pub fn status_done() -> Rgba {
-    rgb(0x8b949e)
-}
-
-/// The status color for a ticket row.
-pub fn ticket_status_color(status: &str) -> Rgba {
-    match status {
-        "done" => status_done(),
-        "in_progress" => accent(),
-        "blocked" | "failed" => status_error(),
-        "pending" => status_warn(),
-        _ => status_idle(),
+/// Soft mode accent used for borders, pills, and active indicators.
+pub fn accent_rgb(mode: ExecutionMode) -> u32 {
+    match mode {
+        ExecutionMode::Code => 0x00E5_C07B,
+        ExecutionMode::Web => 0x0056_B6C2,
+        ExecutionMode::Chat => 0x0061_AFEF,
+        ExecutionMode::Debug => 0x00E0_6C75,
     }
 }
 
-/// Convert an opaque status color to Hsla at the given alpha. Rgba has no
-/// alpha helper in gpui 0.2.2, so washes go through Hsla.
-pub fn wash(color: Rgba, a: f32) -> Hsla {
+/// Vivid mode accent used for solid badges and focus glows.
+pub fn accent_strong_rgb(mode: ExecutionMode) -> u32 {
+    mode.accent_rgb()
+}
+
+pub fn accent_for(mode: ExecutionMode) -> Rgba {
+    rgb(accent_rgb(mode))
+}
+
+pub fn accent_strong_for(mode: ExecutionMode) -> Rgba {
+    rgb(accent_strong_rgb(mode))
+}
+
+#[cfg(test)]
+pub fn accent_hex(mode: ExecutionMode) -> &'static str {
+    match mode {
+        ExecutionMode::Code => "#E5C07B",
+        ExecutionMode::Web => "#56B6C2",
+        ExecutionMode::Chat => "#61AFEF",
+        ExecutionMode::Debug => "#E06C75",
+    }
+}
+
+#[cfg(test)]
+pub fn accent_strong_hex(mode: ExecutionMode) -> &'static str {
+    mode.accent_hex()
+}
+
+// --------------------------------------------------------------- status hues
+
+pub fn success() -> Rgba {
+    rgb(0x98C379)
+}
+
+pub fn warning() -> Rgba {
+    rgb(0xE5C07B)
+}
+
+pub fn danger() -> Rgba {
+    rgb(0xE06C75)
+}
+
+pub fn info() -> Rgba {
+    rgb(0x61AFEF)
+}
+
+pub fn purple() -> Rgba {
+    rgb(0xC678DD)
+}
+
+pub fn cyan() -> Rgba {
+    rgb(0x56B6C2)
+}
+
+pub fn phase_color(phase: &str) -> Rgba {
+    match phase {
+        "observe" => cyan(),
+        "think" => warning(),
+        "patch" => success(),
+        "verify" => info(),
+        "judge" => danger(),
+        _ => text_muted(),
+    }
+}
+
+pub fn symbol_color(kind: &str) -> Rgba {
+    match kind {
+        "fn" | "method" => success(),
+        "struct" | "enum" | "class" | "interface" => warning(),
+        "trait" => purple(),
+        "impl" => info(),
+        "type" | "constant" => cyan(),
+        "block" => text_muted(),
+        _ => text_secondary(),
+    }
+}
+
+// ------------------------------------------------------------------- washes
+
+/// Convert an opaque color to Hsla at the requested alpha.
+pub fn wash(color: Rgba, alpha: f32) -> Hsla {
     let max = color.r.max(color.g).max(color.b);
     let min = color.r.min(color.g).min(color.b);
     let l = (max + min) / 2.0;
@@ -105,15 +182,44 @@ pub fn wash(color: Rgba, a: f32) -> Hsla {
     } else {
         ((color.r - color.g) / d + 4.0) / 6.0
     };
-    hsla(h, s, l, a)
+    hsla(h, s, l, alpha)
 }
 
-/// A faint wash of the status color, for row backgrounds.
-pub fn status_wash(status: &str) -> Hsla {
-    wash(ticket_status_color(status), 0.14)
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// A fainter wash, for panel headers and inline chips.
-pub fn status_wash_faint(status: &str) -> Hsla {
-    wash(ticket_status_color(status), 0.10)
+    #[test]
+    fn zed_one_dark_tokens_are_exact() {
+        assert_eq!(sunken(), rgb(0x181A1F));
+        assert_eq!(editor(), rgb(0x21252B));
+        assert_eq!(elevated(), rgb(0x282C34));
+        assert_eq!(elevated_alt(), rgb(0x2C313A));
+        assert_eq!(border(), rgb(0x2C313A));
+        assert_eq!(text_primary(), rgb(0xDCDFE4));
+        assert_eq!(text_secondary(), rgb(0xABB2BF));
+        assert_eq!(text_muted(), rgb(0x5C6370));
+        assert_eq!(diff_add_bg(), rgb(0x1E3A29));
+        assert_eq!(diff_add_text(), rgb(0x98C379));
+        assert_eq!(diff_delete_bg(), rgb(0x3E1F24));
+        assert_eq!(diff_delete_text(), rgb(0xE06C75));
+    }
+
+    #[test]
+    fn mode_accents_match_the_workbench_palette() {
+        assert_eq!(accent_hex(ExecutionMode::Code), "#E5C07B");
+        assert_eq!(accent_hex(ExecutionMode::Web), "#56B6C2");
+        assert_eq!(accent_hex(ExecutionMode::Chat), "#61AFEF");
+        assert_eq!(accent_hex(ExecutionMode::Debug), "#E06C75");
+
+        assert_eq!(accent_strong_hex(ExecutionMode::Code), "#F5B800");
+        assert_eq!(accent_strong_hex(ExecutionMode::Web), "#06B6D4");
+        assert_eq!(accent_strong_hex(ExecutionMode::Chat), "#3B82F6");
+        assert_eq!(accent_strong_hex(ExecutionMode::Debug), "#EF4444");
+
+        for mode in ExecutionMode::ALL {
+            assert_eq!(accent_for(mode), rgb(accent_rgb(mode)));
+            assert_eq!(accent_strong_for(mode), rgb(accent_strong_rgb(mode)));
+        }
+    }
 }
