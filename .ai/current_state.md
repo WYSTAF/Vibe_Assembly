@@ -26,8 +26,9 @@
   - `va-desktop`: native GPUI 0.2.2 Zed One Dark workbench (ADR-019) with a
     six-zone layout, real RepoMap/session-DAG/diagnostics/harness data, an
     8-character block-hash editor and git diff view, an interactive assistant
-    composer, a floating command palette, and a real context-window meter.
-- **Verification Status:** 196 tests passing, 0 failed; clippy clean with
+    composer, a floating command palette, a real context-window meter, a shared
+    native `ui_kit`, and embedded brand/Windows icon assets.
+- **Verification Status:** 200 tests passing, 0 failed; clippy clean with
   `-D warnings`; formatting clean; release build produced both binaries.
 - **Resume Anchor:** n/a - wave verified and complete.
 - **Blockers:** None.

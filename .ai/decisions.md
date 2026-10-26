@@ -126,7 +126,7 @@
 
 ## [ADR-019] Zed Workbench UI/UX Architecture in va-desktop
 - **Date:** 2026-10-25
-- **Status:** Implemented; 196 tests green; clippy clean with `-D warnings`; both release binaries built
+- **Status:** Implemented; 200 tests green; clippy clean with `-D warnings`; both release binaries built
 - **Context:** The original `va-desktop` was one 912-line `ui.rs` dashboard. It was readable as a status report, but it was not a workbench: panels were cards, the file tree and editor were not a coherent surface, block hashes were not exposed as an editing primitive, the assistant was not interactive, and every visual change required editing the same monolith. The rest of the product had already moved to real RepoMap symbols, hash-anchored patches, a session DAG, pinned diagnostics, and eight harness surfaces, so the desktop needed to show those same objects rather than a parallel summary.
 - **Decision:** Replace `ui.rs` with a modular GPUI 0.2.2 workbench and keep the pure state machine testable without a window.
   1. **Six-zone composition:** `main.rs` owns the 1440x900 window and keyboard dispatch; `state.rs` owns `WorkbenchState` and the `Workbench` entity; `left_dock.rs` renders the 36px activity strip plus the 260px project/outline/session dock; `editor_pane.rs` renders tabs, the block-hash code gutter, and Code/Diff views; `bottom_drawer.rs` renders the 180px Problems / Verify / Harness² drawer; `assistant_panel.rs` renders the 390px assistant and composer; `command_palette.rs` renders the floating `Ctrl+P` palette; `widgets.rs` holds shared pills, buttons, meters, hash badges, keycaps, and status dots. The titlebar is 32px and the status bar is 24px.

@@ -11,7 +11,7 @@ projects without exhausting a single chat context. Roles communicate through a
 regulated `.ai/` contract, and every edit passes through a deterministic,
 hash-anchored execution harness.
 
-**Current status:** 196 tests passing, clippy clean with `-D warnings`, both
+**Current status:** 200 tests passing, clippy clean with `-D warnings`, both
 release binaries build. There is no browser runtime, webview, or Node/npm
 toolchain.
 
@@ -151,6 +151,9 @@ palette, `Ctrl+B` left dock, `Ctrl+J` bottom drawer, `Ctrl+Shift+A` assistant,
 The workbench is backed by real workspace data: the file tree, RepoMap symbols,
 64-bit FNV-1a `segment_blocks` hashes, the immutable session DAG,
 `ExperienceStore` lessons, pinned diagnostics, and the eight harness surfaces.
+Shared presentation primitives live in `crates/va-desktop/src/ui_kit`; the
+supplied brand mark is embedded as a GPUI asset, and the Windows executable
+carries the matching multi-size application icon.
 Inline diffs come from `git diff` or `git show HEAD` and fall back to a session
 patch summary. The desktop surface never fabricates a diff and never writes
 files directly; applying patches remains the live CLI's job.
@@ -325,7 +328,7 @@ cargo test --workspace
 cargo build --release
 ```
 
-Current workspace: **196 tests passing**, clippy clean, both release binaries
+Current workspace: **200 tests passing**, clippy clean, both release binaries
 built. The live HTTP planner is tested against a local mock OpenAI-compatible
 TCP server; unit tests cover compaction, think-trace eviction, observation
 slicing, repeated anchors, read-only enforcement, stagnation escalation,
