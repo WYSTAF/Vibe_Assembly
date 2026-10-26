@@ -5,7 +5,7 @@ use gpui::prelude::*;
 use gpui::{img, px, AssetSource, Img, SharedString};
 
 const LOGO_PATH: &str = "brand/vibe-assembly.svg";
-const LOGO: &[u8] = include_bytes!("../../../assets/vibe-assembly-icon.svg");
+const LOGO: &[u8] = include_bytes!("../../../assets/vibe-assembly-logo.svg");
 
 pub struct BrandAssets;
 
