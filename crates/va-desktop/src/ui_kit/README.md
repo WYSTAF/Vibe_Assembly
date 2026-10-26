@@ -1,7 +1,7 @@
 # Native workbench UI kit
 
 Implemented directly against the locked GPUI 0.2.2, without additional crates,
-runtime downloads, webviews, or assets.
+runtime downloads or webviews. The supplied brand SVG is embedded in the app.
 
 Research completed before implementation:
 

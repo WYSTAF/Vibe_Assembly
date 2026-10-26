@@ -1764,9 +1764,7 @@ impl Workbench {
             .child(
                 div()
                     .window_control_area(WindowControlArea::Drag)
-                    .text_color(accent)
-                    .text_size(px(18.0))
-                    .child("◈"),
+                    .child(crate::branding::logo(22.0)),
             )
             .child(
                 ui_kit::button("workspace-pill", workspace)

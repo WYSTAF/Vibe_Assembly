@@ -6,6 +6,7 @@
 
 mod assistant_panel;
 mod bottom_drawer;
+mod branding;
 mod command_palette;
 mod editor_pane;
 mod left_dock;
@@ -88,31 +89,33 @@ fn run(
     language: LanguageLens,
     model: String,
 ) {
-    Application::new().run(move |cx: &mut App| {
-        theme::init_fonts(cx);
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::centered(size(px(1440.0), px(900.0)), cx)),
-            titlebar: Some(TitlebarOptions {
-                title: Some("Vibe Assembly".into()),
-                appears_transparent: true,
-                traffic_light_position: None,
-            }),
-            window_min_size: Some(size(px(1120.0), px(720.0))),
-            window_background: WindowBackgroundAppearance::Opaque,
-            app_id: Some("vibe-assembly".to_string()),
-            ..Default::default()
-        };
+    Application::new()
+        .with_assets(branding::BrandAssets)
+        .run(move |cx: &mut App| {
+            theme::init_fonts(cx);
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::centered(size(px(1440.0), px(900.0)), cx)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Vibe Assembly".into()),
+                    appears_transparent: true,
+                    traffic_light_position: None,
+                }),
+                window_min_size: Some(size(px(1120.0), px(720.0))),
+                window_background: WindowBackgroundAppearance::Opaque,
+                app_id: Some("vibe-assembly".to_string()),
+                ..Default::default()
+            };
 
-        let _window = cx
-            .open_window(options, move |window, cx| {
-                let state = WorkbenchState::new(workspace, error, mode, language, model);
-                let view = cx.new(|cx| Workbench::new(state, cx));
-                let focus = view.read(cx).composer_focus.clone();
-                focus.focus(window);
-                view
-            })
-            .expect("failed to open the Vibe Assembly workbench window");
+            let _window = cx
+                .open_window(options, move |window, cx| {
+                    let state = WorkbenchState::new(workspace, error, mode, language, model);
+                    let view = cx.new(|cx| Workbench::new(state, cx));
+                    let focus = view.read(cx).composer_focus.clone();
+                    focus.focus(window);
+                    view
+                })
+                .expect("failed to open the Vibe Assembly workbench window");
 
-        cx.activate(true);
-    });
+            cx.activate(true);
+        });
 }

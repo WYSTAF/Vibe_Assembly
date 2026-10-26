@@ -576,7 +576,7 @@ fn render_diff(
 
 fn no_file_state() -> Div {
     ui_kit::empty_state(
-        "◈",
+        crate::branding::logo(32.0),
         "A little space to build",
         "Open a file from the sidebar, or press Ctrl+P to find a file, symbol, or command.",
     )

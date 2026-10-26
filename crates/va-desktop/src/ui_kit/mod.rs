@@ -78,7 +78,7 @@ pub fn icon_button(id: impl Into<ElementId>, glyph: &str, selected: bool) -> Sta
     })
 }
 
-pub fn empty_state(glyph: &str, title: &str, detail: &str) -> Div {
+pub fn empty_state(glyph: impl IntoElement, title: &str, detail: &str) -> Div {
     div()
         .flex()
         .flex_col()
@@ -97,7 +97,7 @@ pub fn empty_state(glyph: &str, title: &str, detail: &str) -> Div {
                 .bg(theme::elevated())
                 .text_size(px(22.0))
                 .text_color(theme::text_muted())
-                .child(glyph.to_string()),
+                .child(glyph),
         )
         .child(
             div()

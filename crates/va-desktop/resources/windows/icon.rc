@@ -1,0 +1,2 @@
+// Resource ID 1 is the application icon loaded by GPUI on Windows.
+1 ICON "../../assets/vibe-assembly-icon.ico"
