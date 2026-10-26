@@ -1,103 +1,51 @@
-//! Right assistant dock: thread stream, collapsible execution rows, and the
-//! interactive prompt composer with mode / language / model pills.
-
+//! Quiet agent timeline and a context-aware, docked prompt composer.
+use crate::state::{PaletteScope, ThreadItem, Workbench};
+use crate::{theme, ui_kit, widgets};
 use gpui::prelude::*;
-use gpui::{div, px, Context, Div, Rgba};
-
-use crate::state::{ThreadItem, Workbench};
-use crate::theme;
-use crate::widgets;
+use gpui::{div, px, Context, Div, FontWeight, Rgba};
+use ui_kit::{CollapsibleStepCard, ContextChip, CursorStyleComposer, TintedBadge};
 
 pub fn render(
     workbench: &Workbench,
     accent: Rgba,
-    accent_strong: Rgba,
-    composer_focused: bool,
+    _accent_strong: Rgba,
+    focused: bool,
     cx: &mut Context<Workbench>,
 ) -> Div {
     let state = &workbench.state;
-    let context_color = if state.context_pct >= 75 {
-        theme::warning()
-    } else {
-        accent
-    };
-
     let header = div()
-        .h(px(32.0))
+        .h(px(46.0))
         .flex_shrink_0()
         .flex()
         .items_center()
-        .gap_2()
-        .px_2()
-        .bg(theme::sunken())
-        .border_b_1()
-        .border_color(theme::border())
-        .child(widgets::section_label("Assistant"))
+        .gap(px(8.0))
+        .px(px(16.0))
+        .child(
+            div()
+                .text_size(px(theme::HEADING))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child("✧  Assistant"),
+        )
         .child(div().flex_1())
         .child(
-            div()
-                .id("assistant-context")
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.state.compact_context();
-                    cx.notify();
-                }))
-                .child(widgets::pill(
-                    state.context_label(),
-                    state.context_pct >= 75,
-                    context_color,
-                )),
-        )
-        .child(
-            div()
-                .id("assistant-new-thread")
-                .flex()
-                .items_center()
-                .justify_center()
-                .px_1()
-                .py(px(1.0))
-                .rounded(px(2.0))
-                .text_size(px(12.0))
-                .text_color(theme::text_muted())
-                .cursor_pointer()
-                .hover(|style| {
-                    style
-                        .bg(theme::elevated())
-                        .text_color(theme::text_primary())
-                })
-                .on_click(cx.listener(|this, _, _, cx| {
+            ui_kit::button("assistant-new-thread", "＋ New")
+                .text_size(px(theme::MICRO))
+                .on_click(cx.listener(|this, _, window, cx| {
                     this.state.clear_thread();
+                    window.focus(&this.composer_focus);
                     cx.notify();
-                }))
-                .child("＋"),
+                })),
         );
-
-    let meter = div()
-        .flex_shrink_0()
-        .px_2()
-        .pb_1()
-        .bg(theme::sunken())
-        .child(widgets::meter(state.context_pct, context_color));
-
     let mut stream = div()
         .id("assistant-scroll")
+        .track_scroll(&workbench.thread_scroll)
         .flex_1()
         .min_h_0()
         .overflow_scroll()
         .flex()
         .flex_col()
-        .gap_2()
-        .p_2();
-
-    if state.thread.is_empty() {
-        stream = stream.child(
-            div()
-                .p_2()
-                .text_size(px(10.0))
-                .text_color(theme::text_muted())
-                .child("No thread items yet."),
-        );
-    }
-
+        .gap(px(16.0))
+        .p(px(16.0));
     for (index, item) in state.thread.iter().enumerate() {
         match item {
             ThreadItem::User { text } => {
@@ -105,358 +53,308 @@ pub fn render(
                     div()
                         .flex()
                         .flex_col()
-                        .gap_1()
-                        .p_2()
-                        .rounded(px(3.0))
+                        .gap(px(8.0))
+                        .p(px(12.0))
+                        .rounded(px(10.0))
                         .bg(theme::elevated())
-                        .border_l_2()
-                        .border_color(accent)
-                        .child(
-                            div()
-                                .text_size(px(8.0))
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .text_color(accent)
-                                .child("YOU"),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(11.0))
-                                .line_height(px(16.0))
-                                .text_color(theme::text_primary())
-                                .child(text.clone()),
-                        ),
-                );
+                        .child(widgets::section_label("You"))
+                        .child(message(text, theme::text_primary())),
+                )
             }
             ThreadItem::Assistant { text, read_only } => {
-                let color = if *read_only { theme::info() } else { accent };
-                let label = if *read_only {
-                    "ASSISTANT · READ-ONLY"
-                } else {
-                    "ASSISTANT"
-                };
                 stream = stream.child(
                     div()
                         .flex()
                         .flex_col()
-                        .gap_1()
-                        .pl_2()
-                        .border_l_2()
-                        .border_color(color)
+                        .gap(px(8.0))
                         .child(
                             div()
-                                .text_size(px(8.0))
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .text_color(color)
-                                .child(label),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(11.0))
-                                .line_height(px(16.0))
+                                .flex()
+                                .items_center()
+                                .gap(px(8.0))
+                                .text_size(px(theme::MICRO))
+                                .font_weight(FontWeight::MEDIUM)
                                 .text_color(theme::text_secondary())
-                                .child(text.clone()),
-                        ),
-                );
+                                .child("✧ Vibe Assembly")
+                                .when(*read_only, |this| {
+                                    this.child(TintedBadge::render("Read only", theme::info()))
+                                }),
+                        )
+                        .child(message(text, theme::text_secondary())),
+                )
             }
             ThreadItem::System { text } => {
                 stream = stream.child(
                     div()
-                        .p_2()
-                        .rounded(px(3.0))
+                        .id(("system-message", index))
+                        .flex()
+                        .flex_col()
+                        .gap(px(6.0))
+                        .p(px(10.0))
+                        .rounded(px(8.0))
                         .bg(theme::elevated())
-                        .border_1()
-                        .border_color(theme::border())
-                        .text_size(px(9.0))
-                        .line_height(px(14.0))
-                        .text_color(theme::text_muted())
-                        .child(text.clone()),
-                );
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if !this.state.expanded_messages.remove(&index) {
+                                this.state.expanded_messages.insert(index);
+                            }
+                            cx.notify();
+                        }))
+                        .child(
+                            div()
+                                .text_size(px(theme::MICRO))
+                                .text_color(theme::text_muted())
+                                .child(format!(
+                                    "{}  {}",
+                                    if state.expanded_messages.contains(&index) {
+                                        "⌄"
+                                    } else {
+                                        "›"
+                                    },
+                                    widgets::first_line(text)
+                                )),
+                        )
+                        .when(state.expanded_messages.contains(&index), |this| {
+                            this.child(message(text, theme::text_secondary()))
+                        }),
+                )
             }
             ThreadItem::Step(step) => {
-                let phase_color = theme::phase_color(step.phase.as_str());
-                let status_color = if step.status == "off" {
-                    theme::danger()
-                } else if step.status == "gated" {
-                    theme::warning()
-                } else if step.status == "armed" || step.status == "ready" {
-                    theme::success()
-                } else {
-                    theme::text_muted()
-                };
-                let chevron = if step.expanded { "▾" } else { "▸" };
-                let mut row = div()
+                let mut card = div()
                     .flex()
                     .flex_col()
-                    .rounded(px(3.0))
-                    .border_1()
-                    .border_color(theme::border())
+                    .rounded(px(8.0))
                     .bg(theme::elevated())
                     .child(
-                        div()
-                            .id(("assistant-step", index))
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .px_1()
-                            .py(px(2.0))
-                            .cursor_pointer()
-                            .hover(|style| style.bg(theme::elevated_alt()))
-                            .on_click(cx.listener(move |this, _, _, cx| {
+                        CollapsibleStepCard::header(("assistant-step", index), step).on_click(
+                            cx.listener(move |this, _, _, cx| {
                                 if let Some(ThreadItem::Step(step)) =
                                     this.state.thread.get_mut(index)
                                 {
                                     step.expanded = !step.expanded;
                                 }
                                 cx.notify();
-                            }))
+                            }),
+                        ),
+                    );
+                if step.expanded {
+                    card = card.child(
+                        div()
+                            .px(px(12.0))
+                            .pb(px(12.0))
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.0))
                             .child(
                                 div()
-                                    .w(px(10.0))
-                                    .text_size(px(9.0))
-                                    .text_color(theme::text_muted())
-                                    .child(chevron),
-                            )
-                            .child(widgets::pill(step.phase.label(), true, phase_color))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_size(px(9.0))
+                                    .text_size(px(theme::BODY))
                                     .text_color(theme::text_secondary())
                                     .child(step.title.clone()),
                             )
+                            .child(message(&step.detail, theme::text_muted()))
                             .child(
                                 div()
-                                    .text_size(px(8.0))
-                                    .font_family("Consolas")
+                                    .text_size(px(theme::MICRO))
                                     .text_color(theme::text_muted())
-                                    .child(format!("{}t", step.tokens)),
+                                    .child(format!("{} tokens · {}", step.tokens, step.status)),
                             )
-                            .child(
-                                div()
-                                    .text_size(px(8.0))
-                                    .font_family("Consolas")
-                                    .text_color(theme::text_muted())
-                                    .child(format!("{}ms", step.latency_ms)),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(8.0))
-                                    .font_family("Consolas")
-                                    .text_color(theme::text_muted())
-                                    .child(format!(
-                                        "${:.6}",
-                                        step.cost_micros as f64 / 1_000_000.0
-                                    )),
-                            )
-                            .child(widgets::dot(status_color)),
+                            .when(step.think_evicted, |this| {
+                                this.child(
+                                    div()
+                                        .px(px(12.0))
+                                        .pb(px(10.0))
+                                        .text_size(px(theme::MICRO))
+                                        .text_color(theme::text_muted())
+                                        .child("Thought text compacted after patch"),
+                                )
+                            }),
                     );
-
-                if step.expanded {
-                    row = row
-                        .child(
-                            div()
-                                .px_2()
-                                .py_1()
-                                .text_size(px(9.0))
-                                .line_height(px(14.0))
-                                .text_color(theme::text_muted())
-                                .child(step.detail.clone()),
-                        )
-                        .when(step.think_evicted, |this| {
-                            this.child(
-                                div()
-                                    .px_2()
-                                    .pb_1()
-                                    .text_size(px(8.0))
-                                    .text_color(theme::warning())
-                                    .child("think text evicted after the patch step"),
-                            )
-                        });
                 }
-                stream = stream.child(row);
+                stream = stream.child(card);
             }
         }
     }
-
-    let composer = div()
-        .m_2()
-        .mt_0()
-        .flex_shrink_0()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .p_2()
-        .rounded(px(4.0))
-        .bg(theme::elevated())
-        .border_1()
-        .border_color(if composer_focused {
-            accent_strong
-        } else {
-            theme::border_strong()
-        })
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_1()
-                .child(widgets::section_label("Context"))
-                .child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .text_size(px(8.0))
-                        .font_family("Consolas")
-                        .text_color(accent)
-                        .child(state.context_reference()),
+    let mut context = div().flex().flex_wrap().items_center().gap(px(6.0));
+    if state.context_file {
+        if let Some(path) = state.active_rel_path() {
+            context = context.child(
+                ContextChip::render(
+                    format!("@{}", path.rsplit('/').next().unwrap_or(&path)),
+                    theme::text_secondary(),
                 )
-                .child(div().flex_1())
-                .when(!state.mode.allows_writes(), |this| {
-                    this.child(widgets::pill("READ-ONLY", true, theme::info()))
-                }),
-        )
-        .child(
-            div()
-                .id("assistant-input")
-                .h(px(54.0))
-                .w_full()
-                .overflow_hidden()
-                .cursor_text()
-                .track_focus(&workbench.composer_focus)
-                .on_key_down(cx.listener(Workbench::on_composer_key))
-                .on_click(cx.listener(|this, _, window, cx| {
-                    window.focus(&this.composer_focus);
-                    cx.notify();
-                }))
-                .text_size(px(11.0))
-                .line_height(px(16.0))
-                .text_color(theme::text_primary())
-                .child(if state.prompt_input.is_empty() {
-                    div()
-                        .flex()
-                        .items_center()
-                        .text_color(theme::text_muted())
-                        .child(if state.mode.allows_writes() {
-                            "Ask, plan, or describe a change…"
-                        } else {
-                            "Ask a read-only architecture question…"
-                        })
-                        .when(composer_focused, |this| {
-                            this.child(div().text_color(accent).child("▍"))
-                        })
-                } else {
-                    div()
-                        .flex()
-                        .items_center()
-                        .child(state.prompt_input.clone())
-                        .when(composer_focused, |this| {
-                            this.child(div().text_color(accent).child("▍"))
-                        })
-                }),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap_1()
                 .child(
-                    div()
-                        .id("composer-mode")
+                    ui_kit::icon_button("remove-file-context", "×", false)
+                        .size(px(14.0))
                         .on_click(cx.listener(|this, _, _, cx| {
-                            this.state.cycle_mode();
+                            this.state.context_file = false;
                             cx.notify();
-                        }))
-                        .child(widgets::pill(state.mode.short_label(), true, accent)),
-                )
-                .child(
-                    div()
-                        .id("composer-language")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.state.cycle_language();
-                            cx.notify();
-                        }))
-                        .child(widgets::pill(state.language_label(), true, theme::cyan())),
-                )
-                .child(
-                    div()
-                        .id("composer-model")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.state.cycle_model();
-                            cx.notify();
-                        }))
-                        .child(widgets::pill(state.model_label(), true, theme::purple())),
-                )
-                .child(
-                    div()
-                        .id("composer-judge")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.state.toggle_judge();
-                            cx.notify();
-                        }))
-                        .child(widgets::pill(
-                            if state.judge_on {
-                                "Judge ON"
-                            } else {
-                                "Judge OFF"
-                            },
-                            state.judge_on,
-                            if state.judge_on {
-                                theme::success()
-                            } else {
-                                theme::danger()
-                            },
-                        )),
-                )
-                .child(div().flex_1())
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_1()
-                        .child(widgets::keycap("Enter"))
-                        .child(
-                            div()
-                                .id("assistant-send")
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .px_3()
-                                .py(px(3.0))
-                                .rounded(px(3.0))
-                                .bg(accent_strong)
-                                .text_size(px(10.0))
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .text_color(theme::sunken())
-                                .cursor_pointer()
-                                .hover(|style| style.bg(accent))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.state.submit_prompt();
-                                    window.focus(&this.composer_focus);
-                                    cx.notify();
-                                }))
-                                .child(if state.mode.allows_writes() {
-                                    "Run"
-                                } else {
-                                    "Ask"
-                                }),
-                        ),
+                        })),
                 ),
-        )
+            );
+        }
+    }
+    if let Some((path, hash)) = &state.pinned_block {
+        context = context
+            .child(
+                ContextChip::render(format!("#{}", widgets::hash8(*hash)), accent).child(
+                    ui_kit::icon_button("remove-block-context", "×", false)
+                        .size(px(14.0))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.state.pinned_block = None;
+                            cx.notify();
+                        })),
+                ),
+            )
+            .child(
+                div()
+                    .max_w(px(150.0))
+                    .truncate()
+                    .text_size(px(theme::MICRO))
+                    .text_color(theme::text_muted())
+                    .child(state.rel_path(path)),
+            );
+    }
+    if !state.context_file && state.pinned_block.is_none() {
+        context = context.child(
+            ui_kit::button("add-active-context", "＋ Add active file")
+                .text_size(px(theme::MICRO))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.state.context_file = true;
+                    cx.notify();
+                })),
+        );
+    }
+    let input = div()
+        .id("assistant-input")
+        .min_h(px(88.0))
+        .max_h(px(180.0))
+        .w_full()
+        .cursor_text()
+        .track_focus(&workbench.composer_focus)
+        .on_key_down(cx.listener(Workbench::on_composer_key))
+        .on_click(cx.listener(|this, _, window, cx| {
+            window.focus(&this.composer_focus);
+            cx.notify();
+        }))
+        .relative()
         .child(
             div()
-                .text_size(px(8.0))
-                .text_color(theme::text_muted())
-                .child(if state.mode.allows_writes() {
-                    "Enter submits · Shift+Enter adds a line · preview only, no file writes"
+                .id("prompt-text-scroll")
+                .max_h(px(180.0))
+                .overflow_y_scroll()
+                .text_size(px(theme::BODY))
+                .line_height(px(21.0))
+                .child(workbench.prompt_selection.display(
+                    &state.prompt_input,
+                    focused,
+                    "Ask, plan, or describe a change…",
+                    accent,
+                )),
+        )
+        .child(ui_kit::capture(
+            cx.entity(),
+            workbench.composer_focus.clone(),
+        ));
+    let controls = div()
+        .flex()
+        .items_center()
+        .gap(px(4.0))
+        .child(
+            ui_kit::button("composer-mode", format!("{} ⌄", state.mode.short_label()))
+                .rounded_full()
+                .text_size(px(11.5))
+                .bg(theme::wash(accent, 0.12))
+                .text_color(accent)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.open_palette(PaletteScope::Mode, window, cx);
+                })),
+        )
+        .child(
+            ui_kit::button(
+                "composer-language",
+                format!("{} ⌄", state.resolved_language().short_label()),
+            )
+            .rounded_full()
+            .px(px(6.0))
+            .text_size(px(11.5))
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.open_palette(PaletteScope::Language, window, cx);
+            })),
+        )
+        .child(
+            ui_kit::button(
+                "composer-model",
+                format!("{} ⌄", widgets::truncate(&state.model_label(), 14)),
+            )
+            .rounded_full()
+            .px(px(6.0))
+            .text_size(px(11.5))
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.open_palette(PaletteScope::Model, window, cx);
+            })),
+        )
+        .child(div().flex_1())
+        .child(
+            ui_kit::button(
+                "assistant-send",
+                if state.mode.allows_writes() {
+                    "Run ↵"
                 } else {
-                    "Read-only Chat / Architect · no patches, writes, or mutating commands"
-                }),
+                    "Ask ↵"
+                },
+            )
+            .bg(theme::wash(accent, 0.18))
+            .text_color(accent)
+            .border_1()
+            .border_color(theme::wash(accent, 0.28))
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.state.submit_prompt();
+                this.thread_scroll.scroll_to_bottom();
+                window.focus(&this.composer_focus);
+                cx.notify();
+            })),
         );
-
+    let footer = div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .text_size(px(theme::MICRO))
+        .text_color(theme::text_muted())
+        .child(
+            ui_kit::button(
+                "assistant-context",
+                format!("{}% context", state.context_pct),
+            )
+            .text_size(px(theme::MICRO))
+            .px_0()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.state.compact_context();
+                cx.notify();
+            })),
+        )
+        .child(
+            ui_kit::button(
+                "composer-judge",
+                if state.judge_on {
+                    "◇ Judge on"
+                } else {
+                    "◇ Judge off"
+                },
+            )
+            .text_size(px(theme::MICRO))
+            .px_0()
+            .text_color(if state.judge_on {
+                theme::text_muted()
+            } else {
+                theme::danger()
+            })
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.state.toggle_judge();
+                cx.notify();
+            })),
+        );
     div()
-        .w(px(390.0))
+        .w(px(theme::ASSISTANT))
         .h_full()
         .flex_shrink_0()
         .flex()
@@ -465,7 +363,53 @@ pub fn render(
         .border_l_1()
         .border_color(theme::border())
         .child(header)
-        .child(meter)
+        .child(
+            div()
+                .px(px(16.0))
+                .pb(px(10.0))
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(widgets::section_label("Current thread"))
+                .child(TintedBadge::render(
+                    "Auto-Compact @ 75%",
+                    theme::text_muted(),
+                )),
+        )
         .child(stream)
-        .child(composer)
+        .child(
+            CursorStyleComposer::surface(focused, accent)
+                .child(context)
+                .child(input)
+                .child(controls)
+                .child(widgets::meter(
+                    state.context_pct,
+                    if state.context_pct >= 75 {
+                        theme::warning()
+                    } else {
+                        accent
+                    },
+                ))
+                .child(footer),
+        )
+        .child(
+            div()
+                .px(px(16.0))
+                .pb(px(10.0))
+                .text_size(px(theme::MICRO))
+                .text_color(theme::text_muted())
+                .child(if state.mode.allows_writes() {
+                    "Preview session · Shift+Enter for a new line"
+                } else {
+                    "Read-only session · Shift+Enter for a new line"
+                }),
+        )
+}
+
+fn message(text: &str, color: Rgba) -> Div {
+    div()
+        .text_size(px(theme::BODY))
+        .line_height(px(21.0))
+        .text_color(color)
+        .child(text.to_string())
 }

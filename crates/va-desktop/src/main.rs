@@ -11,6 +11,7 @@ mod editor_pane;
 mod left_dock;
 mod state;
 mod theme;
+mod ui_kit;
 mod widgets;
 
 use std::path::PathBuf;
@@ -88,6 +89,7 @@ fn run(
     model: String,
 ) {
     Application::new().run(move |cx: &mut App| {
+        theme::init_fonts(cx);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::centered(size(px(1440.0), px(900.0)), cx)),
             titlebar: Some(TitlebarOptions {

@@ -1,6 +1,7 @@
 //! Small shared primitives for the workbench. Keeping these in one place is
 //! what prevents the Zed layout from turning back into a pile of one-off cards.
 
+use crate::ui_kit::TintedBadge;
 use gpui::prelude::*;
 use gpui::{div, px, relative, Div, FontWeight, Rgba};
 
@@ -30,40 +31,14 @@ pub fn first_line(text: &str) -> String {
 
 pub fn section_label(text: &str) -> Div {
     div()
-        .text_size(px(10.0))
+        .text_size(px(theme::MICRO))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(theme::text_muted())
         .child(text.to_uppercase())
 }
 
 pub fn pill(label: impl Into<String>, active: bool, accent: Rgba) -> Div {
-    let fg = if active {
-        accent
-    } else {
-        theme::text_secondary()
-    };
-    div()
-        .flex()
-        .items_center()
-        .gap_1()
-        .px_2()
-        .py(px(2.0))
-        .rounded(px(3.0))
-        .border_1()
-        .border_color(if active { accent } else { theme::border() })
-        .bg(if active {
-            theme::wash(accent, 0.14)
-        } else {
-            theme::wash(theme::text_muted(), 0.08)
-        })
-        .text_size(px(10.0))
-        .font_weight(if active {
-            FontWeight::SEMIBOLD
-        } else {
-            FontWeight::NORMAL
-        })
-        .text_color(fg)
-        .child(label.into())
+    TintedBadge::render(label, if active { accent } else { theme::text_muted() })
 }
 
 pub fn ghost_button(label: impl Into<String>) -> Div {
@@ -71,38 +46,20 @@ pub fn ghost_button(label: impl Into<String>) -> Div {
         .flex()
         .items_center()
         .justify_center()
-        .px_2()
-        .py(px(2.0))
-        .rounded(px(3.0))
-        .border_1()
-        .border_color(theme::border())
+        .px(px(10.0))
+        .h(px(26.0))
+        .rounded(px(6.0))
         .bg(theme::elevated())
-        .text_size(px(10.0))
+        .text_size(px(theme::BODY))
+        .font_weight(FontWeight::MEDIUM)
         .text_color(theme::text_secondary())
         .cursor_pointer()
+        .hover(|style| {
+            style
+                .bg(theme::elevated_alt())
+                .text_color(theme::text_primary())
+        })
         .child(label.into())
-}
-
-pub fn icon_button(glyph: impl Into<String>, active: bool, accent: Rgba) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .justify_center()
-        .size(px(26.0))
-        .rounded(px(3.0))
-        .bg(if active {
-            theme::wash(accent, 0.16)
-        } else {
-            theme::wash(theme::text_muted(), 0.0)
-        })
-        .text_size(px(13.0))
-        .text_color(if active {
-            accent
-        } else {
-            theme::text_secondary()
-        })
-        .cursor_pointer()
-        .child(glyph.into())
 }
 
 pub fn meter(pct: usize, color: Rgba) -> Div {
@@ -126,14 +83,7 @@ pub fn meter(pct: usize, color: Rgba) -> Div {
 }
 
 pub fn hash_badge(hash: u64, color: Rgba) -> Div {
-    div()
-        .px_1()
-        .rounded(px(2.0))
-        .bg(theme::wash(color, 0.12))
-        .text_size(px(9.0))
-        .font_family("Consolas")
-        .text_color(color)
-        .child(hash8(hash))
+    TintedBadge::render(format!("#{}", hash8(hash)), color).font_family(theme::code_font())
 }
 
 pub fn file_glyph(name: &str) -> &'static str {
@@ -165,10 +115,7 @@ pub fn head_tail(text: &str, head: usize, tail: usize) -> Vec<String> {
         return lines.into_iter().map(ToString::to_string).collect();
     }
     let mut out: Vec<String> = lines.iter().take(head).map(|l| (*l).to_string()).collect();
-    out.push(format!(
-        "… {} lines elided by deepseek-harness head/tail slicing …",
-        lines.len() - head - tail
-    ));
+    out.push(format!("… {} lines hidden …", lines.len() - head - tail));
     out.extend(
         lines
             .iter()
@@ -182,12 +129,12 @@ pub fn keycap(label: &str) -> Div {
     div()
         .px_1()
         .py(px(1.0))
-        .rounded(px(2.0))
+        .rounded(px(4.0))
         .border_1()
         .border_color(theme::border())
         .bg(theme::elevated_alt())
-        .text_size(px(9.0))
-        .font_family("Consolas")
+        .text_size(px(theme::MICRO))
+        .font_family(theme::code_font())
         .text_color(theme::text_muted())
         .child(label.to_string())
 }

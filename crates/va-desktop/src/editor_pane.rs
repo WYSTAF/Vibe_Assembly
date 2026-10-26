@@ -4,8 +4,9 @@ use gpui::prelude::*;
 use gpui::{div, px, Context, Div, Rgba};
 
 use crate::state::{EditorView, Workbench};
-use crate::theme;
 use crate::widgets;
+use crate::{theme, ui_kit};
+use ui_kit::SegmentedPillBar;
 
 pub fn render(
     workbench: &Workbench,
@@ -20,7 +21,7 @@ pub fn render(
             .flex()
             .items_center()
             .px_2()
-            .text_size(px(10.0))
+            .text_size(px(theme::BODY))
             .text_color(theme::text_muted())
             .child("No open files")
     } else {
@@ -40,7 +41,7 @@ pub fn render(
                     .h_full()
                     .flex()
                     .items_center()
-                    .gap_1()
+                    .gap(px(6.0))
                     .px_2()
                     .bg(if active {
                         theme::editor()
@@ -49,7 +50,7 @@ pub fn render(
                     })
                     .border_t_2()
                     .border_color(if active { accent } else { theme::sunken() })
-                    .text_size(px(10.0))
+                    .text_size(px(theme::MICRO))
                     .text_color(if active {
                         theme::text_primary()
                     } else {
@@ -64,9 +65,9 @@ pub fn render(
                     }))
                     .child(
                         div()
-                            .text_size(px(8.0))
-                            .font_family("Consolas")
-                            .text_color(if active { accent } else { theme::text_muted() })
+                            .text_size(px(theme::MICRO))
+                            .font_family(theme::code_font())
+                            .text_color(theme::file_color(&name))
                             .child(glyph),
                     )
                     .child(div().max_w(px(150.0)).truncate().child(name))
@@ -78,7 +79,7 @@ pub fn render(
                             .justify_center()
                             .size(px(16.0))
                             .rounded(px(2.0))
-                            .text_size(px(11.0))
+                            .text_size(px(theme::BODY))
                             .text_color(theme::text_muted())
                             .cursor_pointer()
                             .hover(|style| {
@@ -98,40 +99,35 @@ pub fn render(
         strip
     };
 
-    let view_toggle = div()
-        .flex()
-        .items_center()
-        .gap_1()
-        .px_2()
-        .child(
-            div()
-                .id("view-code")
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.state.set_editor_view(EditorView::Code);
-                    cx.notify();
-                }))
-                .child(widgets::pill(
-                    "Code",
-                    state.editor_view == EditorView::Code,
-                    accent,
-                )),
+    let view_toggle = SegmentedPillBar::new()
+        .item(
+            SegmentedPillBar::segment(
+                "view-code",
+                "⌘",
+                "Code",
+                state.editor_view == EditorView::Code,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.state.set_editor_view(EditorView::Code);
+                cx.notify();
+            })),
         )
-        .child(
-            div()
-                .id("view-diff")
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.state.set_editor_view(EditorView::Diff);
-                    cx.notify();
-                }))
-                .child(widgets::pill(
-                    "Diff",
-                    state.editor_view == EditorView::Diff,
-                    accent,
-                )),
-        );
+        .item(
+            SegmentedPillBar::segment(
+                "view-diff",
+                "±",
+                "Diff",
+                state.editor_view == EditorView::Diff,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.state.set_editor_view(EditorView::Diff);
+                cx.notify();
+            })),
+        )
+        .build();
 
     let tab_bar = div()
-        .h(px(32.0))
+        .h(px(34.0))
         .flex_shrink_0()
         .flex()
         .items_center()
@@ -148,7 +144,7 @@ pub fn render(
                 .overflow_hidden()
                 .child(tabs),
         )
-        .child(view_toggle);
+        .child(div().px(px(8.0)).flex_shrink_0().child(view_toggle));
 
     let body = if state.active_buffer().is_none() {
         no_file_state()
@@ -188,28 +184,40 @@ fn render_code(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>)
     let cursor_line = state.cursor_line;
 
     let info = div()
-        .h(px(24.0))
+        .h(px(34.0))
         .flex_shrink_0()
         .flex()
         .items_center()
-        .justify_between()
-        .px_2()
-        .bg(theme::editor())
-        .border_b_1()
-        .border_color(theme::border())
-        .text_size(px(9.0))
-        .font_family("Consolas")
+        .gap(px(8.0))
+        .px(px(16.0))
+        .text_size(px(theme::MICRO))
         .text_color(theme::text_muted())
-        .child(format!(
-            "{} · {} lines · {} bytes · {} blocks",
-            buffer.rel_path,
-            line_count,
-            buffer.content.len(),
-            buffer.blocks.len()
-        ))
-        .child(format!("Ln {} · FNV-1a 64-bit anchors", cursor_line));
+        .child(
+            div()
+                .min_w_0()
+                .truncate()
+                .font_family(theme::code_font())
+                .child(buffer.rel_path.clone()),
+        )
+        .when_some(state.active_symbol_name(), |this, symbol| {
+            this.child(format!("› {symbol}"))
+        })
+        .child(div().flex_1())
+        .child(
+            div()
+                .text_color(theme::text_muted())
+                .child("Pin a block for context"),
+        );
 
-    let mut rows = div().flex().flex_col().py_1();
+    let width = buffer
+        .lines
+        .iter()
+        .map(|line| line.replace('\t', "    ").chars().count())
+        .max()
+        .unwrap_or(0) as f32
+        * 7.6
+        + 160.0;
+    let mut rows = div().flex().flex_col().py(px(8.0)).min_w(px(width));
     for (line_index, text) in buffer.lines.iter().enumerate().take(1_400) {
         let line_number = line_index + 1;
         let block_index = block_at.get(line_number).copied().flatten();
@@ -234,64 +242,100 @@ fn render_code(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>)
             None
         };
 
-        rows = rows.child(
-            div()
-                .id(("code-line", line_number))
-                .h(px(19.0))
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .bg(if is_selected_block {
-                    theme::wash(accent, 0.09)
-                } else if is_cursor {
-                    theme::wash(theme::text_muted(), 0.06)
-                } else {
-                    theme::wash(theme::editor(), 1.0)
-                })
-                .border_l_2()
-                .border_color(if is_selected_block {
-                    theme::wash(accent, 1.0)
-                } else {
-                    theme::wash(theme::text_muted(), 0.0)
-                })
-                .cursor_text()
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.state.cursor_line = line_number;
-                    this.state.active_block = block_index;
-                    cx.notify();
-                }))
-                .child(
-                    div()
-                        .w(px(82.0))
-                        .flex_shrink_0()
-                        .flex()
-                        .items_center()
-                        .justify_end()
-                        .gap_1()
-                        .pr_1()
-                        .text_size(px(9.0))
-                        .font_family("Consolas")
-                        .text_color(if is_block_start {
-                            accent
-                        } else {
-                            theme::text_muted()
-                        })
-                        .child(line_number.to_string())
-                        .when_some(hash, |this, hash| {
-                            this.child(widgets::hash_badge(hash, accent))
-                        }),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .whitespace_nowrap()
-                        .text_size(px(11.5))
-                        .font_family("Consolas")
-                        .text_color(text_color)
-                        .child(display),
-                ),
-        );
+        rows =
+            rows.child(
+                div()
+                    .id(("code-line", line_number))
+                    .group("code-row")
+                    .hover(|style| style.bg(theme::elevated()))
+                    .h(px(22.0))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .bg(if is_selected_block {
+                        theme::wash(accent, 0.04)
+                    } else if is_cursor {
+                        theme::wash(theme::text_muted(), 0.06)
+                    } else {
+                        theme::wash(theme::editor(), 1.0)
+                    })
+                    .border_l_2()
+                    .border_color(if is_selected_block {
+                        theme::wash(accent, 0.28)
+                    } else {
+                        theme::wash(theme::text_muted(), 0.0)
+                    })
+                    .cursor_text()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.state.cursor_line = line_number;
+                        this.state.active_block = block_index;
+                        cx.notify();
+                    }))
+                    .child(
+                        div()
+                            .w(px(142.0))
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.0))
+                            .pr(px(12.0))
+                            .child(
+                                div()
+                                    .w(px(32.0))
+                                    .flex_shrink_0()
+                                    .text_right()
+                                    .font_family(theme::code_font())
+                                    .text_size(px(theme::MICRO))
+                                    .text_color(if is_cursor {
+                                        theme::text_secondary()
+                                    } else {
+                                        theme::text_muted()
+                                    })
+                                    .child(line_number.to_string()),
+                            )
+                            .child(div().w(px(90.0)).flex_shrink_0().when_some(
+                                hash,
+                                |this, hash| {
+                                    this.child(
+                                        div()
+                                            .id(("gutter-hash", line_number))
+                                            .opacity(
+                                                if state
+                                                    .pinned_block
+                                                    .as_ref()
+                                                    .is_some_and(|(_, pinned)| *pinned == hash)
+                                                {
+                                                    1.0
+                                                } else {
+                                                    0.0
+                                                },
+                                            )
+                                            .group_hover("code-row", |style| style.opacity(1.0))
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                if let Some(index) = block_index {
+                                                    this.state.select_block(index);
+                                                }
+                                                this.restore_focus(window);
+                                                cx.stop_propagation();
+                                                cx.notify();
+                                            }))
+                                            .child(widgets::hash_badge(hash, accent)),
+                                    )
+                                },
+                            )),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .whitespace_nowrap()
+                            .text_size(px(theme::BODY))
+                            .font_family(theme::code_font())
+                            .text_color(text_color)
+                            .child(display),
+                    ),
+            );
     }
 
     if line_count > 1_400 {
@@ -299,7 +343,7 @@ fn render_code(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>)
             div()
                 .px_2()
                 .py_1()
-                .text_size(px(9.0))
+                .text_size(px(theme::MICRO))
                 .text_color(theme::text_muted())
                 .child(format!(
                     "… editor slice capped at 1,400 of {line_count} lines …"
@@ -373,69 +417,65 @@ fn render_diff(
     };
 
     let header = div()
-        .h(px(32.0))
+        .h(px(34.0))
         .flex_shrink_0()
         .flex()
         .items_center()
-        .justify_between()
-        .gap_2()
-        .px_2()
-        .bg(theme::sunken())
-        .border_b_1()
-        .border_color(theme::border())
+        .gap(px(8.0))
+        .px(px(16.0))
+        .child(ui_kit::TintedBadge::render(
+            patch.source.label(),
+            source_color,
+        ))
         .child(
             div()
-                .flex()
-                .items_center()
-                .gap_1()
                 .min_w_0()
-                .child(widgets::pill(patch.source.label(), true, source_color))
-                .child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .text_size(px(10.0))
-                        .font_family("Consolas")
-                        .text_color(theme::text_secondary())
-                        .child(patch.rel_path.clone()),
-                )
-                .when_some(patch.block_hash, |this, hash| {
-                    this.child(widgets::hash_badge(hash, accent))
-                }),
+                .truncate()
+                .font_family(theme::code_font())
+                .text_size(px(theme::MICRO))
+                .text_color(theme::text_secondary())
+                .child(patch.rel_path.clone()),
+        );
+    let header = header.when_some(patch.block_hash, |this, hash| {
+        this.child(widgets::hash_badge(hash, accent))
+    });
+    let review = div()
+        .absolute()
+        .top(px(74.0))
+        .right(px(12.0))
+        .flex()
+        .items_center()
+        .gap(px(4.0))
+        .p(px(6.0))
+        .rounded(px(8.0))
+        .bg(theme::elevated())
+        .border_1()
+        .border_color(theme::border_strong())
+        .child(
+            ui_kit::button("diff-accept", "Accept Changes")
+                .text_size(px(theme::MICRO))
+                .text_color(theme::success())
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.state.accept_patch();
+                    cx.notify();
+                })),
         )
         .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_1()
-                .flex_shrink_0()
-                .child(
-                    div()
-                        .id("diff-accept")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.state.accept_patch();
-                            cx.notify();
-                        }))
-                        .child(widgets::ghost_button("Accept Patch")),
-                )
-                .child(
-                    div()
-                        .id("diff-rollback")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.state.rollback();
-                            cx.notify();
-                        }))
-                        .child(widgets::ghost_button("Rollback")),
-                )
-                .child(
-                    div()
-                        .id("diff-judge")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.state.run_judge_preview();
-                            cx.notify();
-                        }))
-                        .child(widgets::pill("Run Judge", true, accent)),
-                ),
+            ui_kit::button("diff-rollback", "Revert to Verified")
+                .text_size(px(theme::MICRO))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.state.rollback();
+                    cx.notify();
+                })),
+        )
+        .child(
+            ui_kit::button("diff-judge", "Re-run Judge")
+                .text_size(px(theme::MICRO))
+                .text_color(accent)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.state.run_judge_preview();
+                    cx.notify();
+                })),
         );
 
     let summary = div()
@@ -444,7 +484,7 @@ fn render_diff(
         .flex_shrink_0()
         .border_b_1()
         .border_color(theme::border())
-        .text_size(px(9.0))
+        .text_size(px(theme::MICRO))
         .text_color(theme::text_muted())
         .child(patch.summary.clone());
 
@@ -467,13 +507,13 @@ fn render_diff(
             .child(
                 div()
                     .w(px(440.0))
-                    .text_size(px(10.0))
+                    .text_size(px(theme::MICRO))
                     .line_height(px(16.0))
                     .text_color(theme::text_muted())
                     .child("The immutable DAG retains the patch summary and cost, not line-level replacement text. Open the file in Code view to inspect its live block hashes."),
             )
     } else {
-        let mut lines = div().flex().flex_col().py_1();
+        let mut lines = div().flex().flex_col().pt(px(58.0)).pb(px(12.0));
         for (index, line) in patch.lines.iter().enumerate() {
             let (bg, fg) = match line.marker {
                 '+' => (theme::diff_add_bg(), theme::diff_add_text()),
@@ -494,7 +534,7 @@ fn render_diff(
                     .items_center()
                     .bg(bg)
                     .text_size(px(11.0))
-                    .font_family("Consolas")
+                    .font_family(theme::code_font())
                     .text_color(fg)
                     .child(
                         div()
@@ -527,48 +567,19 @@ fn render_diff(
         .flex()
         .flex_col()
         .bg(theme::editor())
+        .relative()
         .child(header)
         .child(summary)
         .child(body)
+        .child(review)
 }
 
 fn no_file_state() -> Div {
-    div()
-        .flex_1()
-        .min_h_0()
-        .flex()
-        .flex_col()
-        .items_center()
-        .justify_center()
-        .gap_2()
-        .bg(theme::editor())
-        .child(
-            div()
-                .size(px(42.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(8.0))
-                .border_1()
-                .border_color(theme::border())
-                .bg(theme::elevated())
-                .text_size(px(15.0))
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(theme::text_muted())
-                .child("VA"),
-        )
-        .child(
-            div()
-                .text_size(px(15.0))
-                .text_color(theme::text_secondary())
-                .child("Open a file from the project dock"),
-        )
-        .child(
-            div()
-                .w(px(420.0))
-                .text_size(px(10.0))
-                .line_height(px(16.0))
-                .text_color(theme::text_muted())
-                .child("Tabs keep real workspace buffers. Each code block carries the same 64-bit FNV-1a hash used by va-harness::patcher, shown as eight characters."),
-        )
+    ui_kit::empty_state(
+        "◈",
+        "A little space to build",
+        "Open a file from the sidebar, or press Ctrl+P to find a file, symbol, or command.",
+    )
+    .flex_1()
+    .min_h_0()
 }

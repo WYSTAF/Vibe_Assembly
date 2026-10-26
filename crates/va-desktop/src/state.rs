@@ -23,8 +23,9 @@ use va_harness::patcher::{segment_blocks, Block};
 use va_harness::repomap::RepoMap;
 use va_harness::session::{ContextWindowConfig, NodeId, NodeKind, Session};
 
-use crate::theme;
+use crate::command_palette::PaletteAction;
 use crate::widgets::{self, hash8};
+use crate::{theme, ui_kit};
 
 // --------------------------------------------------------------------- views
 
@@ -40,9 +41,9 @@ impl LeftView {
 
     pub fn label(self) -> &'static str {
         match self {
-            LeftView::Files => "Project",
-            LeftView::Outline => "Outline",
-            LeftView::Dag => "Session",
+            LeftView::Files => "Files",
+            LeftView::Outline => "Symbols",
+            LeftView::Dag => "DAG",
         }
     }
 
@@ -273,9 +274,12 @@ impl PaletteCommand {
             PaletteCommand::ToggleBottom => "Ctrl+J",
             PaletteCommand::ToggleAssistant => "Ctrl+Shift+A",
             PaletteCommand::CloseTab => "Ctrl+W",
-            PaletteCommand::Mode(_)
-            | PaletteCommand::Language(_)
-            | PaletteCommand::Compact
+            PaletteCommand::Mode(ExecutionMode::Code) => "Ctrl+1",
+            PaletteCommand::Mode(ExecutionMode::Web) => "Ctrl+2",
+            PaletteCommand::Mode(ExecutionMode::Chat) => "Ctrl+3",
+            PaletteCommand::Mode(ExecutionMode::Debug) => "Ctrl+4",
+            PaletteCommand::Compact => "Ctrl+K",
+            PaletteCommand::Language(_)
             | PaletteCommand::Tournament
             | PaletteCommand::Rollback
             | PaletteCommand::RefreshRepoMap => "",
@@ -292,6 +296,14 @@ impl PaletteCommand {
             _ => false,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaletteScope {
+    All,
+    Mode,
+    Language,
+    Model,
 }
 
 // ---------------------------------------------------------------------- state
@@ -312,6 +324,15 @@ pub struct WorkbenchState {
     pub show_bottom: bool,
     pub show_assistant: bool,
     pub show_palette: bool,
+    pub palette_query: String,
+    pub palette_index: usize,
+    pub palette_scope: PaletteScope,
+    pub context_file: bool,
+    pub pinned_block: Option<(PathBuf, u64)>,
+    pub expanded_dag: HashSet<NodeId>,
+    pub expanded_messages: HashSet<usize>,
+    pub expanded_rules: HashSet<String>,
+    pub show_inspector: bool,
     pub bottom_tab: BottomTab,
     pub editor_view: EditorView,
     pub mode: ExecutionMode,
@@ -354,7 +375,7 @@ impl WorkbenchState {
         let root = workspace.root.clone();
         let tree = scan_project_tree(&root);
         let mut expanded_dirs = HashSet::new();
-        for dir in ["crates", "src", ".ai", "assets"] {
+        for dir in ["crates", "src"] {
             let path = root.join(dir);
             if path.is_dir() {
                 expanded_dirs.insert(path);
@@ -395,6 +416,15 @@ impl WorkbenchState {
             show_bottom: true,
             show_assistant: true,
             show_palette: false,
+            palette_query: String::new(),
+            palette_index: 0,
+            palette_scope: PaletteScope::All,
+            context_file: true,
+            pinned_block: None,
+            expanded_dag: HashSet::new(),
+            expanded_messages: HashSet::new(),
+            expanded_rules: HashSet::new(),
+            show_inspector: false,
             bottom_tab: BottomTab::Problems,
             editor_view: EditorView::Code,
             mode,
@@ -601,6 +631,7 @@ impl WorkbenchState {
         let start = block.start_line;
         let end = block.end_line;
         let hash = block.hash;
+        self.pinned_block = self.active_file_path().map(|path| (path, hash));
         self.active_block = Some(index);
         self.cursor_line = start;
         self.status_message = format!("Pinned block {} · lines {start}–{end}", hash8(hash));
@@ -857,18 +888,21 @@ impl WorkbenchState {
 
     // ------------------------------------------------------------------- input
 
+    #[cfg(test)]
     pub fn push_char(&mut self, ch: char) {
         if self.prompt_input.chars().count() < 2_000 {
             self.prompt_input.push(ch);
         }
     }
 
+    #[cfg(test)]
     pub fn push_str(&mut self, text: &str) {
         if self.prompt_input.len() + text.len() <= 4_000 {
             self.prompt_input.push_str(text);
         }
     }
 
+    #[cfg(test)]
     pub fn backspace(&mut self) {
         self.prompt_input.pop();
     }
@@ -1013,6 +1047,7 @@ impl WorkbenchState {
     pub fn clear_thread(&mut self) {
         self.prompt_input.clear();
         self.thread.clear();
+        self.expanded_messages.clear();
         self.thread.push(ThreadItem::Assistant {
             text: "New thread. The session DAG and file buffers are unchanged.".to_string(),
             read_only: false,
@@ -1021,12 +1056,19 @@ impl WorkbenchState {
     }
 
     pub fn context_reference(&self) -> String {
-        let file = self
-            .active_rel_path()
-            .unwrap_or_else(|| "workspace".to_string());
-        match self.current_block_hash() {
-            Some(hash) => format!("{file} [{}]", hash8(hash)),
-            None => file,
+        let mut references = Vec::new();
+        if self.context_file {
+            if let Some(path) = self.active_rel_path() {
+                references.push(path);
+            }
+        }
+        if let Some((path, hash)) = &self.pinned_block {
+            references.push(format!("{} [#{}]", self.rel_path(path), hash8(*hash)));
+        }
+        if references.is_empty() {
+            "workspace".into()
+        } else {
+            references.join(" · ")
         }
     }
 
@@ -1102,6 +1144,7 @@ impl WorkbenchState {
 
     // -------------------------------------------------------------- transitions
 
+    #[cfg(test)]
     pub fn cycle_mode(&mut self) {
         let index = ExecutionMode::ALL
             .iter()
@@ -1119,6 +1162,7 @@ impl WorkbenchState {
         };
     }
 
+    #[cfg(test)]
     pub fn cycle_language(&mut self) {
         let index = LanguageLens::ALL
             .iter()
@@ -1132,6 +1176,7 @@ impl WorkbenchState {
         self.status_message = format!("Language lens: {}", self.language_label());
     }
 
+    #[cfg(test)]
     pub fn cycle_model(&mut self) {
         if self.models.is_empty() {
             self.models.push("auto-combo".to_string());
@@ -1177,6 +1222,9 @@ impl WorkbenchState {
 
     pub fn toggle_palette(&mut self) {
         self.show_palette = !self.show_palette;
+        self.palette_query.clear();
+        self.palette_index = 0;
+        self.palette_scope = PaletteScope::All;
     }
 
     pub fn set_left_view(&mut self, view: LeftView) {
@@ -1208,6 +1256,24 @@ impl WorkbenchState {
             PaletteCommand::ToggleAssistant => self.toggle_assistant(),
             PaletteCommand::RefreshRepoMap => self.refresh(),
             PaletteCommand::CloseTab => self.close_active_tab(),
+        }
+        self.show_palette = false;
+    }
+
+    pub fn apply_palette_action(&mut self, action: PaletteAction) {
+        match action {
+            PaletteAction::Command(command) => self.execute_palette(command),
+            PaletteAction::Model(model) => self.set_model(model),
+            PaletteAction::File(path) => {
+                if let Err(error) = self.open_file(&path) {
+                    self.status_message = error;
+                }
+            }
+            PaletteAction::Symbol(path, hash) => {
+                if let Err(error) = self.open_at_block(&path, hash) {
+                    self.status_message = error;
+                }
+            }
         }
         self.show_palette = false;
     }
@@ -1451,29 +1517,7 @@ impl WorkbenchState {
     // --------------------------------------------------------------- greeting
 
     fn greeting(&self) -> String {
-        let ticket = self.ticket_label();
-        let router = if self.router_live {
-            "live"
-        } else {
-            "offline fallback"
-        };
-        let contract = if self.mode.allows_writes() {
-            "Writes are enabled through the live CLI; this desktop surface stages previews only."
-        } else {
-            "Read-only contract enforced: no patches, writes, or mutating commands."
-        };
-        format!(
-            "Workbench online. {ticket}.\n\n\
-             {} files · {} symbols · {} blocks indexed.\n\
-             Router: {} ({router}).\n\n\
-             Mode: {}. {contract}\n\n\
-             Open a file, pin a block, and describe the change. Enter submits; Shift+Enter adds a newline.",
-            self.file_count(),
-            self.symbol_count(),
-            self.block_count(),
-            self.router_endpoint,
-            self.mode.short_label()
-        )
+        "What would you like to build?\n\nPin a block from the editor or add a file for context. I’ll help you plan the next change.\n\nThis desktop stages previews; the CLI runs edits and verification.".to_string()
     }
 }
 
@@ -1482,6 +1526,12 @@ impl WorkbenchState {
 pub struct Workbench {
     pub state: WorkbenchState,
     pub composer_focus: FocusHandle,
+    pub root_focus: FocusHandle,
+    pub palette_focus: FocusHandle,
+    pub prompt_selection: ui_kit::InputSelection,
+    pub palette_selection: ui_kit::InputSelection,
+    pub palette_scroll: gpui::ScrollHandle,
+    pub thread_scroll: gpui::ScrollHandle,
 }
 
 impl Workbench {
@@ -1489,16 +1539,41 @@ impl Workbench {
         Self {
             state,
             composer_focus: cx.focus_handle(),
+            root_focus: cx.focus_handle(),
+            palette_focus: cx.focus_handle(),
+            prompt_selection: Default::default(),
+            palette_selection: Default::default(),
+            palette_scroll: Default::default(),
+            thread_scroll: Default::default(),
         }
     }
 
-    fn handle_shortcut(&mut self, keystroke: &gpui::Keystroke, cx: &mut Context<Self>) -> bool {
+    fn handle_shortcut(
+        &mut self,
+        keystroke: &gpui::Keystroke,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         if !keystroke.modifiers.control {
             return false;
         }
         match keystroke.key.as_str() {
             "p" => {
-                self.state.toggle_palette();
+                if self.state.show_palette {
+                    self.state.toggle_palette();
+                    self.restore_focus(window);
+                } else {
+                    self.open_palette(PaletteScope::All, window, cx);
+                }
+                true
+            }
+            "1" | "2" | "3" | "4" => {
+                let index = keystroke.key.parse::<usize>().unwrap_or(1) - 1;
+                self.state.set_mode(ExecutionMode::ALL[index]);
+                true
+            }
+            "k" => {
+                self.state.compact_context();
                 true
             }
             "b" => {
@@ -1515,6 +1590,7 @@ impl Workbench {
             }
             "a" if keystroke.modifiers.shift => {
                 self.state.toggle_assistant();
+                self.restore_focus(window);
                 true
             }
             "q" => {
@@ -1528,64 +1604,45 @@ impl Workbench {
     pub fn on_composer_key(
         &mut self,
         event: &KeyDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.handle_shortcut(&event.keystroke, cx) {
+        if self.handle_shortcut(&event.keystroke, window, cx) {
             cx.stop_propagation();
             cx.notify();
             return;
         }
-        let keystroke = &event.keystroke;
-        if keystroke.modifiers.control || keystroke.modifiers.alt || keystroke.modifiers.platform {
+        if self.text_shortcut(&event.keystroke, cx) {
+            cx.stop_propagation();
+            cx.notify();
             return;
         }
-
-        match keystroke.key.as_str() {
-            "backspace" => {
-                self.state.backspace();
-                cx.stop_propagation();
-                cx.notify();
+        let key = &event.keystroke;
+        if key.modifiers.control || key.modifiers.alt || key.modifiers.platform {
+            return;
+        }
+        if key.key == "enter" {
+            if key.modifiers.shift {
+                self.edit_input(|text, selection| {
+                    selection.replace(text, None, "\n");
+                });
+            } else {
+                self.state.submit_prompt();
+                self.prompt_selection = Default::default();
+                self.thread_scroll.scroll_to_bottom();
             }
-            "enter" => {
-                if keystroke.modifiers.shift {
-                    self.state.push_char('\n');
-                } else {
-                    self.state.submit_prompt();
-                }
-                cx.stop_propagation();
-                cx.notify();
-            }
-            "space" => {
-                self.state.push_char(' ');
-                cx.stop_propagation();
-                cx.notify();
-            }
-            "escape" => {
-                self.state.show_palette = false;
-                cx.stop_propagation();
-                cx.notify();
-            }
-            "tab" | "left" | "right" | "up" | "down" | "home" | "end" | "delete" => {}
-            _ => {
-                if let Some(text) = keystroke.key_char.as_deref() {
-                    if !text.is_empty() && !text.chars().any(char::is_control) {
-                        self.state.push_str(text);
-                        cx.stop_propagation();
-                        cx.notify();
-                    }
-                }
-            }
+            cx.stop_propagation();
+            cx.notify();
         }
     }
 
     pub fn on_root_key(
         &mut self,
         event: &KeyDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.handle_shortcut(&event.keystroke, cx) {
+        if self.handle_shortcut(&event.keystroke, window, cx) {
             cx.stop_propagation();
             cx.notify();
             return;
@@ -1597,343 +1654,416 @@ impl Workbench {
         }
     }
 
+    pub fn restore_focus(&self, window: &mut Window) {
+        window.focus(if self.state.show_assistant {
+            &self.composer_focus
+        } else {
+            &self.root_focus
+        });
+    }
+
+    pub fn open_palette(
+        &mut self,
+        scope: PaletteScope,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.state.show_palette = true;
+        self.state.palette_scope = scope;
+        self.state.palette_query.clear();
+        self.palette_selection = Default::default();
+        self.palette_scroll
+            .set_offset(gpui::point(px(0.0), px(0.0)));
+        self.state.palette_index = 0;
+        window.focus(&self.palette_focus);
+        cx.notify();
+    }
+
+    pub fn on_palette_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.handle_shortcut(&event.keystroke, window, cx) {
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+        let key = &event.keystroke;
+        if self.text_shortcut(key, cx) {
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+        if key.modifiers.control || key.modifiers.alt || key.modifiers.platform {
+            return;
+        }
+        match key.key.as_str() {
+            "escape" => {
+                self.state.show_palette = false;
+                self.restore_focus(window);
+            }
+            "up" => {
+                self.state.palette_index = self.state.palette_index.saturating_sub(1);
+            }
+            "down" => {
+                let count = crate::command_palette::items(&self.state).len();
+                self.state.palette_index =
+                    (self.state.palette_index + 1).min(count.saturating_sub(1));
+            }
+            "enter" => {
+                let items = crate::command_palette::items(&self.state);
+                if let Some(item) = items.get(self.state.palette_index) {
+                    self.state.apply_palette_action(item.action.clone());
+                    self.restore_focus(window);
+                }
+            }
+            _ => return,
+        }
+        let items = crate::command_palette::items(&self.state);
+        let mut groups = 0;
+        let mut previous = "";
+        for item in items.iter().take(self.state.palette_index + 1) {
+            if previous != item.group {
+                groups += 1;
+                previous = item.group;
+            }
+        }
+        self.palette_scroll
+            .scroll_to_item(self.state.palette_index + groups);
+        cx.stop_propagation();
+        cx.notify();
+    }
+
     fn render_titlebar(
         &self,
         accent: gpui::Rgba,
-        accent_strong: gpui::Rgba,
+        _accent_strong: gpui::Rgba,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         let (path, symbol, hash) = self.state.breadcrumb();
-        let workspace_name = self
+        let workspace = self
             .state
             .root
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("workspace")
             .to_string();
-
-        let breadcrumb = div()
+        let router_color = if self.state.router_live {
+            theme::success()
+        } else {
+            theme::text_muted()
+        };
+        let left = div()
+            .flex_1()
+            .min_w_0()
             .flex()
             .items_center()
-            .gap_1()
-            .min_w_0()
+            .gap(px(10.0))
             .child(
                 div()
-                    .px_2()
-                    .py(px(1.0))
-                    .rounded(px(3.0))
-                    .bg(theme::elevated())
-                    .border_1()
-                    .border_color(theme::border())
-                    .text_size(px(10.0))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(theme::text_primary())
-                    .child(workspace_name),
+                    .window_control_area(WindowControlArea::Drag)
+                    .text_color(accent)
+                    .text_size(px(18.0))
+                    .child("◈"),
             )
             .child(
-                div()
-                    .text_size(px(10.0))
-                    .text_color(theme::text_muted())
-                    .child("›"),
+                ui_kit::button("workspace-pill", workspace)
+                    .bg(theme::elevated())
+                    .text_size(px(11.5))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.state.set_left_view(LeftView::Files);
+                        cx.notify();
+                    })),
             )
             .child(
                 div()
                     .min_w_0()
                     .truncate()
-                    .text_size(px(11.0))
-                    .text_color(theme::text_secondary())
-                    .child(path),
+                    .text_size(px(theme::MICRO))
+                    .text_color(theme::text_muted())
+                    .child(path.rsplit('/').next().unwrap_or(&path).to_string()),
             )
             .when_some(symbol, |this, symbol| {
                 this.child(
                     div()
-                        .text_size(px(10.0))
-                        .text_color(theme::text_muted())
-                        .child("›"),
+                        .max_w(px(110.0))
+                        .truncate()
+                        .text_size(px(theme::MICRO))
+                        .text_color(theme::text_secondary())
+                        .child(format!("› {symbol}")),
                 )
-                .child(div().text_size(px(10.0)).text_color(accent).child(symbol))
             })
             .when_some(hash, |this, hash| {
                 this.child(
-                    div()
-                        .text_size(px(9.0))
-                        .font_family("Consolas")
-                        .text_color(theme::text_muted())
-                        .child(format!("[{hash}]")),
+                    ui_kit::button("breadcrumb-hash", format!("#{hash}"))
+                        .font_family(theme::code_font())
+                        .text_size(px(theme::MICRO))
+                        .px(px(6.0))
+                        .text_color(accent)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let Some(index) = this.state.current_block_index() {
+                                this.state.select_block(index);
+                            }
+                            if let Some(hash) = this.state.current_block_hash() {
+                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(hash8(hash)));
+                            }
+                            cx.notify();
+                        })),
                 )
-            })
-            .when_some(
-                self.state
-                    .error
-                    .as_ref()
-                    .map(|error| widgets::truncate(error, 34)),
-                |this, error| {
-                    this.child(
-                        div()
-                            .px_1()
-                            .py(px(1.0))
-                            .rounded(px(2.0))
-                            .bg(theme::wash(theme::danger(), 0.12))
-                            .text_size(px(8.0))
-                            .text_color(theme::danger())
-                            .child(format!("⚠ {error}")),
-                    )
-                },
+            });
+        let search = ui_kit::button("command-search", "")
+            .w(px(360.0))
+            .h(px(26.0))
+            .justify_start()
+            .bg(theme::elevated())
+            .border_1()
+            .border_color(theme::border())
+            .text_size(px(11.5))
+            .text_color(theme::text_muted())
+            .child("⌕")
+            .child(div().flex_1().child("Search files, symbols, or commands…"))
+            .child(widgets::keycap("Ctrl+P"))
+            .on_click(
+                cx.listener(|this, _, window, cx| this.open_palette(PaletteScope::All, window, cx)),
             );
-
-        let router_color = if self.state.router_live {
-            theme::success()
-        } else {
-            theme::warning()
-        };
-        let router_label = if self.state.router_live {
-            "LIVE"
-        } else {
-            "OFFLINE"
-        };
-
-        let controls = div()
+        let right = div()
+            .flex_1()
+            .min_w_0()
             .flex()
             .items_center()
-            .gap_1()
+            .justify_end()
+            .gap(px(4.0))
             .child(
-                div()
-                    .id("toggle-left")
-                    .on_click(cx.listener(|this, _, _, cx| {
+                ui_kit::icon_button("toggle-left", "◧", self.state.show_left).on_click(
+                    cx.listener(|this, _, _, cx| {
                         this.state.toggle_left();
                         cx.notify();
-                    }))
-                    .child(widgets::pill("Left", self.state.show_left, accent)),
+                    }),
+                ),
             )
             .child(
-                div()
-                    .id("toggle-bottom")
-                    .on_click(cx.listener(|this, _, _, cx| {
+                ui_kit::icon_button("toggle-bottom", "⊟", self.state.show_bottom).on_click(
+                    cx.listener(|this, _, _, cx| {
                         this.state.toggle_bottom();
                         cx.notify();
-                    }))
-                    .child(widgets::pill("Bottom", self.state.show_bottom, accent)),
+                    }),
+                ),
             )
             .child(
-                div()
-                    .id("toggle-assistant")
-                    .on_click(cx.listener(|this, _, _, cx| {
+                ui_kit::icon_button("toggle-assistant", "◨", self.state.show_assistant).on_click(
+                    cx.listener(|this, _, window, cx| {
                         this.state.toggle_assistant();
+                        this.restore_focus(window);
                         cx.notify();
-                    }))
-                    .child(widgets::pill(
-                        "Assistant",
-                        self.state.show_assistant,
-                        accent,
-                    )),
+                    }),
+                ),
             )
             .child(
-                div()
-                    .id("router-badge")
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .px_2()
-                    .py(px(2.0))
-                    .rounded(px(3.0))
-                    .bg(theme::wash(router_color, 0.10))
-                    .border_1()
-                    .border_color(theme::wash(router_color, 0.35))
-                    .text_size(px(9.0))
-                    .text_color(router_color)
-                    .child(widgets::dot(router_color))
-                    .child(format!(
-                        "Router: {} · {router_label}",
-                        self.state.router_endpoint
-                    )),
+                ui_kit::button(
+                    "router-status",
+                    if self.state.router_live {
+                        "Live"
+                    } else {
+                        "Offline"
+                    },
+                )
+                .text_size(px(theme::MICRO))
+                .text_color(router_color)
+                .child(widgets::dot(router_color))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.state.show_inspector = !this.state.show_inspector;
+                    cx.notify();
+                })),
             )
-            .child(
-                div()
-                    .id("command-palette-button")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.state.toggle_palette();
-                        cx.notify();
-                    }))
-                    .child(widgets::pill(
-                        "Ctrl+P",
-                        self.state.show_palette,
-                        accent_strong,
-                    )),
-            );
-
-        let window_controls = div()
-            .flex()
-            .items_center()
-            .gap(px(2.0))
+            .when(self.state.error.is_some(), |this| {
+                this.child(div().text_color(theme::warning()).child("!"))
+            })
             .child(
                 div()
                     .id("window-min")
                     .window_control_area(WindowControlArea::Min)
+                    .w(px(30.0))
+                    .h(px(28.0))
                     .flex()
                     .items_center()
                     .justify_center()
-                    .size(px(28.0))
-                    .text_size(px(12.0))
                     .text_color(theme::text_muted())
-                    .child("—"),
+                    .hover(|style| style.bg(theme::elevated_alt()))
+                    .child("−"),
             )
             .child(
                 div()
                     .id("window-max")
                     .window_control_area(WindowControlArea::Max)
+                    .w(px(30.0))
+                    .h(px(28.0))
                     .flex()
                     .items_center()
                     .justify_center()
-                    .size(px(28.0))
-                    .text_size(px(11.0))
                     .text_color(theme::text_muted())
+                    .hover(|style| style.bg(theme::elevated_alt()))
                     .child("□"),
             )
             .child(
                 div()
                     .id("window-close")
                     .window_control_area(WindowControlArea::Close)
+                    .w(px(30.0))
+                    .h(px(28.0))
                     .flex()
                     .items_center()
                     .justify_center()
-                    .size(px(28.0))
-                    .text_size(px(12.0))
                     .text_color(theme::text_muted())
+                    .hover(|style| {
+                        style
+                            .bg(theme::wash(theme::danger(), 0.18))
+                            .text_color(theme::danger())
+                    })
                     .child("×"),
             );
-
         div()
-            .h(px(32.0))
+            .h(px(36.0))
             .flex_shrink_0()
             .flex()
             .items_center()
-            .justify_between()
-            .gap_2()
-            .px_2()
+            .gap(px(12.0))
+            .px(px(12.0))
             .bg(theme::sunken())
             .border_b_1()
             .border_color(theme::border())
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .min_w_0()
-                    .window_control_area(WindowControlArea::Drag)
-                    .child(breadcrumb),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .flex_shrink_0()
-                    .child(controls)
-                    .child(window_controls),
-            )
+            .child(left)
+            .child(search)
+            .child(right)
     }
 
-    fn render_status_bar(&self, accent: gpui::Rgba) -> gpui::Div {
-        let block_count = self
-            .state
-            .active_buffer()
-            .map_or(0, |buffer| buffer.blocks.len());
-        let lock_color = match self.state.lock {
-            LockStatus::Unlocked => theme::success(),
-            LockStatus::Held(_) => theme::warning(),
-            LockStatus::Stale(_) => theme::danger(),
-        };
-        let context_color = if self.state.context_pct >= 75 {
-            theme::warning()
-        } else {
-            theme::text_secondary()
-        };
-
+    fn render_status_bar(&self, accent: gpui::Rgba, cx: &mut Context<Self>) -> gpui::Div {
         div()
-            .h(px(24.0))
+            .h(px(26.0))
             .flex_shrink_0()
             .flex()
             .items_center()
-            .justify_between()
-            .gap_2()
-            .px_2()
+            .gap(px(14.0))
+            .px(px(12.0))
             .bg(theme::sunken())
             .border_t_1()
             .border_color(theme::border())
-            .text_size(px(9.0))
+            .text_size(px(theme::MICRO))
             .text_color(theme::text_muted())
+            .child(ui_kit::TintedBadge::render(
+                self.state.mode.short_label(),
+                accent,
+            ))
+            .child(format!("⑂ {}", self.state.git_branch))
+            .child(format!("{} problems", self.state.diagnostics.len()))
             .child(
                 div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
+                    .flex_1()
                     .min_w_0()
-                    .child(
-                        div()
-                            .px_2()
-                            .py(px(1.0))
-                            .rounded(px(2.0))
-                            .bg(accent)
-                            .text_size(px(9.0))
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(theme::sunken())
-                            .child(format!(
-                                "MODE: {}",
-                                self.state.mode.short_label().to_uppercase()
-                            )),
-                    )
-                    .child(
-                        div()
-                            .text_color(theme::text_secondary())
-                            .child(self.state.language_label()),
-                    )
-                    .child(
-                        div()
-                            .text_color(theme::text_muted())
-                            .child(format!("{block_count} hashes")),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .text_color(lock_color)
-                            .child(widgets::dot(lock_color))
-                            .child(format!(".ai lock · {}", self.state.lock_label())),
-                    )
-                    .child(
-                        div()
-                            .text_color(theme::text_muted())
-                            .child(format!("⑂ {}", self.state.git_branch)),
-                    )
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_color(theme::text_muted())
-                            .child(self.state.status_message.clone()),
-                    ),
+                    .truncate()
+                    .child(self.state.status_message.clone()),
             )
+            .child(format!("Ln {}", self.state.cursor_line))
+            .child(self.state.language_label())
+            .child(
+                ui_kit::button(
+                    "status-inspector",
+                    format!("{}% context  ⓘ", self.state.context_pct),
+                )
+                .text_size(px(theme::MICRO))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.state.show_inspector = !this.state.show_inspector;
+                    cx.notify();
+                })),
+            )
+    }
+
+    fn render_inspector(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let state = &self.state;
+        let mut panel = div()
+            .absolute()
+            .right(px(12.0))
+            .bottom(px(36.0))
+            .w(px(380.0))
+            .p(px(16.0))
+            .flex()
+            .flex_col()
+            .gap(px(10.0))
+            .rounded(px(10.0))
+            .bg(theme::elevated())
+            .border_1()
+            .border_color(theme::border_strong())
+            .text_size(px(theme::BODY))
+            .text_color(theme::text_secondary())
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap_2()
-                    .flex_shrink_0()
-                    .child(format!("DAG {}", self.state.session.len()))
-                    .child(format!(
-                        "${:.4}",
-                        self.state.spend_micros as f64 / 1_000_000.0
-                    ))
-                    .child(format!("{}ms", self.state.latency_ms))
-                    .child(div().text_color(context_color).child(format!(
-                        "Ctx {}% ({}/{}) · @75%",
-                        self.state.context_pct,
-                        compact_number(self.state.context_tokens),
-                        compact_number(self.state.context_window)
-                    )))
-                    .child(widgets::keycap("Ctrl+P")),
-            )
+                    .justify_between()
+                    .child(widgets::section_label("Workspace details"))
+                    .child(ui_kit::icon_button("inspector-close", "×", false).on_click(
+                        cx.listener(|this, _, _, cx| {
+                            this.state.show_inspector = false;
+                            cx.notify();
+                        }),
+                    )),
+            );
+        for (label, value) in [
+            (
+                "Router",
+                format!(
+                    "{} · {}",
+                    state.router_endpoint,
+                    if state.router_live { "live" } else { "offline" }
+                ),
+            ),
+            ("Workspace lock", state.lock_label().to_string()),
+            ("Ticket", state.ticket_label()),
+            (
+                "Index",
+                format!(
+                    "{} files · {} symbols · {} blocks",
+                    state.file_count(),
+                    state.symbol_count(),
+                    state.block_count()
+                ),
+            ),
+            (
+                "Session",
+                format!(
+                    "{} nodes · {}ms · ${:.4}",
+                    state.session.len(),
+                    state.latency_ms,
+                    state.spend_micros as f64 / 1_000_000.0
+                ),
+            ),
+            ("Context", state.context_label()),
+            (
+                "Active file",
+                state
+                    .active_buffer()
+                    .map(|buffer| format!("{} · {} bytes", buffer.rel_path, buffer.content.len()))
+                    .unwrap_or_else(|| "No file selected".into()),
+            ),
+            (
+                "Experience",
+                format!("{} durable lessons", state.experience.entries().len()),
+            ),
+        ] {
+            panel = panel.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(3.0))
+                    .child(widgets::section_label(label))
+                    .child(value),
+            );
+        }
+        if let Some(error) = &state.error {
+            panel = panel.child(div().text_color(theme::warning()).child(error.clone()));
+        }
+        panel
     }
 }
 
@@ -1944,7 +2074,7 @@ impl Render for Workbench {
         let composer_focused = self.composer_focus.is_focused(window);
 
         let titlebar = self.render_titlebar(accent, accent_strong, cx);
-        let activity = crate::left_dock::activity_bar(self, accent, cx);
+
         let left = self
             .state
             .show_left
@@ -1966,11 +2096,10 @@ impl Render for Workbench {
             .flex_1()
             .min_h_0()
             .flex()
-            .child(activity)
             .when_some(left, |this, left| this.child(left))
             .child(center)
             .when_some(assistant, |this, assistant| this.child(assistant));
-        let status = self.render_status_bar(accent_strong);
+        let status = self.render_status_bar(accent, cx);
 
         div()
             .size_full()
@@ -1978,12 +2107,18 @@ impl Render for Workbench {
             .flex_col()
             .bg(theme::sunken())
             .text_color(theme::text_primary())
-            .font_family("Segoe UI")
+            .track_focus(&self.root_focus)
+            .font_family(theme::ui_font())
+            .text_size(px(theme::BODY))
+            .relative()
             .key_context("Workbench")
             .on_key_down(cx.listener(Self::on_root_key))
             .child(titlebar)
             .child(body)
             .child(status)
+            .when(self.state.show_inspector, |this| {
+                this.child(self.render_inspector(cx))
+            })
             .when(self.state.show_palette, |this| {
                 this.child(crate::command_palette::render(
                     self,
@@ -2298,11 +2433,11 @@ mod tests {
 
         state.cycle_mode();
         assert_eq!(state.mode, ExecutionMode::Web);
-        assert_eq!(theme::accent_hex(state.mode), "#56B6C2");
+        assert_eq!(theme::accent_hex(state.mode), "#06B6D4");
 
         state.cycle_mode();
         assert_eq!(state.mode, ExecutionMode::Chat);
-        assert_eq!(theme::accent_hex(state.mode), "#61AFEF");
+        assert_eq!(theme::accent_hex(state.mode), "#6366F1");
         assert!(!state.mode.allows_writes());
 
         state.prompt_input = "Review the block".to_string();
@@ -2317,10 +2452,10 @@ mod tests {
 
         state.cycle_mode();
         assert_eq!(state.mode, ExecutionMode::Debug);
-        assert_eq!(theme::accent_hex(state.mode), "#E06C75");
+        assert_eq!(theme::accent_hex(state.mode), "#F43F5E");
         state.cycle_mode();
         assert_eq!(state.mode, ExecutionMode::Code);
-        assert_eq!(theme::accent_hex(state.mode), "#E5C07B");
+        assert_eq!(theme::accent_hex(state.mode), "#F59E0B");
 
         drop(state);
         let _ = fs::remove_dir_all(dir);
@@ -2427,6 +2562,62 @@ mod tests {
         state.run_tournament();
         assert_eq!(state.tournament_runs, 1);
 
+        drop(state);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn context_chips_remove_independently_and_pin_survives_tab_switch() {
+        let dir = temp_workspace("context-chips");
+        let mut state = state_for(&dir);
+        state.open_file(Path::new("src/lib.rs")).unwrap();
+        state.select_block(0);
+        let pinned = state.pinned_block.clone().unwrap();
+        state.open_file(Path::new("README.md")).unwrap();
+        assert_eq!(state.pinned_block.as_ref(), Some(&pinned));
+        assert!(state.context_reference().contains("src/lib.rs"));
+        state.context_file = false;
+        assert!(!state.context_reference().contains("README.md"));
+        state.pinned_block = None;
+        assert_eq!(state.context_reference(), "workspace");
+        state.context_file = true;
+        assert_eq!(state.context_reference(), "README.md");
+        drop(state);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn palette_finds_closed_files_symbols_and_scoped_models() {
+        let dir = temp_workspace("palette-search");
+        let mut state = state_for(&dir);
+        state.palette_query = "src lib.rs".into();
+        let results = crate::command_palette::items(&state);
+        let file = results
+            .iter()
+            .find(|item| matches!(item.action, PaletteAction::File(_)))
+            .unwrap();
+        state.apply_palette_action(file.action.clone());
+        assert_eq!(state.active_rel_path().as_deref(), Some("src/lib.rs"));
+        state.palette_query = "beta".into();
+        let results = crate::command_palette::items(&state);
+        let symbol = results
+            .iter()
+            .find(|item| matches!(item.action, PaletteAction::Symbol(_, _)))
+            .unwrap();
+        state.apply_palette_action(symbol.action.clone());
+        assert!(state.current_block_hash().is_some());
+        state.palette_scope = PaletteScope::Model;
+        state.palette_query = "claude".into();
+        let results = crate::command_palette::items(&state);
+        assert!(!results.is_empty());
+        assert!(results
+            .iter()
+            .all(|item| matches!(item.action, PaletteAction::Model(_))));
+        state.apply_palette_action(results[0].action.clone());
+        assert!(state.model.contains("claude"));
+        assert!(!state.show_palette);
+        state.palette_query = "no-such-match-zzzz".into();
+        assert!(crate::command_palette::items(&state).is_empty());
         drop(state);
         let _ = fs::remove_dir_all(dir);
     }

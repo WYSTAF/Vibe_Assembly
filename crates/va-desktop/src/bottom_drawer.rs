@@ -5,8 +5,8 @@ use gpui::prelude::*;
 use gpui::{div, px, Context, Div, Rgba};
 
 use crate::state::{BottomTab, Workbench};
-use crate::theme;
 use crate::widgets;
+use crate::{theme, ui_kit};
 
 pub fn render(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>) -> Div {
     let state = &workbench.state;
@@ -15,8 +15,8 @@ pub fn render(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>) 
             BottomTab::Problems,
             format!("Problems · {}", state.diagnostics.len()),
         ),
-        (BottomTab::Verify, "Verify Output".to_string()),
-        (BottomTab::Harness, "Harness² c1..c8".to_string()),
+        (BottomTab::Verify, "Verification Output".to_string()),
+        (BottomTab::Harness, "Harness² Rules".to_string()),
     ];
 
     let mut tab_strip = div().flex().items_center().h_full();
@@ -35,7 +35,7 @@ pub fn render(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>) 
                 } else {
                     theme::wash(theme::text_muted(), 0.0)
                 })
-                .text_size(px(10.0))
+                .text_size(px(theme::BODY))
                 .font_weight(if active {
                     gpui::FontWeight::SEMIBOLD
                 } else {
@@ -56,7 +56,7 @@ pub fn render(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>) 
     }
 
     let header = div()
-        .h(px(28.0))
+        .h(px(34.0))
         .flex_shrink_0()
         .flex()
         .items_center()
@@ -67,42 +67,28 @@ pub fn render(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>) 
         .border_color(theme::border())
         .child(tab_strip)
         .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(
-                    div()
-                        .text_size(px(9.0))
-                        .text_color(theme::text_muted())
-                        .child(format!(
-                            "{} · {}",
-                            state.status_message,
-                            state.ticket_label()
-                        )),
-                )
-                .child(
-                    div()
-                        .id("bottom-close")
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .size(px(18.0))
-                        .rounded(px(2.0))
-                        .text_size(px(12.0))
-                        .text_color(theme::text_muted())
-                        .cursor_pointer()
-                        .hover(|style| {
-                            style
-                                .bg(theme::wash(theme::danger(), 0.18))
-                                .text_color(theme::danger())
-                        })
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.state.toggle_bottom();
-                            cx.notify();
-                        }))
-                        .child("×"),
-                ),
+            div().flex().items_center().gap_2().child(
+                div()
+                    .id("bottom-close")
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(18.0))
+                    .rounded(px(6.0))
+                    .text_size(px(12.0))
+                    .text_color(theme::text_muted())
+                    .cursor_pointer()
+                    .hover(|style| {
+                        style
+                            .bg(theme::wash(theme::danger(), 0.18))
+                            .text_color(theme::danger())
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.state.toggle_bottom();
+                        cx.notify();
+                    }))
+                    .child("×"),
+            ),
         );
 
     let body = match state.bottom_tab {
@@ -112,7 +98,7 @@ pub fn render(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>) 
     };
 
     div()
-        .h(px(180.0))
+        .h(px(theme::DRAWER))
         .flex_shrink_0()
         .flex()
         .flex_col()
@@ -135,22 +121,21 @@ fn problems(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>) ->
     if state.diagnostics.is_empty() {
         return div()
             .flex()
-            .flex_col()
             .items_center()
-            .justify_center()
-            .gap_2()
-            .py_4()
+            .justify_between()
+            .gap(px(16.0))
+            .p(px(24.0))
             .child(
                 div()
-                    .text_size(px(11.0))
+                    .text_size(px(theme::BODY))
                     .text_color(theme::text_secondary())
-                    .child("No pinned diagnostics"),
+                    .child("No problems to show"),
             )
             .child(
                 div()
-                    .text_size(px(9.0))
+                    .text_size(px(theme::MICRO))
                     .text_color(theme::text_muted())
-                    .child("Run cargo check --workspace and map errors directly to block hashes."),
+                    .child("Run a workspace check when you’re ready."),
             )
             .child(
                 div()
@@ -159,7 +144,7 @@ fn problems(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>) ->
                         this.state.run_diagnostics();
                         cx.notify();
                     }))
-                    .child(widgets::pill("Run Diagnostics", true, accent)),
+                    .child(ui_kit::TintedBadge::render("Run Diagnostics", accent)),
             );
     }
 
@@ -196,7 +181,7 @@ fn problems(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>) ->
                 .child(
                     div()
                         .w(px(46.0))
-                        .text_size(px(8.0))
+                        .text_size(px(theme::MICRO))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_color(color)
                         .child(diagnostic.level.to_uppercase()),
@@ -211,14 +196,14 @@ fn problems(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>) ->
                         .child(
                             div()
                                 .truncate()
-                                .text_size(px(10.0))
+                                .text_size(px(theme::MICRO))
                                 .text_color(theme::text_secondary())
                                 .child(diagnostic.message.clone()),
                         )
                         .child(
                             div()
-                                .text_size(px(8.0))
-                                .font_family("Consolas")
+                                .text_size(px(theme::MICRO))
+                                .font_family(theme::code_font())
                                 .text_color(theme::text_muted())
                                 .child(format!(
                                     "{}:{}-{} · span {}-{}",
@@ -236,8 +221,8 @@ fn problems(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>) ->
                             .px_1()
                             .rounded(px(2.0))
                             .bg(theme::wash(color, 0.10))
-                            .text_size(px(8.0))
-                            .font_family("Consolas")
+                            .text_size(px(theme::MICRO))
+                            .font_family(theme::code_font())
                             .text_color(color)
                             .child(code.clone()),
                     )
@@ -258,9 +243,9 @@ fn verify(workbench: &Workbench, _accent: Rgba, cx: &mut Context<Workbench>) -> 
             .justify_between()
             .child(
                 div()
-                    .text_size(px(9.0))
+                    .text_size(px(theme::MICRO))
                     .text_color(theme::text_muted())
-                    .child("Head/tail slice · verification logs and cargo output"),
+                    .child("Latest verification"),
             )
             .child(
                 div()
@@ -277,14 +262,14 @@ fn verify(workbench: &Workbench, _accent: Rgba, cx: &mut Context<Workbench>) -> 
         body = body.child(
             div()
                 .py_3()
-                .text_size(px(10.0))
+                .text_size(px(theme::MICRO))
                 .text_color(theme::text_muted())
                 .child("No verification output yet. Run cargo check or add .ai/verification.md."),
         );
         return body;
     }
 
-    for line in widgets::head_tail(&state.verify_output, 10, 10) {
+    for line in widgets::head_tail(&state.verify_output, 8, 8) {
         let lower = line.to_ascii_lowercase();
         let color = if lower.contains("error") {
             theme::danger()
@@ -297,9 +282,9 @@ fn verify(workbench: &Workbench, _accent: Rgba, cx: &mut Context<Workbench>) -> 
         };
         body = body.child(
             div()
-                .font_family("Consolas")
-                .text_size(px(9.0))
-                .line_height(px(13.0))
+                .font_family(theme::code_font())
+                .text_size(px(theme::MICRO))
+                .line_height(px(19.0))
                 .text_color(color)
                 .child(line),
         );
@@ -308,7 +293,7 @@ fn verify(workbench: &Workbench, _accent: Rgba, cx: &mut Context<Workbench>) -> 
     body.child(
         div()
             .mt_1()
-            .text_size(px(8.0))
+            .text_size(px(theme::MICRO))
             .text_color(theme::text_muted())
             .child(format!(
                 "{} · {} lines · independent judge {}",
@@ -334,9 +319,9 @@ fn harness(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>) -> 
                     .gap_2()
                     .child(
                         div()
-                            .text_size(px(9.0))
+                            .text_size(px(theme::MICRO))
                             .text_color(theme::text_muted())
-                            .child("Eight modular surfaces · reset-to-base contract"),
+                            .child("Workspace rules"),
                     )
                     .child(widgets::pill(
                         if pristine { "BASE" } else { "OVERLAY" },
@@ -370,52 +355,112 @@ fn harness(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>) -> 
             ),
     );
 
-    for surface in state.harness.surfaces() {
+    for (index, surface) in state.harness.surfaces().into_iter().enumerate() {
+        let expanded = state.expanded_rules.contains(&surface.id);
+        let id = surface.id.to_string();
         body = body.child(
             div()
                 .flex()
-                .items_center()
-                .gap_2()
-                .px_1()
-                .py_1()
-                .border_b_1()
-                .border_color(theme::border())
+                .flex_col()
+                .rounded(px(6.0))
                 .child(
-                    div()
-                        .w(px(24.0))
-                        .text_size(px(8.0))
-                        .font_family("Consolas")
-                        .text_color(accent)
-                        .child(surface.id.chars().take(2).collect::<String>()),
+                    ui_kit::button(("harness-rule", index), "")
+                        .justify_start()
+                        .w_full()
+                        .h(px(30.0))
+                        .child(
+                            div()
+                                .w(px(12.0))
+                                .text_color(theme::text_muted())
+                                .child(if expanded { "⌄" } else { "›" }),
+                        )
+                        .child(
+                            div()
+                                .w(px(120.0))
+                                .text_size(px(theme::MICRO))
+                                .text_color(accent)
+                                .child(surface.id),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(theme::MICRO))
+                                .text_color(theme::text_muted())
+                                .child(widgets::first_line(&surface.content)),
+                        )
+                        .child(ui_kit::TintedBadge::render(
+                            if pristine { "Base" } else { "Overlay" },
+                            if pristine {
+                                theme::success()
+                            } else {
+                                theme::warning()
+                            },
+                        ))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if !this.state.expanded_rules.remove(&id) {
+                                this.state.expanded_rules.insert(id.clone());
+                            }
+                            cx.notify();
+                        })),
                 )
-                .child(
-                    div()
-                        .w(px(104.0))
-                        .text_size(px(8.0))
-                        .font_family("Consolas")
-                        .text_color(accent)
-                        .child(surface.id),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_size(px(9.0))
-                        .text_color(theme::text_secondary())
-                        .child(widgets::first_line(&surface.content)),
-                )
-                .child(
-                    div()
-                        .text_size(px(8.0))
-                        .text_color(if pristine {
-                            theme::success()
-                        } else {
-                            theme::warning()
-                        })
-                        .child(if pristine { "BASE" } else { "OVERLAY" }),
-                ),
+                .when(expanded, |this| {
+                    this.child(
+                        div()
+                            .p(px(12.0))
+                            .bg(theme::elevated())
+                            .text_size(px(theme::BODY))
+                            .line_height(px(20.0))
+                            .text_color(theme::text_secondary())
+                            .child(surface.content.to_string()),
+                    )
+                }),
         );
+    }
+    let expanded = state.expanded_rules.contains("experience");
+    body = body.child(
+        ui_kit::button(
+            "durable-lessons",
+            format!(
+                "{} Durable lessons · {}",
+                if expanded { "⌄" } else { "›" },
+                state.experience.entries().len()
+            ),
+        )
+        .justify_start()
+        .on_click(cx.listener(|this, _, _, cx| {
+            if !this.state.expanded_rules.remove("experience") {
+                this.state.expanded_rules.insert("experience".into());
+            }
+            cx.notify();
+        })),
+    );
+    if expanded {
+        for entry in state.experience.entries().iter().rev().take(4) {
+            body = body.child(
+                div()
+                    .p(px(12.0))
+                    .rounded(px(6.0))
+                    .bg(theme::elevated())
+                    .text_size(px(theme::BODY))
+                    .line_height(px(20.0))
+                    .text_color(theme::text_secondary())
+                    .child(format!(
+                        "{} · {}\n{}",
+                        entry.language, entry.domain, entry.lesson
+                    )),
+            );
+        }
+        if state.experience.entries().is_empty() {
+            body = body.child(
+                div()
+                    .p(px(12.0))
+                    .text_size(px(theme::BODY))
+                    .text_color(theme::text_muted())
+                    .child("Lessons from verified recovery will appear here."),
+            );
+        }
     }
 
     body
