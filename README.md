@@ -4,7 +4,7 @@
 
 # Vibe Assembly
 
-**v2.0.0 - a production-hardened, pure-Rust multi-agent coding workspace.**
+**v2.0.1 - a production-hardened, pure-Rust multi-agent coding workspace.**
 
 Vibe Assembly lets small, focused agents build and maintain large software
 projects without exhausting a single chat context. Roles communicate through a
@@ -152,8 +152,8 @@ The workbench is backed by real workspace data: the file tree, RepoMap symbols,
 64-bit FNV-1a `segment_blocks` hashes, the immutable session DAG,
 `ExperienceStore` lessons, pinned diagnostics, and the eight harness surfaces.
 Shared presentation primitives live in `crates/va-desktop/src/ui_kit`; the
-supplied brand mark is embedded as a GPUI asset, and the Windows executable
-carries the matching multi-size application icon.
+supplied rounded yellow brand mark is embedded as a GPUI asset, and the Windows
+executable carries the matching multi-size application icon.
 Inline diffs come from `git diff` or `git show HEAD` and fall back to a session
 patch summary. The desktop surface never fabricates a diff and never writes
 files directly; applying patches remains the live CLI's job.

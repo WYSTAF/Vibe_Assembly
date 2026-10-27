@@ -3,7 +3,7 @@
 ## Stack
 
 - **Project:** Vibe Assembly
-- **Version:** 2.0.0
+- **Version:** 2.0.1
 - **Primary language:** Rust (edition 2021, MSVC toolchain on Windows)
 - **Build system:** Cargo workspace with four member crates
 - **Binaries:** `vibe-assembly` (CLI/TUI/MCP) and `vibe-assembly-desktop` (GPUI)

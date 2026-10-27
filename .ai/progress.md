@@ -4,6 +4,8 @@
 
 - **v2.0.0 Production Hardening and Feature Completion (ADR-018)**
 - Status: implementation complete; final verification gates green.
+- **v2.0.1 (2026-10-27):** rounded yellow brand icon adopted for the Windows
+  executable and the in-app logo; desktop binary rebuilt and release refreshed.
 - Scope: real HTTP live planner, four execution modes with dynamic accents,
   language lens, auto-compaction at 75%, think-trace eviction, pinned working
   set, repeated-anchor rejection, spin-loop breaker, durable EXPERIENCE.md,

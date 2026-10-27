@@ -1,7 +1,8 @@
 # Active Session Context Handoff
 
-**Last session status:** v2.0.0 production hardening and the Zed workbench
-overhaul (ADR-019) complete; all gates green.
+**Last session status:** v2.0.1 rounded brand icon refresh, on top of the
+v2.0.0 production hardening and Zed workbench overhaul (ADR-019); all gates
+green.
 
 **Active blockers:** None.
 

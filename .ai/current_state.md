@@ -1,6 +1,8 @@
 # Current Operational State
 
 - **Active Milestone:** v2.0.0 Production Hardening and Feature Completion (ADR-018)
+- **Patch Release:** v2.0.1 - rounded yellow brand icon for the Windows executable
+  and the in-app titlebar/empty-state logo.
 - **Current Assignment:** Complete - real live planner, execution modes,
   language lens, context compaction, safety guards, durable experience,
   interactive CLI/TUI selectors, and the modular Zed-style desktop workbench.
