@@ -1,4 +1,5 @@
 //! Project navigation with shared controls and quiet tree rows.
+use crate::design::icon::icon;
 use crate::state::{LeftView, Workbench};
 use crate::{theme, ui_kit, widgets};
 use gpui::prelude::*;
@@ -12,7 +13,7 @@ pub fn render(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>) 
         segments = segments.item(
             SegmentedPillBar::segment(
                 ("left-view", index),
-                view.glyph(),
+                view.icon(),
                 view.label(),
                 state.left_view == view,
             )
@@ -59,12 +60,12 @@ pub fn render(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>) 
                     LeftView::Dag => "Session timeline",
                 }))
                 .child(
-                    ui_kit::icon_button("navigation-refresh", "⟳", false).on_click(cx.listener(
-                        |this, _, _, cx| {
+                    ui_kit::icon_button("navigation-refresh", "refresh-cw", false).on_click(
+                        cx.listener(|this, _, _, cx| {
                             this.state.refresh();
                             cx.notify();
-                        },
-                    )),
+                        }),
+                    ),
                 ),
         )
         .child(
@@ -98,7 +99,7 @@ fn files(workbench: &Workbench, cx: &mut Context<Workbench>) -> Div {
     let rows = state.visible_rows();
     if rows.is_empty() {
         return ui_kit::empty_state(
-            "▤",
+            icon("files", 22.0, theme::brand_ink()),
             "Your workspace",
             "Open a project or refresh to see its files here.",
         );
@@ -132,7 +133,7 @@ fn symbols(workbench: &Workbench, cx: &mut Context<Workbench>) -> Div {
     let rows = workbench.state.outline_rows();
     if rows.is_empty() {
         return ui_kit::empty_state(
-            "◇",
+            icon("braces", 22.0, theme::brand_ink()),
             "An outline of your code",
             "Open a source file to explore its functions and types.",
         );
@@ -163,7 +164,7 @@ fn timeline(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>) ->
     let mut list = div().flex().flex_col().gap(px(8.0)).p(px(8.0));
     if state.dag.is_empty() {
         list = list.child(ui_kit::empty_state(
-            "⑂",
+            icon("git-branch", 22.0, theme::brand_ink()),
             "A fresh timeline",
             "Prompts and verified steps will appear here as you work.",
         ));
@@ -174,8 +175,11 @@ fn timeline(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>) ->
         let mut card = div()
             .flex()
             .flex_col()
-            .rounded(px(8.0))
+            .rounded(px(12.0))
             .bg(theme::elevated())
+            .border_1()
+            .border_color(theme::border())
+            .shadow(widgets::card_shadow())
             .child(
                 div()
                     .id(("dag-node", index))
@@ -207,11 +211,15 @@ fn timeline(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>) ->
                             .text_color(theme::text_secondary())
                             .child(node.label.clone()),
                     )
-                    .child(div().text_color(theme::text_muted()).child(if expanded {
-                        "⌄"
-                    } else {
-                        "›"
-                    })),
+                    .child(icon(
+                        if expanded {
+                            "chevron-down"
+                        } else {
+                            "chevron-right"
+                        },
+                        14.0,
+                        theme::text_muted(),
+                    )),
             );
         if expanded {
             card = card.child(
@@ -242,7 +250,7 @@ fn timeline(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>) ->
             .flex_wrap()
             .gap(px(4.0))
             .child(
-                ui_kit::button("dag-rollback", "↶ Revert to verified").on_click(cx.listener(
+                ui_kit::button("dag-rollback", "Revert to verified").on_click(cx.listener(
                     |this, _, _, cx| {
                         this.state.rollback();
                         cx.notify();
@@ -250,7 +258,7 @@ fn timeline(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>) ->
                 )),
             )
             .child(
-                ui_kit::button("dag-tournament", "◇ Tournament").on_click(cx.listener(
+                ui_kit::button("dag-tournament", "Tournament").on_click(cx.listener(
                     |this, _, _, cx| {
                         this.state.run_tournament();
                         cx.notify();

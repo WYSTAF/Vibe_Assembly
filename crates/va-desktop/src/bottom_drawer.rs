@@ -4,6 +4,7 @@
 use gpui::prelude::*;
 use gpui::{div, px, Context, Div, Rgba};
 
+use crate::design::icon::icon;
 use crate::state::{BottomTab, Workbench};
 use crate::widgets;
 use crate::{theme, ui_kit};
@@ -78,16 +79,12 @@ pub fn render(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>) 
                     .text_size(px(12.0))
                     .text_color(theme::text_muted())
                     .cursor_pointer()
-                    .hover(|style| {
-                        style
-                            .bg(theme::wash(theme::danger(), 0.18))
-                            .text_color(theme::danger())
-                    })
+                    .hover(|style| style.bg(theme::danger_soft()).text_color(theme::danger()))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.state.toggle_bottom();
                         cx.notify();
                     }))
-                    .child("×"),
+                    .child(icon("x", 13.0, theme::text_muted())),
             ),
         );
 
@@ -368,12 +365,15 @@ fn harness(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>) -> 
                         .justify_start()
                         .w_full()
                         .h(px(30.0))
-                        .child(
-                            div()
-                                .w(px(12.0))
-                                .text_color(theme::text_muted())
-                                .child(if expanded { "⌄" } else { "›" }),
-                        )
+                        .child(div().w(px(14.0)).child(icon(
+                            if expanded {
+                                "chevron-down"
+                            } else {
+                                "chevron-right"
+                            },
+                            13.0,
+                            theme::text_muted(),
+                        )))
                         .child(
                             div()
                                 .w(px(120.0))
@@ -422,13 +422,18 @@ fn harness(workbench: &Workbench, accent: Rgba, cx: &mut Context<Workbench>) -> 
     body = body.child(
         ui_kit::button(
             "durable-lessons",
-            format!(
-                "{} Durable lessons · {}",
-                if expanded { "⌄" } else { "›" },
-                state.experience.entries().len()
-            ),
+            format!("{} Durable lessons", state.experience.entries().len()),
         )
         .justify_start()
+        .child(icon(
+            if expanded {
+                "chevron-down"
+            } else {
+                "chevron-right"
+            },
+            13.0,
+            theme::text_muted(),
+        ))
         .on_click(cx.listener(|this, _, _, cx| {
             if !this.state.expanded_rules.remove("experience") {
                 this.state.expanded_rules.insert("experience".into());

@@ -1,3 +1,4 @@
+use crate::design::icon::icon;
 use crate::{theme, widgets};
 use gpui::prelude::*;
 use gpui::{div, px, Div, ElementId, FontWeight, Stateful};
@@ -13,9 +14,11 @@ impl SegmentedPillBar {
                 .flex()
                 .items_center()
                 .gap(px(2.0))
-                .p(px(3.0))
-                .rounded(px(8.0))
-                .bg(theme::editor()),
+                .p(px(2.0))
+                .rounded(px(10.0))
+                .bg(theme::elevated())
+                .border_1()
+                .border_color(theme::border()),
         }
     }
     pub fn item(mut self, item: impl IntoElement) -> Self {
@@ -27,25 +30,27 @@ impl SegmentedPillBar {
     }
     pub fn segment(
         id: impl Into<ElementId>,
-        glyph: &str,
+        icon_name: &'static str,
         label: &str,
         active: bool,
     ) -> Stateful<Div> {
+        let color = if active {
+            theme::brand_ink()
+        } else {
+            theme::text_muted()
+        };
         super::button(id, "")
             .h(px(24.0))
             .px(px(8.0))
+            .gap(px(6.0))
             .text_size(px(11.5))
             .bg(if active {
-                theme::border()
+                theme::wash(theme::brand_soft(), 1.0)
             } else {
-                theme::editor()
+                theme::wash(theme::elevated(), 0.0)
             })
-            .text_color(if active {
-                theme::text_primary()
-            } else {
-                theme::text_muted()
-            })
-            .child(div().text_size(px(12.0)).child(glyph.to_string()))
+            .text_color(color)
+            .child(icon(icon_name, 14.0, color))
             .child(label.to_string())
     }
 }
@@ -70,12 +75,12 @@ impl FileTreeRow {
             .items_center()
             .gap(px(7.0))
             .pr(px(10.0))
-            .pl(px(10.0 + depth as f32 * 14.0))
-            .rounded(px(5.0))
+            .pl(px(8.0 + depth as f32 * 14.0))
+            .rounded(px(7.0))
             .bg(if selected {
-                theme::elevated_alt()
+                theme::wash(theme::brand_soft(), 1.0)
             } else {
-                theme::sunken()
+                theme::wash(theme::sunken(), 0.0)
             })
             .text_size(px(theme::BODY))
             .text_color(if selected {
@@ -90,7 +95,7 @@ impl FileTreeRow {
             row = row.child(
                 div()
                     .absolute()
-                    .left(px(16.0 + level as f32 * 14.0))
+                    .left(px(14.0 + level as f32 * 14.0))
                     .top_0()
                     .h_full()
                     .w(px(1.0))
@@ -99,32 +104,38 @@ impl FileTreeRow {
         }
         row.child(
             div()
-                .w(px(22.0))
+                .w(px(20.0))
                 .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
                 .whitespace_nowrap()
-                .text_size(px(11.0))
-                .font_weight(FontWeight::MEDIUM)
+                .text_size(px(10.0))
+                .font_weight(FontWeight::SEMIBOLD)
                 .text_color(if directory {
                     theme::text_muted()
                 } else {
                     theme::file_color(name)
                 })
-                .child(if directory {
-                    if expanded {
-                        "⌄"
-                    } else {
-                        "›"
-                    }
-                } else {
-                    widgets::file_glyph(name)
-                }),
+                .when(directory, |this| {
+                    this.child(icon(
+                        if expanded { "folder-open" } else { "folder" },
+                        15.0,
+                        if selected {
+                            theme::brand_ink()
+                        } else {
+                            theme::text_muted()
+                        },
+                    ))
+                })
+                .when(!directory, |this| this.child(widgets::file_glyph(name))),
         )
         .child(div().flex_1().min_w_0().truncate().child(name.to_string()))
         .when(selected, |this| {
             this.child(
                 div()
                     .text_size(px(theme::MICRO))
-                    .text_color(theme::text_muted())
+                    .text_color(theme::brand_ink())
                     .child("open"),
             )
         })
@@ -149,11 +160,11 @@ impl SymbolRow {
             .items_center()
             .gap(px(8.0))
             .px(px(10.0))
-            .rounded(px(5.0))
+            .rounded(px(7.0))
             .bg(if selected {
-                theme::elevated_alt()
+                theme::wash(theme::brand_soft(), 1.0)
             } else {
-                theme::sunken()
+                theme::wash(theme::sunken(), 0.0)
             })
             .cursor_pointer()
             .hover(|style| style.bg(theme::elevated_alt()))
@@ -161,7 +172,8 @@ impl SymbolRow {
             .child(
                 div()
                     .w(px(30.0))
-                    .text_size(px(theme::MICRO))
+                    .text_size(px(10.5))
+                    .font_weight(FontWeight::MEDIUM)
                     .text_color(theme::symbol_color(kind))
                     .child(kind.to_string()),
             )

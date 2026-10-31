@@ -1,3 +1,4 @@
+use crate::design::icon::icon;
 use crate::{state::ExecutionStep, theme, widgets};
 use gpui::prelude::*;
 use gpui::{div, px, Div, ElementId, FontWeight, Stateful};
@@ -28,7 +29,7 @@ impl CollapsibleStepCard {
             .items_center()
             .gap(px(8.0))
             .px(px(10.0))
-            .rounded(px(6.0))
+            .rounded(px(8.0))
             .cursor_pointer()
             .hover(|style| style.bg(theme::elevated_alt()))
             .active(|style| style.bg(theme::border()))
@@ -47,10 +48,14 @@ impl CollapsibleStepCard {
                     .text_color(theme::text_muted())
                     .child(timing),
             )
-            .child(
-                div()
-                    .text_color(theme::text_muted())
-                    .child(if step.expanded { "⌄" } else { "›" }),
-            )
+            .child(icon(
+                if step.expanded {
+                    "chevron-down"
+                } else {
+                    "chevron-right"
+                },
+                14.0,
+                theme::text_muted(),
+            ))
     }
 }

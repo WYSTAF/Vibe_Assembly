@@ -1,9 +1,10 @@
 //! Small shared primitives for the workbench. Keeping these in one place is
-//! what prevents the Zed layout from turning back into a pile of one-off cards.
+//! what keeps the Paper & Ink surface consistent: warm hairlines, raised cards,
+//! one brand mark, and sentence-case labels.
 
 use crate::ui_kit::TintedBadge;
 use gpui::prelude::*;
-use gpui::{div, px, relative, Div, FontWeight, Rgba};
+use gpui::{div, point, px, relative, rgba, BoxShadow, Div, FontWeight, Rgba};
 
 use crate::theme;
 
@@ -31,7 +32,7 @@ pub fn first_line(text: &str) -> String {
 
 pub fn section_label(text: &str) -> Div {
     div()
-        .text_size(px(theme::MICRO))
+        .text_size(px(10.5))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(theme::text_muted())
         .child(text.to_uppercase())
@@ -46,10 +47,14 @@ pub fn ghost_button(label: impl Into<String>) -> Div {
         .flex()
         .items_center()
         .justify_center()
-        .px(px(10.0))
-        .h(px(26.0))
-        .rounded(px(6.0))
+        .gap(px(6.0))
+        .px(px(11.0))
+        .h(px(28.0))
+        .flex_shrink_0()
+        .rounded(px(8.0))
         .bg(theme::elevated())
+        .border_1()
+        .border_color(theme::border())
         .text_size(px(theme::BODY))
         .font_weight(FontWeight::MEDIUM)
         .text_color(theme::text_secondary())
@@ -65,7 +70,7 @@ pub fn ghost_button(label: impl Into<String>) -> Div {
 pub fn meter(pct: usize, color: Rgba) -> Div {
     let pct = pct.clamp(0, 100);
     let mut track = div()
-        .h(px(3.0))
+        .h(px(4.0))
         .w_full()
         .bg(theme::elevated_alt())
         .rounded_full()
@@ -80,6 +85,42 @@ pub fn meter(pct: usize, color: Rgba) -> Div {
         );
     }
     track
+}
+
+/// Soft card shadow used by messages and side cards on paper.
+pub fn card_shadow() -> Vec<BoxShadow> {
+    vec![
+        BoxShadow {
+            color: rgba(0x2B26200F).into(),
+            offset: point(px(0.0), px(1.0)),
+            blur_radius: px(2.0),
+            spread_radius: px(0.0),
+        },
+        BoxShadow {
+            color: rgba(0x2B26200A).into(),
+            offset: point(px(0.0), px(8.0)),
+            blur_radius: px(24.0),
+            spread_radius: px(0.0),
+        },
+    ]
+}
+
+/// Slightly stronger shadow for the composer and floating panels.
+pub fn lifted_shadow() -> Vec<BoxShadow> {
+    vec![
+        BoxShadow {
+            color: rgba(0x2B262012).into(),
+            offset: point(px(0.0), px(2.0)),
+            blur_radius: px(6.0),
+            spread_radius: px(0.0),
+        },
+        BoxShadow {
+            color: rgba(0x2B262012).into(),
+            offset: point(px(0.0), px(14.0)),
+            blur_radius: px(36.0),
+            spread_radius: px(0.0),
+        },
+    ]
 }
 
 pub fn hash_badge(hash: u64, color: Rgba) -> Div {
@@ -127,18 +168,21 @@ pub fn head_tail(text: &str, head: usize, tail: usize) -> Vec<String> {
 
 pub fn keycap(label: &str) -> Div {
     div()
-        .px_1()
-        .py(px(1.0))
-        .rounded(px(4.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .h(px(20.0))
+        .px(px(6.0))
+        .rounded(px(5.0))
         .border_1()
         .border_color(theme::border())
-        .bg(theme::elevated_alt())
-        .text_size(px(theme::MICRO))
+        .bg(theme::elevated())
+        .text_size(px(10.5))
         .font_family(theme::code_font())
         .text_color(theme::text_muted())
         .child(label.to_string())
 }
 
 pub fn dot(color: Rgba) -> Div {
-    div().size(px(5.0)).rounded_full().bg(color)
+    div().size(px(6.0)).rounded_full().bg(color)
 }

@@ -1,8 +1,8 @@
-//! Obsidian / zinc semantic design tokens for the Vibe Assembly workbench.
+//! Paper & Ink semantic tokens for the Vibe Assembly workbench.
 //!
-//! The palette is deliberately small: four sunken surfaces, one editor surface,
-//! two elevated tones, three text weights, two diff tones, and four mode accents.
-//! Every border is a 1px hairline; panes are separated by borders, not cards.
+//! Warm paper surfaces, ink text, and a single dark-yellow brand reserved for
+//! chrome, primary actions, and active markers. Syntax colors never use brand.
+//! Panes are separated by warm hairlines; content sits on raised white cards.
 
 use std::sync::OnceLock;
 
@@ -11,81 +11,105 @@ use va_core::modes::ExecutionMode;
 
 // ------------------------------------------------------------------ surfaces
 
-/// Titlebar, activity bar, left dock, assistant dock, bottom drawer, status bar.
+/// Titlebar, left dock, status bar — the warm canvas behind every pane.
 pub fn sunken() -> Rgba {
-    rgb(0x090A0F)
+    rgb(0xF1EADC)
 }
 
-/// Editor and primary canvas.
+/// Conversation and editor canvas.
 pub fn editor() -> Rgba {
-    rgb(0x0D0F17)
+    rgb(0xFAF6EC)
 }
 
-/// Active tab, command palette, hover states.
+/// Raised cards: messages, dialogs, composer.
 pub fn elevated() -> Rgba {
-    rgb(0x131620)
+    rgb(0xFFFFFF)
 }
 
-/// Composer input and pressed/hover raised rows.
+/// Pressed and hover rows, meters, and quiet chips.
 pub fn elevated_alt() -> Rgba {
-    rgb(0x1A1E2C)
+    rgb(0xEBE3D3)
 }
 
-/// Structural hairline border. Also the raised hover tone in Zed.
+/// Structural hairline border.
 pub fn border() -> Rgba {
-    rgb(0x1E2330)
+    rgb(0xE4DBCB)
 }
 
-/// Slightly stronger border for focused controls.
+/// Stronger border for focused controls and floating surfaces.
 pub fn border_strong() -> Rgba {
-    rgb(0x2A3142)
+    rgb(0xD1C5B0)
+}
+
+// -------------------------------------------------------------------- brand
+
+pub fn brand() -> Rgba {
+    rgb(0xFDCC02)
+}
+
+pub fn brand_hover() -> Rgba {
+    rgb(0xFFD83D)
+}
+
+pub fn brand_press() -> Rgba {
+    rgb(0xE0B400)
+}
+
+/// Readable dark gold for brand-tinted text and active markers.
+pub fn brand_ink() -> Rgba {
+    rgb(0x7A5F00)
+}
+
+/// Soft brand wash for active rows and quiet chips.
+pub fn brand_soft() -> Rgba {
+    rgb(0xFFF3C4)
 }
 
 // -------------------------------------------------------------------- text
 
 pub fn text_primary() -> Rgba {
-    rgb(0xE4E7EF)
+    rgb(0x2B2620)
 }
 
 pub fn text_secondary() -> Rgba {
-    rgb(0xA1A9BC)
+    rgb(0x5F584C)
 }
 
 pub fn text_muted() -> Rgba {
-    rgb(0x737F98)
+    rgb(0x746B5C)
 }
 
 // -------------------------------------------------------------------- diff
 
 pub fn diff_add_bg() -> Rgba {
-    rgb(0x0D2521)
+    rgb(0xE4F2E6)
 }
 
 pub fn diff_add_text() -> Rgba {
-    rgb(0x10B981)
+    rgb(0x2F7D4F)
 }
 
 pub fn diff_delete_bg() -> Rgba {
-    rgb(0x2A1522)
+    rgb(0xF8E5E2)
 }
 
 pub fn diff_delete_text() -> Rgba {
-    rgb(0xF43F5E)
+    rgb(0xA33B2E)
 }
 
 // ------------------------------------------------------------------ accents
 
-/// Soft mode accent used for borders, pills, and active indicators.
+/// Mode accent used for borders, pills, and active indicators. Never syntax.
 pub fn accent_rgb(mode: ExecutionMode) -> u32 {
     match mode {
-        ExecutionMode::Code => 0x00F5_9E0B,
-        ExecutionMode::Web => 0x0006_B6D4,
-        ExecutionMode::Chat => 0x0063_66F1,
-        ExecutionMode::Debug => 0x00F4_3F5E,
+        ExecutionMode::Code => 0x007A_5F00,
+        ExecutionMode::Web => 0x000F_6E7D,
+        ExecutionMode::Chat => 0x005B_4DBF,
+        ExecutionMode::Debug => 0x00A3_3B2E,
     }
 }
 
-/// Vivid mode accent used for solid badges and focus glows.
+/// Solid accents stay identical — brand is chrome, not a gradient.
 pub fn accent_strong_rgb(mode: ExecutionMode) -> u32 {
     accent_rgb(mode)
 }
@@ -101,10 +125,10 @@ pub fn accent_strong_for(mode: ExecutionMode) -> Rgba {
 #[cfg(test)]
 pub fn accent_hex(mode: ExecutionMode) -> &'static str {
     match mode {
-        ExecutionMode::Code => "#F59E0B",
-        ExecutionMode::Web => "#06B6D4",
-        ExecutionMode::Chat => "#6366F1",
-        ExecutionMode::Debug => "#F43F5E",
+        ExecutionMode::Code => "#7A5F00",
+        ExecutionMode::Web => "#0F6E7D",
+        ExecutionMode::Chat => "#5B4DBF",
+        ExecutionMode::Debug => "#A33B2E",
     }
 }
 
@@ -116,27 +140,31 @@ pub fn accent_strong_hex(mode: ExecutionMode) -> &'static str {
 // --------------------------------------------------------------- status hues
 
 pub fn success() -> Rgba {
-    rgb(0x10B981)
+    rgb(0x2F7D4F)
 }
 
 pub fn warning() -> Rgba {
-    rgb(0xF59E0B)
+    rgb(0xA65F00)
 }
 
 pub fn danger() -> Rgba {
-    rgb(0xF43F5E)
+    rgb(0xA33B2E)
+}
+
+pub fn danger_soft() -> Rgba {
+    rgb(0xF8E5E2)
 }
 
 pub fn info() -> Rgba {
-    rgb(0x6366F1)
+    rgb(0x5B4DBF)
 }
 
 pub fn purple() -> Rgba {
-    rgb(0xA78BFA)
+    rgb(0x7C5CB0)
 }
 
 pub fn cyan() -> Rgba {
-    rgb(0x06B6D4)
+    rgb(0x0F6E7D)
 }
 
 pub fn phase_color(phase: &str) -> Rgba {
@@ -190,10 +218,10 @@ pub fn wash(color: Rgba, alpha: f32) -> Hsla {
 pub const MICRO: f32 = 11.0;
 pub const BODY: f32 = 12.5;
 pub const HEADING: f32 = 14.0;
-pub const ROW: f32 = 26.0;
-pub const SIDEBAR: f32 = 250.0;
-pub const ASSISTANT: f32 = 400.0;
-pub const DRAWER: f32 = 170.0;
+pub const ROW: f32 = 28.0;
+pub const SIDEBAR: f32 = 260.0;
+pub const ASSISTANT: f32 = 430.0;
+pub const DRAWER: f32 = 200.0;
 
 static UI_FONT: OnceLock<&str> = OnceLock::new();
 static CODE_FONT: OnceLock<&str> = OnceLock::new();
@@ -232,11 +260,11 @@ pub fn file_color(name: &str) -> Rgba {
         .to_ascii_lowercase()
         .as_str()
     {
-        "rs" => rgb(0xE9A77A),
-        "toml" | "lock" => rgb(0xB4A5E8),
-        "md" => rgb(0x85B5F5),
-        "ts" | "tsx" => rgb(0x60A5FA),
-        "py" => rgb(0xF3CE70),
+        "rs" => rgb(0xB05E2E),
+        "toml" | "lock" => rgb(0x6C5BA6),
+        "md" => rgb(0x3C6E9E),
+        "ts" | "tsx" => rgb(0x2F6DB0),
+        "py" => rgb(0x8A6A00),
         "go" => cyan(),
         "js" | "jsx" | "json" => warning(),
         _ => text_secondary(),
@@ -248,32 +276,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn obsidian_tokens_are_exact() {
-        assert_eq!(sunken(), rgb(0x090A0F));
-        assert_eq!(editor(), rgb(0x0D0F17));
-        assert_eq!(elevated(), rgb(0x131620));
-        assert_eq!(elevated_alt(), rgb(0x1A1E2C));
-        assert_eq!(border(), rgb(0x1E2330));
-        assert_eq!(text_primary(), rgb(0xE4E7EF));
-        assert_eq!(text_secondary(), rgb(0xA1A9BC));
-        assert_eq!(text_muted(), rgb(0x737F98));
-        assert_eq!(diff_add_bg(), rgb(0x0D2521));
-        assert_eq!(diff_add_text(), rgb(0x10B981));
-        assert_eq!(diff_delete_bg(), rgb(0x2A1522));
-        assert_eq!(diff_delete_text(), rgb(0xF43F5E));
+    fn paper_tokens_are_exact() {
+        assert_eq!(sunken(), rgb(0xF1EADC));
+        assert_eq!(editor(), rgb(0xFAF6EC));
+        assert_eq!(elevated(), rgb(0xFFFFFF));
+        assert_eq!(elevated_alt(), rgb(0xEBE3D3));
+        assert_eq!(border(), rgb(0xE4DBCB));
+        assert_eq!(text_primary(), rgb(0x2B2620));
+        assert_eq!(text_secondary(), rgb(0x5F584C));
+        assert_eq!(text_muted(), rgb(0x746B5C));
+        assert_eq!(diff_add_bg(), rgb(0xE4F2E6));
+        assert_eq!(diff_add_text(), rgb(0x2F7D4F));
+        assert_eq!(diff_delete_bg(), rgb(0xF8E5E2));
+        assert_eq!(diff_delete_text(), rgb(0xA33B2E));
+        assert_eq!(brand(), rgb(0xFDCC02));
+        assert_eq!(brand_ink(), rgb(0x7A5F00));
     }
 
     #[test]
     fn mode_accents_match_the_workbench_palette() {
-        assert_eq!(accent_hex(ExecutionMode::Code), "#F59E0B");
-        assert_eq!(accent_hex(ExecutionMode::Web), "#06B6D4");
-        assert_eq!(accent_hex(ExecutionMode::Chat), "#6366F1");
-        assert_eq!(accent_hex(ExecutionMode::Debug), "#F43F5E");
+        assert_eq!(accent_hex(ExecutionMode::Code), "#7A5F00");
+        assert_eq!(accent_hex(ExecutionMode::Web), "#0F6E7D");
+        assert_eq!(accent_hex(ExecutionMode::Chat), "#5B4DBF");
+        assert_eq!(accent_hex(ExecutionMode::Debug), "#A33B2E");
 
-        assert_eq!(accent_strong_hex(ExecutionMode::Code), "#F59E0B");
-        assert_eq!(accent_strong_hex(ExecutionMode::Web), "#06B6D4");
-        assert_eq!(accent_strong_hex(ExecutionMode::Chat), "#6366F1");
-        assert_eq!(accent_strong_hex(ExecutionMode::Debug), "#F43F5E");
+        assert_eq!(accent_strong_hex(ExecutionMode::Code), "#7A5F00");
+        assert_eq!(accent_strong_hex(ExecutionMode::Web), "#0F6E7D");
+        assert_eq!(accent_strong_hex(ExecutionMode::Chat), "#5B4DBF");
+        assert_eq!(accent_strong_hex(ExecutionMode::Debug), "#A33B2E");
 
         for mode in ExecutionMode::ALL {
             assert_eq!(accent_for(mode), rgb(accent_rgb(mode)));

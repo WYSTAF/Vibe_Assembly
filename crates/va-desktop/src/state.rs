@@ -24,6 +24,7 @@ use va_harness::repomap::RepoMap;
 use va_harness::session::{ContextWindowConfig, NodeId, NodeKind, Session};
 
 use crate::command_palette::PaletteAction;
+use crate::design::icon::icon;
 use crate::widgets::{self, hash8};
 use crate::{theme, ui_kit};
 
@@ -47,11 +48,11 @@ impl LeftView {
         }
     }
 
-    pub fn glyph(self) -> &'static str {
+    pub fn icon(self) -> &'static str {
         match self {
-            LeftView::Files => "▤",
-            LeftView::Outline => "◇",
-            LeftView::Dag => "⑂",
+            LeftView::Files => "files",
+            LeftView::Outline => "braces",
+            LeftView::Dag => "git-branch",
         }
     }
 }
@@ -262,7 +263,7 @@ impl PaletteCommand {
             PaletteCommand::Rollback => "Rollback DAG to Last Verified".to_string(),
             PaletteCommand::ToggleLeft => "Toggle Left Dock".to_string(),
             PaletteCommand::ToggleBottom => "Toggle Bottom Drawer".to_string(),
-            PaletteCommand::ToggleAssistant => "Toggle Assistant Panel".to_string(),
+            PaletteCommand::ToggleAssistant => "Toggle Changes Panel".to_string(),
             PaletteCommand::RefreshRepoMap => "Refresh RepoMap".to_string(),
             PaletteCommand::CloseTab => "Close Active Tab".to_string(),
         }
@@ -413,7 +414,7 @@ impl WorkbenchState {
             cursor_line: 1,
             left_view: LeftView::Files,
             show_left: true,
-            show_bottom: true,
+            show_bottom: false,
             show_assistant: true,
             show_palette: false,
             palette_query: String::new(),
@@ -1655,11 +1656,7 @@ impl Workbench {
     }
 
     pub fn restore_focus(&self, window: &mut Window) {
-        window.focus(if self.state.show_assistant {
-            &self.composer_focus
-        } else {
-            &self.root_focus
-        });
+        window.focus(&self.composer_focus);
     }
 
     pub fn open_palette(
@@ -1813,14 +1810,17 @@ impl Workbench {
             });
         let search = ui_kit::button("command-search", "")
             .w(px(360.0))
-            .h(px(26.0))
+            .h(px(30.0))
             .justify_start()
+            .gap(px(8.0))
+            .px(px(10.0))
+            .rounded(px(8.0))
             .bg(theme::elevated())
             .border_1()
             .border_color(theme::border())
             .text_size(px(11.5))
             .text_color(theme::text_muted())
-            .child("⌕")
+            .child(icon("search", 14.0, theme::text_muted()))
             .child(div().flex_1().child("Search files, symbols, or commands…"))
             .child(widgets::keycap("Ctrl+P"))
             .on_click(
@@ -1834,7 +1834,7 @@ impl Workbench {
             .justify_end()
             .gap(px(4.0))
             .child(
-                ui_kit::icon_button("toggle-left", "◧", self.state.show_left).on_click(
+                ui_kit::icon_button("toggle-left", "panel-left", self.state.show_left).on_click(
                     cx.listener(|this, _, _, cx| {
                         this.state.toggle_left();
                         cx.notify();
@@ -1842,21 +1842,19 @@ impl Workbench {
                 ),
             )
             .child(
-                ui_kit::icon_button("toggle-bottom", "⊟", self.state.show_bottom).on_click(
-                    cx.listener(|this, _, _, cx| {
+                ui_kit::icon_button("toggle-bottom", "panel-bottom", self.state.show_bottom)
+                    .on_click(cx.listener(|this, _, _, cx| {
                         this.state.toggle_bottom();
                         cx.notify();
-                    }),
-                ),
+                    })),
             )
             .child(
-                ui_kit::icon_button("toggle-assistant", "◨", self.state.show_assistant).on_click(
-                    cx.listener(|this, _, window, cx| {
+                ui_kit::icon_button("toggle-assistant", "panel-right", self.state.show_assistant)
+                    .on_click(cx.listener(|this, _, window, cx| {
                         this.state.toggle_assistant();
                         this.restore_focus(window);
                         cx.notify();
-                    }),
-                ),
+                    })),
             )
             .child(
                 ui_kit::button(
@@ -1876,7 +1874,7 @@ impl Workbench {
                 })),
             )
             .when(self.state.error.is_some(), |this| {
-                this.child(div().text_color(theme::warning()).child("!"))
+                this.child(icon("triangle-alert", 14.0, theme::warning()))
             })
             .child(
                 div()
@@ -1889,7 +1887,7 @@ impl Workbench {
                     .justify_center()
                     .text_color(theme::text_muted())
                     .hover(|style| style.bg(theme::elevated_alt()))
-                    .child("−"),
+                    .child(icon("minus", 14.0, theme::text_muted())),
             )
             .child(
                 div()
@@ -1902,7 +1900,7 @@ impl Workbench {
                     .justify_center()
                     .text_color(theme::text_muted())
                     .hover(|style| style.bg(theme::elevated_alt()))
-                    .child("□"),
+                    .child(icon("square", 12.0, theme::text_muted())),
             )
             .child(
                 div()
@@ -1914,20 +1912,16 @@ impl Workbench {
                     .items_center()
                     .justify_center()
                     .text_color(theme::text_muted())
-                    .hover(|style| {
-                        style
-                            .bg(theme::wash(theme::danger(), 0.18))
-                            .text_color(theme::danger())
-                    })
-                    .child("×"),
+                    .hover(|style| style.bg(theme::danger_soft()).text_color(theme::danger()))
+                    .child(icon("x", 15.0, theme::text_muted())),
             );
         div()
-            .h(px(36.0))
+            .h(px(44.0))
             .flex_shrink_0()
             .flex()
             .items_center()
             .gap(px(12.0))
-            .px(px(12.0))
+            .px(px(14.0))
             .bg(theme::sunken())
             .border_b_1()
             .border_color(theme::border())
@@ -1938,12 +1932,12 @@ impl Workbench {
 
     fn render_status_bar(&self, accent: gpui::Rgba, cx: &mut Context<Self>) -> gpui::Div {
         div()
-            .h(px(26.0))
+            .h(px(30.0))
             .flex_shrink_0()
             .flex()
             .items_center()
             .gap(px(14.0))
-            .px(px(12.0))
+            .px(px(16.0))
             .bg(theme::sunken())
             .border_t_1()
             .border_color(theme::border())
@@ -1953,7 +1947,14 @@ impl Workbench {
                 self.state.mode.short_label(),
                 accent,
             ))
-            .child(format!("⑂ {}", self.state.git_branch))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(5.0))
+                    .child(icon("git-branch", 13.0, theme::text_muted()))
+                    .child(self.state.git_branch.clone()),
+            )
             .child(format!("{} problems", self.state.diagnostics.len()))
             .child(
                 div()
@@ -1965,15 +1966,24 @@ impl Workbench {
             .child(format!("Ln {}", self.state.cursor_line))
             .child(self.state.language_label())
             .child(
-                ui_kit::button(
-                    "status-inspector",
-                    format!("{}% context  ⓘ", self.state.context_pct),
-                )
-                .text_size(px(theme::MICRO))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.state.show_inspector = !this.state.show_inspector;
-                    cx.notify();
-                })),
+                div()
+                    .id("status-inspector")
+                    .flex()
+                    .items_center()
+                    .gap(px(5.0))
+                    .h(px(24.0))
+                    .px(px(7.0))
+                    .rounded(px(6.0))
+                    .cursor_pointer()
+                    .text_size(px(theme::MICRO))
+                    .text_color(theme::text_muted())
+                    .hover(|style| style.bg(theme::elevated_alt()))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.state.show_inspector = !this.state.show_inspector;
+                        cx.notify();
+                    }))
+                    .child(format!("{}% context", self.state.context_pct))
+                    .child(icon("info", 13.0, theme::text_muted())),
             )
     }
 
@@ -1981,17 +1991,18 @@ impl Workbench {
         let state = &self.state;
         let mut panel = div()
             .absolute()
-            .right(px(12.0))
-            .bottom(px(36.0))
-            .w(px(380.0))
-            .p(px(16.0))
+            .right(px(14.0))
+            .bottom(px(40.0))
+            .w(px(400.0))
+            .p(px(18.0))
             .flex()
             .flex_col()
-            .gap(px(10.0))
-            .rounded(px(10.0))
+            .gap(px(12.0))
+            .rounded(px(14.0))
             .bg(theme::elevated())
             .border_1()
             .border_color(theme::border_strong())
+            .shadow(widgets::lifted_shadow())
             .text_size(px(theme::BODY))
             .text_color(theme::text_secondary())
             .child(
@@ -2000,7 +2011,7 @@ impl Workbench {
                     .items_center()
                     .justify_between()
                     .child(widgets::section_label("Workspace details"))
-                    .child(ui_kit::icon_button("inspector-close", "×", false).on_click(
+                    .child(ui_kit::icon_button("inspector-close", "x", false).on_click(
                         cx.listener(|this, _, _, cx| {
                             this.state.show_inspector = false;
                             cx.notify();
@@ -2083,20 +2094,27 @@ impl Render for Workbench {
             .min_h_0()
             .flex()
             .flex_col()
-            .child(crate::editor_pane::render(self, accent, accent_strong, cx))
+            .child(crate::assistant_panel::render(
+                self,
+                accent,
+                accent_strong,
+                composer_focused,
+                cx,
+            ))
             .when(self.state.show_bottom, |this| {
                 this.child(crate::bottom_drawer::render(self, accent, cx))
             });
-        let assistant = self.state.show_assistant.then(|| {
-            crate::assistant_panel::render(self, accent, accent_strong, composer_focused, cx)
-        });
+        let changes = self
+            .state
+            .show_assistant
+            .then(|| crate::editor_pane::render(self, accent, accent_strong, cx));
         let body = div()
             .flex_1()
             .min_h_0()
             .flex()
             .when_some(left, |this, left| this.child(left))
             .child(center)
-            .when_some(assistant, |this, assistant| this.child(assistant));
+            .when_some(changes, |this, changes| this.child(changes));
         let status = self.render_status_bar(accent, cx);
 
         div()
@@ -2431,11 +2449,11 @@ mod tests {
 
         state.cycle_mode();
         assert_eq!(state.mode, ExecutionMode::Web);
-        assert_eq!(theme::accent_hex(state.mode), "#06B6D4");
+        assert_eq!(theme::accent_hex(state.mode), "#0F6E7D");
 
         state.cycle_mode();
         assert_eq!(state.mode, ExecutionMode::Chat);
-        assert_eq!(theme::accent_hex(state.mode), "#6366F1");
+        assert_eq!(theme::accent_hex(state.mode), "#5B4DBF");
         assert!(!state.mode.allows_writes());
 
         state.prompt_input = "Review the block".to_string();
@@ -2450,10 +2468,10 @@ mod tests {
 
         state.cycle_mode();
         assert_eq!(state.mode, ExecutionMode::Debug);
-        assert_eq!(theme::accent_hex(state.mode), "#F43F5E");
+        assert_eq!(theme::accent_hex(state.mode), "#A33B2E");
         state.cycle_mode();
         assert_eq!(state.mode, ExecutionMode::Code);
-        assert_eq!(theme::accent_hex(state.mode), "#F59E0B");
+        assert_eq!(theme::accent_hex(state.mode), "#7A5F00");
 
         drop(state);
         let _ = fs::remove_dir_all(dir);
@@ -2496,7 +2514,7 @@ mod tests {
         state.toggle_left();
         assert!(!state.show_left);
         state.toggle_bottom();
-        assert!(!state.show_bottom);
+        assert!(state.show_bottom);
         state.toggle_assistant();
         assert!(!state.show_assistant);
 
@@ -2511,7 +2529,7 @@ mod tests {
         assert_eq!(state.language, LanguageLens::Python);
 
         state.execute_palette(PaletteCommand::ToggleBottom);
-        assert!(state.show_bottom);
+        assert!(!state.show_bottom);
         state.set_bottom_tab(BottomTab::Harness);
         assert_eq!(state.bottom_tab, BottomTab::Harness);
 
