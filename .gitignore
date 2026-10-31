@@ -29,5 +29,7 @@ Thumbs.db
 # study material, not part of the product.
 /references/upstream/
 /references/*.zip
+# Pixel captures from the QA pass are local evidence, not product assets.
+/captures-audit/
 *.tmp
 *.bak

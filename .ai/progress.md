@@ -18,6 +18,10 @@
   full-bleed drawer under a solid frosted nav with a 24px gutter, circular
   context indicator, manual-only pinning, post-animation thread anchoring,
   Explorer-style attachment cards, and a seam-free composer stack.
+- **v2.4.0 (2026-10-31):** Liquid Glass command search (titlebar and `Ctrl+K`),
+  theme choice persisted across launches, full-height drawer sections, card
+  text clear of the floating nav capsule so trailing stats and links stay
+  usable, and compact-layout regression coverage in both themes.
 - Scope: real HTTP live planner, four execution modes with dynamic accents,
   language lens, auto-compaction at 75%, think-trace eviction, pinned working
   set, repeated-anchor rejection, spin-loop breaker, durable EXPERIENCE.md,
@@ -49,5 +53,5 @@
 
 - `cargo fmt --all -- --check` - clean
 - `cargo clippy --workspace --all-targets -- -D warnings` - clean
-- `cargo test --workspace` - 200 passed, 0 failed
+- `cargo test --workspace` - 204 passed, 0 failed
 - `cargo build --release` - both binaries produced

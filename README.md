@@ -4,14 +4,14 @@
 
 # Vibe Assembly
 
-**v2.3.0 - a production-hardened, pure-Rust multi-agent coding workspace with a native Liquid Glass workbench that switches between night and warm day themes.**
+**v2.4.0 - a production-hardened, pure-Rust multi-agent coding workspace with a native Liquid Glass workbench that persists night and warm day themes, searches everything from the titlebar, and fits its edge drawer to the window.**
 
 Vibe Assembly lets small, focused agents build and maintain large software
 projects without exhausting a single chat context. Roles communicate through a
 regulated `.ai/` contract, and every edit passes through a deterministic,
 hash-anchored execution harness.
 
-**Current status:** 200 tests passing, clippy clean with `-D warnings`, both
+**Current status:** 204 tests passing, clippy clean with `-D warnings`, both
 release binaries build. There is no browser runtime, webview, or Node/npm
 toolchain.
 
@@ -37,11 +37,12 @@ size" - and tickets are small by design.
 | Chat | `#3B82F6` blue | **no** | Read-only architecture, explanation, and planning |
 | Debug | `#EF4444` red | yes | Compiler diagnostics, root-cause analysis, security audit |
 
-The native desktop workbench uses Zed One Dark surfaces: `#181A1F` sunken
-chrome, `#21252B` editor, `#282C34` / `#2C313A` elevated rows and borders, and
-`#DCDFE4` / `#ABB2BF` / `#5C6370` text. The active mode accent is carried
-through the titlebar, activity strip, editor, composer, and status bar. The TUI
-and desktop also expose a live context meter.
+The default desktop surface is Liquid Glass: a near-black night canvas or a
+warm paper day canvas, a chat rail, a centered model pill, a glass ask bar, and
+a right-edge nav whose hover opens the Session, Changes, Editor, and History
+drawer. A bare `vibe-assembly-desktop` launch opens it; `--workbench` (or a
+repository path) opens the six-zone Paper & Ink editor workbench. The TUI and
+both desktop surfaces also expose a live context meter.
 
 ### Planner roles
 
@@ -117,17 +118,38 @@ vibe-assembly run --live --auto-combo --tournament
 # Deterministic offline smoke run (never calls the router)
 vibe-assembly run --offline-mock
 
-# Native desktop Zed-style workbench
-cargo run -p va-desktop -- --root . --mode web --lang ts
+# Default Liquid Glass desktop
+cargo run -p va-desktop
+
+# Paper & Ink editor workbench for a workspace
+cargo run -p va-desktop -- --workbench --root . --mode web --lang ts
 ```
 
 `init` and `run --auto-combo` auto-seed `.ai/model_combo.txt` when it is absent.
 The file is gitignored because it is machine-local configuration.
 
-### Desktop workbench
+### Liquid Glass surface (default)
 
-`va-desktop` is a native GPUI 0.2.2 workbench, not a card dashboard. Its six
-zones are:
+A bare `vibe-assembly-desktop` launch opens the Liquid Glass surface. It is a
+conversation-first canvas: a chat rail, a centered model pill, a glass ask bar
+with Explorer-style attachment cards, and a floating right-edge nav that opens
+the Session, Changes, Editor, and History drawer on hover. Opening a section
+never pins it; only the drawer header's Pin chip (or its keyboard handler)
+keeps it open. The drawer runs to the bottom of the window and card text stops
+clear of the nav capsule, so counts, chevrons, and inline links stay readable
+and clickable. The circular 52px context indicator refills on hover.
+
+The titlebar sun/moon toggle rewrites the palette across the canvas, panes,
+drawer, composer, nav, and shadows. The choice is stored in
+`%APPDATA%\Vibe Assembly\preferences.conf` and restored on the next launch.
+`Ctrl+K` or the titlebar field opens instant search across chats, files,
+panels, and commands: arrow keys navigate, Enter opens, Esc clears then closes,
+and clicking outside dismisses the sheet.
+
+### Paper & Ink editor workbench
+
+Pass `--workbench` (or a repository path) for the six-zone editor workbench,
+built on the same native GPUI stack. Its six zones are:
 
 - a 32px titlebar with workspace breadcrumbs, symbol, block hash, router state,
   dock toggles, command-palette button, and native window controls;
@@ -328,13 +350,14 @@ cargo test --workspace
 cargo build --release
 ```
 
-Current workspace: **200 tests passing**, clippy clean, both release binaries
+Current workspace: **204 tests passing**, clippy clean, both release binaries
 built. The live HTTP planner is tested against a local mock OpenAI-compatible
 TCP server; unit tests cover compaction, think-trace eviction, observation
 slicing, repeated anchors, read-only enforcement, stagnation escalation,
 language detection, `EXPERIENCE.md` round-tripping, and the desktop workbench
 (real block hashes, mode/language/model cycling, read-only Chat, dock toggles,
-and composer submission).
+composer submission, persisted theme preferences, search filtering/ranking, and
+drawer reveal math).
 
 ## Troubleshooting
 

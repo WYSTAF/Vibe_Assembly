@@ -1,12 +1,13 @@
 # Current Operational State
 
-- **Active Milestone:** v2.3.0 Liquid Glass day/night polish
-- **Release:** v2.3.0 - the Liquid Glass workbench ships with a night/day theme
-  toggle, a full-bleed edge drawer under the floating nav, a circular context
-  indicator, manual-only pinning, and attachment cards; the Paper & Ink editor
-  workbench opens with `--workbench` or a repo path, and the remaining design
-  samples stay behind `--design-preview*` flags.
-- **Current Assignment:** Complete - Liquid Glass polish pass shipped.
+- **Active Milestone:** v2.4.0 Liquid Glass search, persisted themes, and drawer fit
+- **Release:** v2.4.0 - the Liquid Glass workbench gains instant command search
+  from the titlebar or `Ctrl+K`, persists the night/day choice across launches,
+  and fills every drawer section to the window height with card text clear of
+  the floating nav capsule; the Paper & Ink editor workbench opens with
+  `--workbench` or a repo path, and the remaining design samples stay behind
+  `--design-preview*` flags.
+- **Current Assignment:** Complete - v2.4.0 shipped.
 - **Planning Status:** Complete.
 - **Implementation Status:**
   - `va-core`: parser, single-writer task lock, allocator, model knowledge,
@@ -26,13 +27,16 @@
     `reset`, `up`, `repomap`, `diagnose`, `run`, `prompt`, `chat`, `tui`/`top`,
     `profile`, `session`, `mcp`, `patch`, `blocks`, `fork`, `rollback`, and
     `compact`. `init` and `run --auto-combo` auto-seed `.ai/model_combo.txt`.
-  - `va-desktop`: native GPUI 0.2.2 Paper & Ink workbench (ADR-019 layout,
-    retokenized) with a conversation-first canvas, real
+  - `va-desktop`: native GPUI 0.2.2 Liquid Glass default surface (persisted
+    night/day palettes, hover nav with pinned Session/Changes/Editor/History
+    drawer, fit-to-height sections, nav-clear card text, real command search,
+    circular context ring, attachment cards) plus the retokenized Paper & Ink
+    workbench (ADR-019 layout) with real
     RepoMap/session-DAG/diagnostics/harness data, an 8-character block-hash
     editor and git diff view, an interactive assistant composer, a floating
     command palette, a real context-window meter, a shared native `ui_kit`,
     embedded brand/Windows icon assets, and preview-only design samples.
-- **Verification Status:** 200 tests passing, 0 failed; clippy clean with
+- **Verification Status:** 204 tests passing, 0 failed; clippy clean with
   `-D warnings`; formatting clean; release build produced both binaries.
 - **Resume Anchor:** n/a - wave verified and complete.
 - **Blockers:** None.
