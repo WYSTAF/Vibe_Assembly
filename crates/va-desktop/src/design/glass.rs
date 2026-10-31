@@ -25,17 +25,58 @@ use crate::theme;
 
 // ------------------------------------------------------------------ palette
 
+// One window runs one sample, and the palette is read during render, so a
+// theme flip only needs a notify. Night is the shipped default.
+static DAY_MODE: AtomicBool = AtomicBool::new(false);
+
+fn day() -> bool {
+    DAY_MODE.load(Ordering::Relaxed)
+}
+
+fn veil(base: u32, alpha: u8) -> Rgba {
+    rgba((base << 8) | alpha as u32)
+}
+
+/// Hairlines and washes: white on night, warm ink on paper.
+fn tint(alpha: u8) -> Rgba {
+    if day() {
+        veil(0x2B2200, alpha)
+    } else {
+        veil(0xFFFFFF, alpha)
+    }
+}
+
 fn ink() -> Rgba {
-    rgb(0xF4F1E8)
+    if day() {
+        rgb(0x241F17)
+    } else {
+        rgb(0xF4F1E8)
+    }
 }
 fn ink_soft() -> Rgba {
-    rgb(0xC8C3B6)
+    if day() {
+        rgb(0x524B3E)
+    } else {
+        rgb(0xC8C3B6)
+    }
 }
 fn ink_muted() -> Rgba {
-    rgb(0x9A9588)
+    if day() {
+        rgb(0x837B6B)
+    } else {
+        rgb(0x9A9588)
+    }
 }
 fn brand() -> Rgba {
     rgb(0xFDCC02)
+}
+// Brand yellow is unreadable on paper; links and small labels deepen to gold.
+fn brand_text() -> Rgba {
+    if day() {
+        rgb(0x7A6200)
+    } else {
+        brand()
+    }
 }
 fn brand_hover() -> Rgba {
     rgb(0xFFD83D)
@@ -47,123 +88,292 @@ fn brand_ink() -> Rgba {
     rgb(0x2B2200)
 }
 fn brand_tint() -> Rgba {
-    rgba(0xFDCC0229)
+    rgba(0xFDCC0224)
 }
 fn brand_line() -> Rgba {
     rgba(0xFDCC0259)
 }
 fn success() -> Rgba {
-    rgb(0x4ADE80)
+    if day() {
+        rgb(0x21854A)
+    } else {
+        rgb(0x4ADE80)
+    }
 }
 fn success_tint() -> Rgba {
-    rgba(0x4ADE8024)
+    if day() {
+        rgba(0x21854A24)
+    } else {
+        rgba(0x4ADE8024)
+    }
 }
 fn warning() -> Rgba {
-    rgb(0xF5B301)
+    if day() {
+        rgb(0xB07A00)
+    } else {
+        rgb(0xF5B301)
+    }
 }
 fn warning_tint() -> Rgba {
-    rgba(0xF5B30126)
+    if day() {
+        rgba(0xB07A0026)
+    } else {
+        rgba(0xF5B30126)
+    }
 }
 fn danger() -> Rgba {
-    rgb(0xFB7185)
+    if day() {
+        rgb(0xC23A52)
+    } else {
+        rgb(0xFB7185)
+    }
 }
 fn danger_tint() -> Rgba {
-    rgba(0xFB718526)
+    if day() {
+        rgba(0xC23A5226)
+    } else {
+        rgba(0xFB718526)
+    }
 }
 fn hover_wash() -> Rgba {
-    rgba(0xFFFFFF10)
+    tint(if day() { 0x12 } else { 0x10 })
 }
 fn press_wash() -> Rgba {
-    rgba(0xFFFFFF1F)
+    tint(0x1F)
 }
 
 // Panels are solid; glass is a deliberate accent, not the default surface.
 fn panel_fill() -> Background {
-    linear_gradient(
-        180.0,
-        linear_color_stop(rgb(0x141416), 0.0),
-        linear_color_stop(rgb(0x0C0C0E), 1.0),
-    )
+    if day() {
+        linear_gradient(
+            180.0,
+            linear_color_stop(rgb(0xFCFAF5), 0.0),
+            linear_color_stop(rgb(0xF2EDE3), 1.0),
+        )
+    } else {
+        linear_gradient(
+            180.0,
+            linear_color_stop(rgb(0x141416), 0.0),
+            linear_color_stop(rgb(0x0C0C0E), 1.0),
+        )
+    }
 }
 fn panel_border() -> Rgba {
-    rgba(0xFFFFFF17)
+    tint(0x17)
 }
 fn panel_border_soft() -> Rgba {
-    rgba(0xFFFFFF0D)
+    tint(0x0D)
 }
 fn card_fill() -> Rgba {
-    rgba(0xFFFFFF08)
+    if day() {
+        rgba(0xFFFFFFC0)
+    } else {
+        rgba(0xFFFFFF08)
+    }
 }
 fn well() -> Rgba {
-    rgb(0x08080A)
+    if day() {
+        rgb(0xEDE7DB)
+    } else {
+        rgb(0x08080A)
+    }
 }
 
 fn glass_fill() -> Background {
-    linear_gradient(
-        180.0,
-        linear_color_stop(rgba(0xFFFFFF18), 0.0),
-        linear_color_stop(rgba(0xFFFFFF08), 1.0),
-    )
+    if day() {
+        linear_gradient(
+            180.0,
+            linear_color_stop(rgba(0xFFFFFFB8), 0.0),
+            linear_color_stop(rgba(0xFFFFFF80), 1.0),
+        )
+    } else {
+        linear_gradient(
+            180.0,
+            linear_color_stop(rgba(0xFFFFFF18), 0.0),
+            linear_color_stop(rgba(0xFFFFFF08), 1.0),
+        )
+    }
 }
 
 fn glass_fill_strong() -> Background {
-    linear_gradient(
-        180.0,
-        linear_color_stop(rgba(0xFFFFFF26), 0.0),
-        linear_color_stop(rgba(0xFFFFFF0F), 1.0),
-    )
+    if day() {
+        linear_gradient(
+            180.0,
+            linear_color_stop(rgba(0xFFFFFFE6), 0.0),
+            linear_color_stop(rgba(0xFFFFFFC8), 1.0),
+        )
+    } else {
+        linear_gradient(
+            180.0,
+            linear_color_stop(rgba(0xFFFFFF26), 0.0),
+            linear_color_stop(rgba(0xFFFFFF0F), 1.0),
+        )
+    }
 }
 
 fn nav_fill() -> Background {
-    linear_gradient(
-        180.0,
-        linear_color_stop(rgba(0xFFFFFF40), 0.0),
-        linear_color_stop(rgba(0xFFFFFF14), 1.0),
-    )
+    // The nav floats over open drawer cards, so it frosts them almost solid —
+    // no diff numbers bleeding through the capsule.
+    if day() {
+        linear_gradient(
+            180.0,
+            linear_color_stop(rgba(0xFFFFFFF7), 0.0),
+            linear_color_stop(rgba(0xF6F1E8F0), 1.0),
+        )
+    } else {
+        linear_gradient(
+            180.0,
+            linear_color_stop(rgba(0x2C2C30F2), 0.0),
+            linear_color_stop(rgba(0x17171AF7), 1.0),
+        )
+    }
 }
 fn glass_border() -> Rgba {
-    rgba(0xFFFFFF3D)
+    if day() {
+        tint(0x24)
+    } else {
+        rgba(0xFFFFFF3D)
+    }
+}
+fn nav_border() -> Rgba {
+    if day() {
+        tint(0x26)
+    } else {
+        rgba(0xFFFFFF4D)
+    }
 }
 
 // The drawer floats over chat content, and GPUI 0.2.2 cannot blur what is
 // behind it — so it stays effectively opaque, glass only at its edges.
 fn drawer_fill() -> Background {
-    linear_gradient(
-        180.0,
-        linear_color_stop(rgb(0x17171A), 0.0),
-        linear_color_stop(rgb(0x0E0E10), 1.0),
-    )
+    if day() {
+        linear_gradient(
+            180.0,
+            linear_color_stop(rgb(0xFDFAF4), 0.0),
+            linear_color_stop(rgb(0xF2EDE3), 1.0),
+        )
+    } else {
+        linear_gradient(
+            180.0,
+            linear_color_stop(rgb(0x17171A), 0.0),
+            linear_color_stop(rgb(0x0E0E10), 1.0),
+        )
+    }
 }
 
 // Same constraint for the search sheet: mostly frosted, never see-through
 // enough to read the chat beneath it.
 fn sheet_fill() -> Background {
-    linear_gradient(
-        180.0,
-        linear_color_stop(rgba(0x2A2A2EF0), 0.0),
-        linear_color_stop(rgba(0x131316FA), 1.0),
-    )
+    if day() {
+        linear_gradient(
+            180.0,
+            linear_color_stop(rgba(0xFDFBF6F7), 0.0),
+            linear_color_stop(rgba(0xF0EBE1FA), 1.0),
+        )
+    } else {
+        linear_gradient(
+            180.0,
+            linear_color_stop(rgba(0x2A2A2EF0), 0.0),
+            linear_color_stop(rgba(0x131316FA), 1.0),
+        )
+    }
+}
+
+fn panel_top_fade(alpha: u8) -> Rgba {
+    veil(if day() { 0xFCFAF5 } else { 0x141416 }, alpha)
+}
+fn drawer_top_fade(alpha: u8) -> Rgba {
+    veil(if day() { 0xFDFAF4 } else { 0x17171A }, alpha)
+}
+fn drawer_bottom_fade(alpha: u8) -> Rgba {
+    veil(if day() { 0xF2EDE3 } else { 0x0E0E10 }, alpha)
+}
+fn sheet_scrim() -> Rgba {
+    if day() {
+        rgba(0x3A332680)
+    } else {
+        rgba(0x050505A6)
+    }
+}
+fn raised() -> Rgba {
+    if day() {
+        rgb(0xFFFFFF)
+    } else {
+        rgb(0x1B1B1D)
+    }
+}
+fn work_surface() -> Rgba {
+    if day() {
+        rgb(0xFFFDF8)
+    } else {
+        rgb(0x18181A)
+    }
+}
+fn bubble() -> Rgba {
+    if day() {
+        rgb(0xFFFFFF)
+    } else {
+        rgb(0x1E1E20)
+    }
+}
+fn tile_fill() -> Rgba {
+    if day() {
+        rgb(0xFFFFFF)
+    } else {
+        rgb(0x151517)
+    }
+}
+fn status_fill() -> Rgba {
+    if day() {
+        rgba(0xF4EFE6E6)
+    } else {
+        rgba(0x040404D9)
+    }
 }
 
 // ------------------------------------------------------------------- syntax
 
 fn syn_keyword() -> Rgba {
-    rgb(0xD8CBAF)
+    if day() {
+        rgb(0x8A6414)
+    } else {
+        rgb(0xD8CBAF)
+    }
 }
 fn syn_call() -> Rgba {
-    rgb(0xAFC4CC)
+    if day() {
+        rgb(0x2F6D86)
+    } else {
+        rgb(0xAFC4CC)
+    }
 }
 fn syn_type() -> Rgba {
-    rgb(0xABC2AC)
+    if day() {
+        rgb(0x3F7A55)
+    } else {
+        rgb(0xABC2AC)
+    }
 }
 fn syn_number() -> Rgba {
-    rgb(0xD8B67C)
+    if day() {
+        rgb(0x9A6414)
+    } else {
+        rgb(0xD8B67C)
+    }
 }
 fn syn_comment() -> Rgba {
-    rgb(0x7C786E)
+    if day() {
+        rgb(0x8C8577)
+    } else {
+        rgb(0x7C786E)
+    }
 }
 fn punct() -> Rgba {
-    rgb(0xA5A096)
+    if day() {
+        rgb(0x6E685C)
+    } else {
+        rgb(0xA5A096)
+    }
 }
 
 fn kw(text: &'static str) -> (&'static str, Rgba) {
@@ -193,20 +403,24 @@ const TITLEBAR: f32 = 56.0;
 const STATUS: f32 = 30.0;
 const NAV_ITEM: f32 = 40.0;
 const NAV_W: f32 = 56.0;
-const DRAWER_W: f32 = 340.0;
-const DRAWER_GAP: f32 = 10.0;
-// The nav floats over the drawer's right edge, so the panel owns that strip
-// and its content keeps the old 316px width.
-const DRAWER_OUTER: f32 = NAV_W + DRAWER_GAP + DRAWER_W;
-const DRAWER_PAD_R: f32 = DRAWER_GAP + NAV_W + 12.0;
+// The drawer floats 12px off the window edge and its cards run the full
+// width; the nav rides on top of them with its own margin from the edge.
+const EDGE_INSET: f32 = 12.0;
+const NAV_INSET: f32 = 12.0;
+const DRAWER_W: f32 = 408.0;
 const CHAT_ROW: f32 = 44.0;
 const CONTEXT_TICKS: usize = 48;
-const CONTEXT_RING: f32 = 46.0;
-const CONTEXT_CAPSULE_H: f32 = 62.0;
+const CONTEXT_SIZE: f32 = 52.0;
+const CONTEXT_RING: f32 = 42.0;
 
 fn soft_shadow() -> Vec<BoxShadow> {
     vec![BoxShadow {
-        color: rgba(0x00000059).into(),
+        color: if day() {
+            rgba(0x3A332614)
+        } else {
+            rgba(0x00000059)
+        }
+        .into(),
         offset: point(px(0.0), px(8.0)),
         blur_radius: px(22.0),
         spread_radius: px(0.0),
@@ -215,7 +429,12 @@ fn soft_shadow() -> Vec<BoxShadow> {
 
 fn panel_shadow() -> Vec<BoxShadow> {
     vec![BoxShadow {
-        color: rgba(0x00000099).into(),
+        color: if day() {
+            rgba(0x3A332621)
+        } else {
+            rgba(0x00000099)
+        }
+        .into(),
         offset: point(px(0.0), px(18.0)),
         blur_radius: px(44.0),
         spread_radius: px(0.0),
@@ -223,15 +442,20 @@ fn panel_shadow() -> Vec<BoxShadow> {
 }
 
 fn glass_shadow() -> Vec<BoxShadow> {
+    let (deep, close) = if day() {
+        (rgba(0x3A33261F), rgba(0x3A33260F))
+    } else {
+        (rgba(0x000000B3), rgba(0x0000004D))
+    };
     vec![
         BoxShadow {
-            color: rgba(0x000000B3).into(),
+            color: deep.into(),
             offset: point(px(0.0), px(12.0)),
             blur_radius: px(30.0),
             spread_radius: px(0.0),
         },
         BoxShadow {
-            color: rgba(0x0000004D).into(),
+            color: close.into(),
             offset: point(px(0.0), px(2.0)),
             blur_radius: px(8.0),
             spread_radius: px(0.0),
@@ -241,7 +465,12 @@ fn glass_shadow() -> Vec<BoxShadow> {
 
 fn lifted_shadow() -> Vec<BoxShadow> {
     vec![BoxShadow {
-        color: rgba(0x000000A6).into(),
+        color: if day() {
+            rgba(0x3A33261F)
+        } else {
+            rgba(0x000000A6)
+        }
+        .into(),
         offset: point(px(0.0), px(14.0)),
         blur_radius: px(34.0),
         spread_radius: px(0.0),
@@ -306,7 +535,12 @@ fn motion(ms: u64) -> Duration {
 // a focused-but-off chip never reads as active.
 fn focus_ring_neutral(style: StyleRefinement) -> StyleRefinement {
     style.shadow(vec![BoxShadow {
-        color: rgba(0xF4F1E899).into(),
+        color: if day() {
+            rgba(0x241F1766)
+        } else {
+            rgba(0xF4F1E899)
+        }
+        .into(),
         offset: point(px(0.0), px(0.0)),
         blur_radius: px(0.0),
         spread_radius: px(2.0),
@@ -324,9 +558,9 @@ impl Render for HintView {
             .px(px(9.0))
             .py(px(5.0))
             .rounded(px(7.0))
-            .bg(rgb(0x1B1B1E))
+            .bg(raised())
             .border_1()
-            .border_color(rgba(0xFFFFFF24))
+            .border_color(tint(0x24))
             .shadow(soft_shadow())
             .text_size(px(11.0))
             .line_height(px(15.0))
@@ -379,10 +613,10 @@ impl DrawerSection {
 
     fn tooltip(self) -> &'static str {
         match self {
-            Self::Session => "Session — click to pin",
-            Self::Changes => "Changes — click to pin",
-            Self::Editor => "Editor — click to pin",
-            Self::History => "History — click to pin",
+            Self::Session => "Session — Pin keeps it open",
+            Self::Changes => "Changes — Pin keeps it open",
+            Self::Editor => "Editor — Pin keeps it open",
+            Self::History => "History — Pin keeps it open",
         }
     }
 
@@ -408,6 +642,7 @@ impl DrawerSection {
 
 pub struct GlassPreview {
     mode: ExecutionMode,
+    day: bool,
     nav_open: bool,
     nav_epoch: usize,
     nav_pinned: bool,
@@ -422,16 +657,19 @@ pub struct GlassPreview {
     nav_focus: FocusHandle,
     search_focus: FocusHandle,
     thread_scroll: ScrollHandle,
+    thread_settled: bool,
 }
 
 impl GlassPreview {
     pub fn new(mode: ExecutionMode, cx: &mut Context<Self>) -> Self {
         REDUCE_MOTION.store(prefers_reduced_motion(), Ordering::Relaxed);
+        // A fresh preview window always starts on the shipped night surface.
+        DAY_MODE.store(false, Ordering::Relaxed);
         // Chats open on the latest turn, not the oldest.
         let thread_scroll = ScrollHandle::new();
-        thread_scroll.scroll_to_bottom();
         Self {
             mode,
+            day: false,
             nav_open: false,
             nav_epoch: 0,
             nav_pinned: false,
@@ -446,18 +684,38 @@ impl GlassPreview {
             nav_focus: cx.focus_handle(),
             search_focus: cx.focus_handle(),
             thread_scroll,
+            thread_settled: false,
         }
     }
 
-    fn open_section(&mut self, section: DrawerSection) {
+    fn set_nav_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        if self.nav_open == open {
+            return;
+        }
+        self.nav_open = open;
+        self.nav_epoch += 1;
+        // The drawer pushes the thread, so re-anchor it to the latest turn —
+        // once now, and once when the 320ms reveal finishes reflowing.
+        self.thread_settled = false;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(380))
+                .await;
+            this.update(cx, |this, cx| {
+                this.thread_settled = false;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn open_section(&mut self, section: DrawerSection, cx: &mut Context<Self>) {
         if self.section != section {
             self.section = section;
             self.section_epoch += 1;
         }
-        if !self.nav_open {
-            self.nav_open = true;
-            self.nav_epoch += 1;
-        }
+        self.set_nav_open(true, cx);
         self.nav_hovered = true;
     }
 
@@ -490,24 +748,18 @@ impl GlassPreview {
         }
     }
 
-    fn set_pinned(&mut self, pinned: bool) {
+    fn set_pinned(&mut self, pinned: bool, cx: &mut Context<Self>) {
         if self.nav_pinned == pinned {
             return;
         }
         self.nav_pinned = pinned;
         let open = pinned || self.nav_hovered;
-        if self.nav_open != open {
-            self.nav_open = open;
-            self.nav_epoch += 1;
-        }
+        self.set_nav_open(open, cx);
     }
 
-    fn close_nav(&mut self) {
+    fn close_nav(&mut self, cx: &mut Context<Self>) {
         self.nav_pinned = false;
-        if self.nav_open {
-            self.nav_open = false;
-            self.nav_epoch += 1;
-        }
+        self.set_nav_open(false, cx);
     }
 
     fn toggle_tokens(&mut self) {
@@ -517,11 +769,18 @@ impl GlassPreview {
     fn toggle_warnings(&mut self) {
         self.show_warnings = !self.show_warnings;
     }
+
+    fn toggle_theme(&mut self, cx: &mut Context<Self>) {
+        self.day = !self.day;
+        DAY_MODE.store(self.day, Ordering::Relaxed);
+        cx.notify();
+    }
 }
 
 impl Render for GlassPreview {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mode = self.mode;
+        let day = self.day;
         let nav_open = self.nav_open;
         let nav_epoch = self.nav_epoch;
         let nav_pinned = self.nav_pinned;
@@ -535,13 +794,16 @@ impl Render for GlassPreview {
         let nav_focus = self.nav_focus.clone();
         let search_focus = self.search_focus.clone();
         let thread_scroll = self.thread_scroll.clone();
+        if !self.thread_settled {
+            // The composer's attachment row reserves height in the same layout
+            // that first measures the thread, so pin the latest turn from here
+            // rather than from `new`, where the thread has not been sized yet.
+            self.thread_scroll.scroll_to_bottom();
+            self.thread_settled = true;
+        }
         // The nav floats over the thread now, so a closed drawer reserves
         // nothing; below ~600 the header drops the redundant file chip and Auto.
-        let reserve = if nav_open {
-            DRAWER_OUTER + DRAWER_GAP
-        } else {
-            0.0
-        };
+        let reserve = if nav_open { DRAWER_W + EDGE_INSET } else { 0.0 };
         let thread_w = window.viewport_size().width - px(304.0 + reserve);
         let compact = thread_w < px(600.0);
         div()
@@ -553,7 +815,7 @@ impl Render for GlassPreview {
             .font_family(theme::ui_font())
             .text_color(ink())
             .child(backdrop())
-            .child(titlebar(cx))
+            .child(titlebar(day, cx))
             .child({
                 let content = div()
                     .flex_1()
@@ -587,7 +849,7 @@ impl Render for GlassPreview {
                                             let k = edge_reveal(nav_open, nav_epoch, t);
                                             // Only an open panel pushes the thread;
                                             // the floating nav never claims a gutter.
-                                            el.pr(px((DRAWER_OUTER + DRAWER_GAP) * k))
+                                            el.pr(px((DRAWER_W + EDGE_INSET) * k))
                                         },
                                     ),
                             ),
@@ -619,21 +881,24 @@ impl Render for GlassPreview {
 // ----------------------------------------------------------------- backdrop
 
 fn backdrop() -> Div {
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        .bg(linear_gradient(
+    div().size_full().absolute().top_0().left_0().bg(if day() {
+        linear_gradient(
+            180.0,
+            linear_color_stop(rgb(0xEFE8DB), 0.0),
+            linear_color_stop(rgb(0xE5DDCD), 1.0),
+        )
+    } else {
+        linear_gradient(
             180.0,
             linear_color_stop(rgb(0x0A0A0A), 0.0),
             linear_color_stop(rgb(0x050505), 1.0),
-        ))
+        )
+    })
 }
 
 // ----------------------------------------------------------------- titlebar
 
-fn titlebar(cx: &mut Context<GlassPreview>) -> Div {
+fn titlebar(day: bool, cx: &mut Context<GlassPreview>) -> Div {
     div()
         .h(px(TITLEBAR))
         .flex_shrink_0()
@@ -668,6 +933,7 @@ fn titlebar(cx: &mut Context<GlassPreview>) -> Div {
         .child(div().flex_1())
         .child(search(cx))
         .child(div().flex_1())
+        .child(theme_toggle(day, cx))
         .child(bare_icon("glass-help", "info", "Help"))
         .child(account_avatar())
         .child(separator())
@@ -691,6 +957,26 @@ fn titlebar(cx: &mut Context<GlassPreview>) -> Div {
         ))
 }
 
+fn theme_toggle(day: bool, cx: &mut Context<GlassPreview>) -> Stateful<Div> {
+    div()
+        .id("glass-theme")
+        .flex()
+        .items_center()
+        .justify_center()
+        .size(px(30.0))
+        .rounded(px(R_SM))
+        .cursor_pointer()
+        .tooltip(hint(if day {
+            "Switch to night mode"
+        } else {
+            "Switch to day mode"
+        }))
+        .hover(|style| style.bg(hover_wash()))
+        .active(|style| style.bg(press_wash()))
+        .on_click(cx.listener(|this, _event, _window, cx| this.toggle_theme(cx)))
+        .child(icon(if day { "moon" } else { "sun" }, 14.0, ink_muted()))
+}
+
 fn brand_tile() -> Div {
     div()
         .size(px(32.0))
@@ -699,7 +985,7 @@ fn brand_tile() -> Div {
         .items_center()
         .justify_center()
         .rounded(px(10.0))
-        .bg(rgb(0x151517))
+        .bg(tile_fill())
         .border_1()
         .border_color(panel_border())
         .shadow(soft_shadow())
@@ -718,11 +1004,11 @@ fn search(cx: &mut Context<GlassPreview>) -> Stateful<Div> {
         .rounded_full()
         .bg(glass_fill())
         .border_1()
-        .border_color(rgba(0xFFFFFF24))
+        .border_color(tint(0x24))
         .shadow(soft_shadow())
         .cursor_pointer()
         .hover(|style| style.bg(glass_fill_strong()).border_color(glass_border()))
-        .active(|style| style.bg(rgba(0xFFFFFF12)))
+        .active(|style| style.bg(tint(0x12)))
         .tooltip(hint("Search chats, files and commands"))
         .on_click(cx.listener(|this, _event, window, cx| {
             this.open_search(window);
@@ -756,7 +1042,7 @@ fn search_overlay(
         .justify_center()
         .items_start()
         .pt(px(16.0))
-        .bg(rgba(0x050505A6))
+        .bg(sheet_scrim())
         .on_click(cx.listener(|this, _event, _window, cx| {
             this.close_search();
             cx.notify();
@@ -786,7 +1072,7 @@ fn search_overlay(
                         .gap(px(10.0))
                         .px(px(16.0))
                         .border_b_1()
-                        .border_color(rgba(0xFFFFFF14))
+                        .border_color(tint(0x14))
                         .child(icon("search", 15.0, brand()))
                         .child(
                             div()
@@ -838,7 +1124,7 @@ fn search_overlay(
                         .gap(px(6.0))
                         .px(px(16.0))
                         .border_t_1()
-                        .border_color(rgba(0xFFFFFF14))
+                        .border_color(tint(0x14))
                         .text_size(px(10.5))
                         .text_color(ink_muted())
                         .child("↑↓ to navigate")
@@ -939,7 +1225,7 @@ fn account_avatar() -> Div {
         .border_color(brand_line())
         .text_size(px(11.0))
         .font_weight(FontWeight::SEMIBOLD)
-        .text_color(brand())
+        .text_color(brand_text())
         .child("VA")
 }
 
@@ -1158,8 +1444,8 @@ fn conversation(
                                 .flex()
                                 .justify_center()
                                 .px(px(22.0))
-                                .pt(px(13.0))
-                                .pb(px(7.0))
+                                .pt(px(14.0))
+                                .pb(px(14.0))
                                 .child(
                                     div()
                                         .w_full()
@@ -1173,39 +1459,20 @@ fn conversation(
                                 ),
                         ),
                 )
-                // Content slides under these fades, so a scrolled thread never
+                // Content slides under this fade, so a scrolled thread never
                 // shows a bubble sliced by a hard edge.
-                .child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .right_0()
-                        .h(px(22.0))
-                        .bg(linear_gradient(
-                            180.0,
-                            linear_color_stop(rgba(0x141416D9), 0.0),
-                            linear_color_stop(rgba(0x14141600), 1.0),
-                        )),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .bottom_0()
-                        .left_0()
-                        .right_0()
-                        .h(px(26.0))
-                        .bg(linear_gradient(
-                            180.0,
-                            linear_color_stop(rgba(0x14141600), 0.0),
-                            linear_color_stop(rgba(0x141416E6), 1.0),
-                        )),
-                ),
+                .child(div().absolute().top_0().left_0().right_0().h(px(22.0)).bg(
+                    linear_gradient(
+                        180.0,
+                        linear_color_stop(panel_top_fade(0xD9), 0.0),
+                        linear_color_stop(panel_top_fade(0x00), 1.0),
+                    ),
+                )),
         )
-        .child(suggestions(pinned, show_tokens, show_warnings, compact, cx))
-        .child(composer())
+        .child(suggestions(pinned, show_tokens, show_warnings, cx))
+        .child(composer(compact))
         .child(
-            div().w_full().flex().justify_center().pb(px(8.0)).child(
+            div().w_full().flex().justify_center().pb(px(12.0)).child(
                 div()
                     .text_size(px(10.5))
                     .text_color(ink_muted())
@@ -1315,11 +1582,11 @@ fn model_pill(compact: bool) -> Stateful<Div> {
         .rounded_full()
         .bg(glass_fill())
         .border_1()
-        .border_color(rgba(0xFFFFFF2E))
+        .border_color(tint(0x2E))
         .shadow(soft_shadow())
         .cursor_pointer()
         .hover(|style| style.bg(glass_fill_strong()))
-        .active(|style| style.bg(rgba(0xFFFFFF12)))
+        .active(|style| style.bg(tint(0x12)))
         .child(icon("sparkles", 12.0, brand()))
         .child(
             div()
@@ -1329,7 +1596,7 @@ fn model_pill(compact: bool) -> Stateful<Div> {
                 .child("Opus 4.6"),
         )
         .when(!compact, |this| {
-            this.child(div().w(px(1.0)).h(px(12.0)).bg(rgba(0xFFFFFF1F)))
+            this.child(div().w(px(1.0)).h(px(12.0)).bg(tint(0x1F)))
                 .child(
                     div()
                         .text_size(px(10.5))
@@ -1406,7 +1673,7 @@ fn intro_turn() -> Div {
             .child(
                 "Took the sketch: chats on the left, the model pill up top, and a nav at the \
                  right edge. Hover a nav icon to open its panel — Session, Changes, Editor, \
-                 History — and click it to pin. The context button sits beneath the nav.",
+                 History. Pin keeps it open; the context ring sits beneath the nav.",
             ),
     )
 }
@@ -1418,7 +1685,7 @@ fn user_turn() -> Div {
             .max_w(px(500.0))
             .p(px(12.0))
             .rounded(px(14.0))
-            .bg(rgb(0x1B1B1D))
+            .bg(raised())
             .border_1()
             .border_color(panel_border())
             .shadow(soft_shadow())
@@ -1441,7 +1708,7 @@ fn work_card(compact: bool) -> Div {
         .w_full()
         .p(px(14.0))
         .rounded(px(R_LG))
-        .bg(rgb(0x18181A))
+        .bg(work_surface())
         .border_1()
         .border_color(panel_border())
         .shadow(lifted_shadow())
@@ -1470,7 +1737,7 @@ fn work_card(compact: bool) -> Div {
         .child(check_line(
             "Nav opens Session, Changes, Editor and History on hover",
         ))
-        .child(check_line("Click a nav icon or Pin to keep a panel open"))
+        .child(check_line("Pin in the panel header keeps it open"))
         .child(check_line("Refilling ring shows the 62% context window"))
         .child(check_line(
             "Live chat still steers the run without stopping it",
@@ -1642,7 +1909,6 @@ fn suggestions(
     pinned: bool,
     show_tokens: bool,
     show_warnings: bool,
-    compact: bool,
     cx: &mut Context<GlassPreview>,
 ) -> Div {
     div()
@@ -1650,12 +1916,11 @@ fn suggestions(
         .flex()
         .justify_center()
         .px(px(20.0))
-        .pb(px(7.0))
+        .pb(px(14.0))
         .child(
             div()
                 .w_full()
                 .max_w(px(720.0))
-                .pl(px(if compact { 0.0 } else { 36.0 }))
                 .flex()
                 .flex_wrap()
                 .items_center()
@@ -1668,7 +1933,7 @@ fn suggestions(
                         "Pin the panel"
                     },
                     pinned,
-                    |this| this.set_pinned(!this.nav_pinned),
+                    |this, cx| this.set_pinned(!this.nav_pinned, cx),
                     cx,
                 ))
                 .child(suggestion(
@@ -1679,7 +1944,7 @@ fn suggestions(
                         "Show token counts"
                     },
                     show_tokens,
-                    GlassPreview::toggle_tokens,
+                    |this, _cx| this.toggle_tokens(),
                     cx,
                 ))
                 .child(suggestion(
@@ -1690,7 +1955,7 @@ fn suggestions(
                         "Explain warnings"
                     },
                     show_warnings,
-                    GlassPreview::toggle_warnings,
+                    |this, _cx| this.toggle_warnings(),
                     cx,
                 )),
         )
@@ -1700,7 +1965,7 @@ fn suggestion(
     id: &'static str,
     label: &'static str,
     active: bool,
-    action: impl Fn(&mut GlassPreview) + 'static,
+    action: impl Fn(&mut GlassPreview, &mut Context<GlassPreview>) + 'static,
     cx: &mut Context<GlassPreview>,
 ) -> Stateful<Div> {
     div()
@@ -1710,7 +1975,7 @@ fn suggestion(
         .h(px(28.0))
         .px(px(11.0))
         .rounded_full()
-        .bg(rgba(0xFFFFFF0C))
+        .bg(tint(0x0C))
         .border_1()
         .border_color(if active { brand_line() } else { panel_border() })
         .text_size(px(11.5))
@@ -1720,19 +1985,19 @@ fn suggestion(
         .when(!active, |this| this.hover(|style| style.bg(hover_wash())))
         .active(|style| style.bg(press_wash()))
         .on_click(cx.listener(move |this, _event, _window, cx| {
-            action(this);
+            action(this, cx);
             cx.notify();
         }))
         .child(label)
 }
 
-fn composer() -> Div {
+fn composer(compact: bool) -> Div {
     div()
         .w_full()
         .flex()
         .justify_center()
         .px(px(20.0))
-        .pb(px(10.0))
+        .pb(px(14.0))
         .child(
             div()
                 .relative()
@@ -1741,20 +2006,20 @@ fn composer() -> Div {
                 .max_w(px(720.0))
                 .flex()
                 .flex_col()
-                .gap(px(24.0))
+                .gap(px(14.0))
                 .p(px(16.0))
                 .rounded(px(24.0))
                 .bg(glass_fill_strong())
                 .border_1()
                 .border_color(glass_border())
                 .shadow(glass_shadow())
+                .child(attachment_row(compact))
                 .child(
                     div()
                         .flex()
                         .items_center()
                         .gap(px(2.0))
                         .px(px(2.0))
-                        .pt(px(2.0))
                         .text_size(px(15.0))
                         .text_color(ink_muted())
                         .child("Ask me anything…"),
@@ -1779,6 +2044,120 @@ fn composer() -> Div {
                         .child(send_button()),
                 ),
         )
+}
+
+fn attachment_row(compact: bool) -> Div {
+    div()
+        .w_full()
+        .flex()
+        .flex_wrap()
+        .gap(px(8.0))
+        .child(attachment_card(
+            "glass-attach-image",
+            "glass-attach-image-more",
+            "image",
+            "design-preview-glass.png",
+            "PNG image · 1.8 MB",
+            compact,
+        ))
+        .child(attachment_card(
+            "glass-attach-source",
+            "glass-attach-source-more",
+            "file-code",
+            "theme.rs",
+            "Rust source · 4.2 KB",
+            compact,
+        ))
+        .child(attachment_card(
+            "glass-attach-doc",
+            "glass-attach-doc-more",
+            "file-text",
+            "README.md",
+            "Markdown · 6.1 KB",
+            compact,
+        ))
+}
+
+fn attachment_card(
+    id: &'static str,
+    more_id: &'static str,
+    thumb_icon: &'static str,
+    name: &'static str,
+    meta: &'static str,
+    compact: bool,
+) -> Stateful<Div> {
+    let card = div()
+        .id(id)
+        .h(px(46.0))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .gap(px(8.0))
+        .pl(px(6.0))
+        .pr(px(4.0))
+        .rounded(px(11.0))
+        .bg(card_fill())
+        .border_1()
+        .border_color(panel_border_soft())
+        .shadow(soft_shadow());
+    // A narrow composer gives each card the full row; a wide one tucks three
+    // Explorer-style cards side by side.
+    let card = if compact {
+        card.w_full()
+    } else {
+        card.w(px(214.0))
+    };
+    card.child(
+        div()
+            .size(px(32.0))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(8.0))
+            .bg(well())
+            .border_1()
+            .border_color(panel_border_soft())
+            .child(icon(thumb_icon, 14.0, ink_muted())),
+    )
+    .child(
+        div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap(px(1.0))
+            .child(
+                div()
+                    .truncate()
+                    .text_size(px(11.5))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(ink())
+                    .child(name),
+            )
+            .child(
+                div()
+                    .truncate()
+                    .text_size(px(10.0))
+                    .text_color(ink_muted())
+                    .child(meta),
+            ),
+    )
+    .child(
+        div()
+            .id(more_id)
+            .size(px(24.0))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(6.0))
+            .cursor_pointer()
+            .hover(|style| style.bg(hover_wash()))
+            .active(|style| style.bg(press_wash()))
+            .tooltip(hint("Attachment options"))
+            .child(icon("more-horizontal", 13.0, ink_muted())),
+    )
 }
 
 fn composer_icon(id: &'static str, name: &'static str, label: &'static str) -> Stateful<Div> {
@@ -1883,7 +2262,7 @@ fn pin_toggle(pinned: bool, focus: &FocusHandle, cx: &mut Context<GlassPreview>)
         .tooltip(hint(if pinned { "Unpin panel" } else { "Pin panel" }))
         .on_click(cx.listener(|this, _event, _window, cx| {
             let next = !this.nav_pinned;
-            this.set_pinned(next);
+            this.set_pinned(next, cx);
             cx.notify();
         }))
         .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
@@ -1893,11 +2272,11 @@ fn pin_toggle(pinned: bool, focus: &FocusHandle, cx: &mut Context<GlassPreview>)
             match event.keystroke.key.as_str() {
                 "enter" | "space" => {
                     let next = !this.nav_pinned;
-                    this.set_pinned(next);
+                    this.set_pinned(next, cx);
                     cx.notify();
                 }
                 "escape" => {
-                    this.close_nav();
+                    this.close_nav(cx);
                     cx.notify();
                 }
                 _ => {}
@@ -1925,7 +2304,7 @@ fn drawer_close(cx: &mut Context<GlassPreview>) -> Stateful<Div> {
         .active(|style| style.bg(press_wash()))
         .tooltip(hint("Hide panel"))
         .on_click(cx.listener(|this, _event, _window, cx| {
-            this.close_nav();
+            this.close_nav(cx);
             cx.notify();
         }))
         .child(icon("chevron-right", 13.0, ink_muted()))
@@ -2424,7 +2803,7 @@ fn editor_tab(label: &'static str, active: bool) -> Div {
         .items_center()
         .gap(px(5.0))
         .rounded(px(6.0))
-        .when(active, |this| this.bg(rgba(0xFFFFFF10)))
+        .when(active, |this| this.bg(tint(0x10)))
         .child(icon(
             "file-code",
             11.0,
@@ -2665,7 +3044,7 @@ fn live_chat_panel() -> Div {
                 .h(px(2.0))
                 .w_full()
                 .rounded_full()
-                .bg(rgba(0xFFFFFF12))
+                .bg(tint(0x12))
                 .child(div().h(px(2.0)).w(px(112.0)).rounded_full().bg(brand())),
         )
         .child(
@@ -2680,7 +3059,7 @@ fn live_chat_panel() -> Div {
                             .px(px(10.0))
                             .py(px(6.0))
                             .rounded(px(10.0))
-                            .bg(rgb(0x1E1E20))
+                            .bg(bubble())
                             .border_1()
                             .border_color(panel_border())
                             .text_size(px(12.0))
@@ -2714,8 +3093,7 @@ fn live_chat_panel() -> Div {
                                 .text_color(ink_soft())
                                 .child(
                                     "On it — hover the nav to switch panels; this chat rides \
-                                     in Session. Click the icon or pin it to keep the panel \
-                                     open.",
+                                     in Session. Use Pin to keep the panel open.",
                                 ),
                         ),
                 ),
@@ -2797,7 +3175,7 @@ fn status_bar(mode: ExecutionMode, pinned: bool) -> Div {
         .items_center()
         .gap(px(8.0))
         .px(px(16.0))
-        .bg(rgba(0x040404D9))
+        .bg(status_fill())
         .border_t_1()
         .border_color(panel_border_soft())
         .text_size(px(11.0))
@@ -2810,7 +3188,7 @@ fn status_bar(mode: ExecutionMode, pinned: bool) -> Div {
                 .h(px(18.0))
                 .px(px(7.0))
                 .rounded(px(6.0))
-                .bg(rgba(0xFFFFFF0C))
+                .bg(tint(0x0C))
                 .border_1()
                 .border_color(panel_border_soft())
                 .child(div().size(px(5.0)).rounded_full().bg(brand()))
@@ -2866,7 +3244,7 @@ fn status_chip(
         .h(px(20.0))
         .px(px(7.0))
         .rounded(px(6.0))
-        .bg(rgba(0xFFFFFF0A))
+        .bg(tint(0x0A))
         .border_1()
         .border_color(panel_border_soft())
         .cursor_pointer()
@@ -2903,7 +3281,7 @@ fn edge_overlay(
         .absolute()
         .top_0()
         .bottom(px(8.0))
-        .right(px(14.0))
+        .right(px(EDGE_INSET))
         .on_hover(cx.listener(|this, hovered, _window, cx| {
             if *hovered {
                 // The nav is always on screen; only its icons open a section.
@@ -2911,8 +3289,7 @@ fn edge_overlay(
             } else {
                 this.nav_hovered = false;
                 if this.nav_open && !this.nav_pinned {
-                    this.nav_open = false;
-                    this.nav_epoch += 1;
+                    this.set_nav_open(false, cx);
                     cx.notify();
                 }
             }
@@ -2924,7 +3301,7 @@ fn edge_overlay(
             Animation::new(motion(320)).with_easing(ease_out_quint()),
             move |el, t| {
                 let k = edge_reveal(open, epoch, t);
-                el.w(px(NAV_W + (DRAWER_OUTER - NAV_W) * k))
+                el.w(px(NAV_INSET + NAV_W + (DRAWER_W - NAV_INSET - NAV_W) * k))
             },
         )
 }
@@ -2962,26 +3339,22 @@ fn edge_drawer(
         .rounded(px(R_LG))
         .bg(drawer_fill())
         .border_1()
-        .border_color(if pinned {
-            brand_line()
-        } else {
-            rgba(0xFFFFFF2E)
-        })
+        .border_color(if pinned { brand_line() } else { tint(0x2E) })
         .shadow(glass_shadow())
         .child(
             // Content keeps its width while the panel's left edge sweeps out,
-            // so labels never reflow mid-animation.
+            // so labels never reflow mid-animation. It runs full-bleed under
+            // the nav — the nav is the top layer, not a reserved gutter.
             div()
                 .absolute()
                 .top_0()
                 .bottom_0()
                 .right_0()
-                .w(px(DRAWER_OUTER))
+                .w(px(DRAWER_W))
                 .flex()
                 .flex_col()
                 .gap(px(10.0))
                 .p(px(12.0))
-                .pr(px(DRAWER_PAD_R))
                 .child(drawer_header(section, pinned, show_tokens, focus, cx))
                 .child(
                     div()
@@ -3022,8 +3395,8 @@ fn edge_drawer(
                         .child(div().absolute().top_0().left_0().right_0().h(px(12.0)).bg(
                             linear_gradient(
                                 180.0,
-                                linear_color_stop(rgba(0x17171AEB), 0.0),
-                                linear_color_stop(rgba(0x17171A00), 1.0),
+                                linear_color_stop(drawer_top_fade(0xEB), 0.0),
+                                linear_color_stop(drawer_top_fade(0x00), 1.0),
                             ),
                         ))
                         // Cards fade out here instead of ending on a hard cut
@@ -3037,8 +3410,8 @@ fn edge_drawer(
                                 .h(px(22.0))
                                 .bg(linear_gradient(
                                     180.0,
-                                    linear_color_stop(rgba(0x0E0E1000), 0.0),
-                                    linear_color_stop(rgba(0x0E0E10F5), 1.0),
+                                    linear_color_stop(drawer_bottom_fade(0x00), 0.0),
+                                    linear_color_stop(drawer_bottom_fade(0xF5), 1.0),
                                 )),
                         ),
                 )
@@ -3051,7 +3424,7 @@ fn edge_drawer(
             Animation::new(motion(320)).with_easing(ease_out_quint()),
             move |el, t| {
                 let k = edge_reveal(open, epoch, t);
-                el.w(px(DRAWER_OUTER * k)).opacity(k)
+                el.w(px(DRAWER_W * k)).opacity(k)
             },
         )
 }
@@ -3085,7 +3458,7 @@ fn nav_column(state: EdgeState, focus: &FocusHandle, cx: &mut Context<GlassPrevi
         .absolute()
         .top_0()
         .bottom_0()
-        .right(px(4.0))
+        .right(px(NAV_INSET))
         .w(px(NAV_W))
         .flex()
         .flex_col()
@@ -3099,8 +3472,7 @@ fn nav_column(state: EdgeState, focus: &FocusHandle, cx: &mut Context<GlassPrevi
 fn context_indicator(epoch: usize, cx: &mut Context<GlassPreview>) -> Stateful<Div> {
     div()
         .id("glass-context")
-        .w(px(52.0))
-        .h(px(CONTEXT_CAPSULE_H))
+        .size(px(CONTEXT_SIZE))
         .flex_shrink_0()
         .flex()
         .items_center()
@@ -3108,7 +3480,7 @@ fn context_indicator(epoch: usize, cx: &mut Context<GlassPreview>) -> Stateful<D
         .rounded_full()
         .bg(nav_fill())
         .border_1()
-        .border_color(rgba(0xFFFFFF4D))
+        .border_color(nav_border())
         .shadow(glass_shadow())
         .cursor_pointer()
         .tooltip(hint("62% of context used — 75k of 120k tokens"))
@@ -3141,7 +3513,7 @@ fn nav_capsule(
         .rounded_full()
         .bg(nav_fill())
         .border_1()
-        .border_color(rgba(0xFFFFFF4D))
+        .border_color(nav_border())
         .shadow(glass_shadow())
         .cursor_pointer()
         .track_focus(focus)
@@ -3149,7 +3521,7 @@ fn nav_capsule(
         .on_click(cx.listener(|this, _event, window, cx| {
             window.focus(&this.nav_focus);
             let section = this.section;
-            this.open_section(section);
+            this.open_section(section, cx);
             cx.notify();
         }))
         .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
@@ -3157,20 +3529,19 @@ fn nav_capsule(
                 return;
             }
             match event.keystroke.key.as_str() {
-                "escape" => this.close_nav(),
+                "escape" => this.close_nav(cx),
                 "enter" | "space" => {
                     let section = this.section;
-                    this.open_section(section);
-                    this.set_pinned(true);
+                    this.open_section(section, cx);
                     window.focus(&this.nav_focus);
                 }
                 "up" | "left" => {
                     let next = this.section.cycle(false);
-                    this.open_section(next);
+                    this.open_section(next, cx);
                 }
                 "down" | "right" => {
                     let next = this.section.cycle(true);
-                    this.open_section(next);
+                    this.open_section(next, cx);
                 }
                 _ => return,
             }
@@ -3228,13 +3599,12 @@ fn nav_icon(section: DrawerSection, active: bool, cx: &mut Context<GlassPreview>
             if !*hovered {
                 return;
             }
-            this.open_section(section);
+            this.open_section(section, cx);
             cx.notify();
         }))
         .on_click(cx.listener(move |this, _event, window, cx| {
             cx.stop_propagation();
-            this.open_section(section);
-            this.set_pinned(true);
+            this.open_section(section, cx);
             window.focus(&this.nav_focus);
             cx.notify();
         }))
@@ -3258,7 +3628,7 @@ fn context_ring(epoch: usize) -> impl IntoElement {
             div()
                 .text_size(px(10.0))
                 .font_weight(FontWeight::SEMIBOLD)
-                .text_color(brand())
+                .text_color(brand_text())
                 .child("62%"),
         )
         .with_animation(
@@ -3288,7 +3658,7 @@ fn context_tick(i: usize, fill: f32) -> Div {
         .top(px(y))
         .size(px(dot))
         .rounded_full()
-        .bg(rgba(0xFFFFFF30));
+        .bg(tint(0x30));
     if lit <= 0.0 {
         tick
     } else {
@@ -3369,7 +3739,7 @@ fn keycap(label: &'static str) -> Div {
         .items_center()
         .justify_center()
         .rounded(px(6.0))
-        .bg(rgba(0xFFFFFF12))
+        .bg(tint(0x12))
         .text_size(px(10.0))
         .text_color(ink_muted())
         .child(label)
@@ -3382,7 +3752,7 @@ fn soft_chip(label: &'static str) -> Div {
         .flex()
         .items_center()
         .rounded(px(6.0))
-        .bg(rgba(0xFFFFFF0E))
+        .bg(tint(0x0E))
         .text_size(px(11.0))
         .text_color(ink_soft())
         .child(label)
@@ -3404,18 +3774,14 @@ fn link_button(id: &'static str, label: &'static str) -> Stateful<Div> {
             div()
                 .text_size(px(11.0))
                 .font_weight(FontWeight::MEDIUM)
-                .text_color(brand())
+                .text_color(brand_text())
                 .child(label),
         )
-        .child(icon("chevron-right", 11.0, brand()))
+        .child(icon("chevron-right", 11.0, brand_text()))
 }
 
 fn separator() -> Div {
-    div()
-        .w(px(1.0))
-        .h(px(12.0))
-        .flex_shrink_0()
-        .bg(rgba(0xFFFFFF1F))
+    div().w(px(1.0)).h(px(12.0)).flex_shrink_0().bg(tint(0x1F))
 }
 
 fn primary_button(label: &'static str) -> Stateful<Div> {
@@ -3449,7 +3815,7 @@ fn secondary_button(label: &'static str) -> Stateful<Div> {
         .h(px(32.0))
         .px(px(14.0))
         .rounded_full()
-        .bg(rgb(0x1B1B1D))
+        .bg(raised())
         .border_1()
         .border_color(panel_border())
         .text_size(px(12.0))
