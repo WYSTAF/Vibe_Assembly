@@ -8,6 +8,7 @@ mod assistant_panel;
 mod bottom_drawer;
 mod branding;
 mod command_palette;
+mod design;
 mod editor_pane;
 mod left_dock;
 mod state;
@@ -30,9 +31,15 @@ use crate::state::{Workbench, WorkbenchState};
 fn main() {
     // Discovery order: `--root`, a positional path, then the current directory.
     let mut start: Option<PathBuf> = None;
+    let mut sample: Option<Sample> = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--design-preview" => sample = Some(Sample::Obsidian),
+            "--design-preview-friendly" => sample = Some(Sample::Paper),
+            "--design-preview-midnight" => sample = Some(Sample::Midnight),
+            "--design-preview-studio" => sample = Some(Sample::Studio),
+            "--design-preview-glass" => sample = Some(Sample::Glass),
             "--root" => start = args.next().map(PathBuf::from),
             "--mode" => {
                 if let Some(value) = args.next() {
@@ -58,6 +65,12 @@ fn main() {
         .ok()
         .and_then(|value| value.parse::<ExecutionMode>().ok())
         .unwrap_or(ExecutionMode::Code);
+
+    if let Some(sample) = sample {
+        run_preview(mode, sample);
+        return;
+    }
+
     let language = std::env::var("VIBE_LANG")
         .ok()
         .and_then(|value| value.parse::<LanguageLens>().ok())
@@ -115,6 +128,79 @@ fn run(
                     view
                 })
                 .expect("failed to open the Vibe Assembly workbench window");
+
+            cx.activate(true);
+        });
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Sample {
+    Obsidian,
+    Paper,
+    Midnight,
+    Studio,
+    Glass,
+}
+
+fn run_preview(mode: ExecutionMode, sample: Sample) {
+    Application::new()
+        .with_assets(branding::BrandAssets)
+        .run(move |cx: &mut App| {
+            theme::init_fonts(cx);
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::centered(size(px(1440.0), px(900.0)), cx)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some(
+                        match sample {
+                            Sample::Obsidian => "Vibe Assembly — Design Preview",
+                            Sample::Paper => "Vibe Assembly — Paper & Ink",
+                            Sample::Midnight => "Vibe Assembly — Midnight Paper",
+                            Sample::Studio => "Vibe Assembly — Studio",
+                            Sample::Glass => "Vibe Assembly — Liquid Glass",
+                        }
+                        .into(),
+                    ),
+                    appears_transparent: true,
+                    traffic_light_position: None,
+                }),
+                window_min_size: Some(size(px(1120.0), px(720.0))),
+                window_background: WindowBackgroundAppearance::Opaque,
+                app_id: Some("vibe-assembly".to_string()),
+                ..Default::default()
+            };
+
+            match sample {
+                Sample::Obsidian => {
+                    cx.open_window(options, move |_window, cx| {
+                        cx.new(|_| design::preview::DesignPreview::new(mode))
+                    })
+                    .expect("failed to open the design preview window");
+                }
+                Sample::Paper => {
+                    cx.open_window(options, move |_window, cx| {
+                        cx.new(|_| design::friendly::FriendlyPreview::new(mode))
+                    })
+                    .expect("failed to open the design preview window");
+                }
+                Sample::Midnight => {
+                    cx.open_window(options, move |_window, cx| {
+                        cx.new(|_| design::midnight::MidnightPreview::new(mode))
+                    })
+                    .expect("failed to open the design preview window");
+                }
+                Sample::Studio => {
+                    cx.open_window(options, move |_window, cx| {
+                        cx.new(|_| design::studio::StudioPreview::new(mode))
+                    })
+                    .expect("failed to open the design preview window");
+                }
+                Sample::Glass => {
+                    cx.open_window(options, move |_window, cx| {
+                        cx.new(|cx| design::glass::GlassPreview::new(mode, cx))
+                    })
+                    .expect("failed to open the design preview window");
+                }
+            }
 
             cx.activate(true);
         });

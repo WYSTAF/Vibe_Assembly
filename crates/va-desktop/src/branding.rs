@@ -11,15 +11,19 @@ pub struct BrandAssets;
 
 impl AssetSource for BrandAssets {
     fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
-        Ok((path == LOGO_PATH).then_some(Cow::Borrowed(LOGO)))
+        if path == LOGO_PATH {
+            return Ok(Some(Cow::Borrowed(LOGO)));
+        }
+        Ok(crate::design::icon::asset(path).map(Cow::Borrowed))
     }
 
     fn list(&self, path: &str) -> gpui::Result<Vec<SharedString>> {
-        Ok(if LOGO_PATH.starts_with(path) {
-            vec![LOGO_PATH.into()]
-        } else {
-            Vec::new()
-        })
+        let mut paths = Vec::new();
+        if LOGO_PATH.starts_with(path) {
+            paths.push(LOGO_PATH.into());
+        }
+        paths.extend(crate::design::icon::list(path));
+        Ok(paths)
     }
 }
 
