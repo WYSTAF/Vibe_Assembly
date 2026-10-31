@@ -14,6 +14,10 @@
   hover/click drawer sections, context ring, command sheet, status chips. The
   Paper & Ink workspace workbench stays available via `--workbench` or a root
   path.
+- **v2.3.0 (2026-10-31):** Liquid Glass polish pass - night/day theme toggle,
+  full-bleed drawer under a solid frosted nav with a 24px gutter, circular
+  context indicator, manual-only pinning, post-animation thread anchoring,
+  Explorer-style attachment cards, and a seam-free composer stack.
 - Scope: real HTTP live planner, four execution modes with dynamic accents,
   language lens, auto-compaction at 75%, think-trace eviction, pinned working
   set, repeated-anchor rejection, spin-loop breaker, durable EXPERIENCE.md,

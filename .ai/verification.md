@@ -1,7 +1,7 @@
 # Verification Record & Proven Baselines
 
-**Current feature proven:** v2.2.0 Liquid Glass default desktop and Paper &
-Ink workspace workbench behind `--workbench`
+**Current feature proven:** v2.3.0 Liquid Glass night/day themes, full-bleed
+drawer, circular context ring, manual pinning, and attachment cards
 
 **Test suites and checks executed:**
 

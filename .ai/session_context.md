@@ -1,8 +1,9 @@
 # Active Session Context Handoff
 
-**Last session status:** v2.2.0 Liquid Glass desktop - a bare launch opens the
-Liquid Glass workbench; the Paper & Ink workspace workbench (and remaining
-samples) stay behind `--workbench` / `--design-preview*`; all gates green.
+**Last session status:** v2.3.0 Liquid Glass desktop - a bare launch opens the
+Liquid Glass workbench with a titlebar night/day toggle; the Paper & Ink
+workspace workbench (and remaining samples) stay behind `--workbench` /
+`--design-preview*`; all gates green.
 
 **Active blockers:** None.
 

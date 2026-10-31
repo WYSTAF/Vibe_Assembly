@@ -1,11 +1,12 @@
 # Current Operational State
 
-- **Active Milestone:** v2.2.0 Liquid Glass desktop
-- **Release:** v2.2.0 - the Liquid Glass workbench ships as the default desktop
-  surface; the Paper & Ink editor workbench opens with `--workbench` or a repo
-  path, and the remaining design samples stay behind `--design-preview*` flags.
-- **Current Assignment:** Complete - Liquid Glass promoted to the default
-  desktop launch; workspace routing kept for the real repo-bound workbench.
+- **Active Milestone:** v2.3.0 Liquid Glass day/night polish
+- **Release:** v2.3.0 - the Liquid Glass workbench ships with a night/day theme
+  toggle, a full-bleed edge drawer under the floating nav, a circular context
+  indicator, manual-only pinning, and attachment cards; the Paper & Ink editor
+  workbench opens with `--workbench` or a repo path, and the remaining design
+  samples stay behind `--design-preview*` flags.
+- **Current Assignment:** Complete - Liquid Glass polish pass shipped.
 - **Planning Status:** Complete.
 - **Implementation Status:**
   - `va-core`: parser, single-writer task lock, allocator, model knowledge,

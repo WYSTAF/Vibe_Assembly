@@ -1,0 +1,2 @@
+bbe0995dc1e34b2ebe44dee8d1603ef2e3029925c2ad35c86f1dadf844fcfab0 *vibe-assembly.exe
+984c029bfc5fea5d910dbad02fed7a9d95a17b3b880cd443e3c7d33e8c93c5eb *vibe-assembly-desktop.exe
