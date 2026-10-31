@@ -32,6 +32,7 @@ fn main() {
     // Discovery order: `--root`, a positional path, then the current directory.
     let mut start: Option<PathBuf> = None;
     let mut sample: Option<Sample> = None;
+    let mut workbench = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -40,6 +41,7 @@ fn main() {
             "--design-preview-midnight" => sample = Some(Sample::Midnight),
             "--design-preview-studio" => sample = Some(Sample::Studio),
             "--design-preview-glass" => sample = Some(Sample::Glass),
+            "--workbench" => workbench = true,
             "--root" => start = args.next().map(PathBuf::from),
             "--mode" => {
                 if let Some(value) = args.next() {
@@ -68,6 +70,13 @@ fn main() {
 
     if let Some(sample) = sample {
         run_preview(mode, sample);
+        return;
+    }
+
+    // A bare launch opens the Liquid Glass surface; the workspace workbench
+    // needs an explicit `--workbench` or a root path because it requires a repo.
+    if !workbench && start.is_none() {
+        run_preview_shipped(mode);
         return;
     }
 
@@ -142,7 +151,22 @@ enum Sample {
     Glass,
 }
 
+fn run_preview_shipped(mode: ExecutionMode) {
+    run_preview_window(mode, Sample::Glass, "Vibe Assembly");
+}
+
 fn run_preview(mode: ExecutionMode, sample: Sample) {
+    let title = match sample {
+        Sample::Obsidian => "Vibe Assembly — Design Preview",
+        Sample::Paper => "Vibe Assembly — Paper & Ink",
+        Sample::Midnight => "Vibe Assembly — Midnight Paper",
+        Sample::Studio => "Vibe Assembly — Studio",
+        Sample::Glass => "Vibe Assembly — Liquid Glass",
+    };
+    run_preview_window(mode, sample, title);
+}
+
+fn run_preview_window(mode: ExecutionMode, sample: Sample, title: &'static str) {
     Application::new()
         .with_assets(branding::BrandAssets)
         .run(move |cx: &mut App| {
@@ -150,16 +174,7 @@ fn run_preview(mode: ExecutionMode, sample: Sample) {
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::centered(size(px(1440.0), px(900.0)), cx)),
                 titlebar: Some(TitlebarOptions {
-                    title: Some(
-                        match sample {
-                            Sample::Obsidian => "Vibe Assembly — Design Preview",
-                            Sample::Paper => "Vibe Assembly — Paper & Ink",
-                            Sample::Midnight => "Vibe Assembly — Midnight Paper",
-                            Sample::Studio => "Vibe Assembly — Studio",
-                            Sample::Glass => "Vibe Assembly — Liquid Glass",
-                        }
-                        .into(),
-                    ),
+                    title: Some(title.into()),
                     appears_transparent: true,
                     traffic_light_position: None,
                 }),
