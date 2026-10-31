@@ -1,8 +1,8 @@
 # Active Session Context Handoff
 
-**Last session status:** v2.0.1 rounded brand icon refresh, on top of the
-v2.0.0 production hardening and Zed workbench overhaul (ADR-019); all gates
-green.
+**Last session status:** v2.1.0 Paper & Ink redesign of the shipped workbench,
+plus the preview-only design samples (Obsidian, Paper & Ink, Midnight, Studio,
+Liquid Glass); all gates green.
 
 **Active blockers:** None.
 

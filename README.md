@@ -4,7 +4,7 @@
 
 # Vibe Assembly
 
-**v2.0.1 - a production-hardened, pure-Rust multi-agent coding workspace.**
+**v2.1.0 - a production-hardened, pure-Rust multi-agent coding workspace with a native Paper & Ink workbench.**
 
 Vibe Assembly lets small, focused agents build and maintain large software
 projects without exhausting a single chat context. Roles communicate through a

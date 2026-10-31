@@ -6,6 +6,9 @@
 - Status: implementation complete; final verification gates green.
 - **v2.0.1 (2026-10-27):** rounded yellow brand icon adopted for the Windows
   executable and the in-app logo; desktop binary rebuilt and release refreshed.
+- **v2.1.0 (2026-10-31):** Paper & Ink redesign applied to the shipped
+  workbench (paper surfaces, ink text, brand-yellow chrome, chat-first canvas);
+  design samples added behind `--design-preview*`, including Liquid Glass.
 - Scope: real HTTP live planner, four execution modes with dynamic accents,
   language lens, auto-compaction at 75%, think-trace eviction, pinned working
   set, repeated-anchor rejection, spin-loop breaker, durable EXPERIENCE.md,
@@ -37,5 +40,5 @@
 
 - `cargo fmt --all -- --check` - clean
 - `cargo clippy --workspace --all-targets -- -D warnings` - clean
-- `cargo test --workspace` - 188 passed, 0 failed
+- `cargo test --workspace` - 200 passed, 0 failed
 - `cargo build --release` - both binaries produced

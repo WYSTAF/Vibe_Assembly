@@ -1,11 +1,11 @@
 # Current Operational State
 
-- **Active Milestone:** v2.0.0 Production Hardening and Feature Completion (ADR-018)
-- **Patch Release:** v2.0.1 - rounded yellow brand icon for the Windows executable
-  and the in-app titlebar/empty-state logo.
-- **Current Assignment:** Complete - real live planner, execution modes,
-  language lens, context compaction, safety guards, durable experience,
-  interactive CLI/TUI selectors, and the modular Zed-style desktop workbench.
+- **Active Milestone:** v2.1.0 Paper & Ink workbench
+- **Release:** v2.1.0 - warm Paper & Ink redesign of the native desktop
+  workbench, plus design sample surfaces behind `--design-preview*` flags.
+- **Current Assignment:** Complete - Paper & Ink tokens and layout applied to
+  the shipped workbench; conversation-first canvas, restyled `ui_kit`, Lucide
+  icon set, and the Liquid Glass sample.
 - **Planning Status:** Complete.
 - **Implementation Status:**
   - `va-core`: parser, single-writer task lock, allocator, model knowledge,
@@ -25,11 +25,12 @@
     `reset`, `up`, `repomap`, `diagnose`, `run`, `prompt`, `chat`, `tui`/`top`,
     `profile`, `session`, `mcp`, `patch`, `blocks`, `fork`, `rollback`, and
     `compact`. `init` and `run --auto-combo` auto-seed `.ai/model_combo.txt`.
-  - `va-desktop`: native GPUI 0.2.2 Zed One Dark workbench (ADR-019) with a
-    six-zone layout, real RepoMap/session-DAG/diagnostics/harness data, an
-    8-character block-hash editor and git diff view, an interactive assistant
-    composer, a floating command palette, a real context-window meter, a shared
-    native `ui_kit`, and embedded brand/Windows icon assets.
+  - `va-desktop`: native GPUI 0.2.2 Paper & Ink workbench (ADR-019 layout,
+    retokenized) with a conversation-first canvas, real
+    RepoMap/session-DAG/diagnostics/harness data, an 8-character block-hash
+    editor and git diff view, an interactive assistant composer, a floating
+    command palette, a real context-window meter, a shared native `ui_kit`,
+    embedded brand/Windows icon assets, and preview-only design samples.
 - **Verification Status:** 200 tests passing, 0 failed; clippy clean with
   `-D warnings`; formatting clean; release build produced both binaries.
 - **Resume Anchor:** n/a - wave verified and complete.
