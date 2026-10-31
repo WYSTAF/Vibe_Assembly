@@ -7,6 +7,7 @@ mod step_card;
 
 pub use composer::CursorStyleComposer;
 pub use input::{capture, InputSelection};
+pub(crate) use input::{from_utf16, to_utf16};
 pub use navigation::{FileTreeRow, SegmentedPillBar, SymbolRow};
 pub use step_card::CollapsibleStepCard;
 

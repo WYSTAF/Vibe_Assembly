@@ -7,14 +7,14 @@ use gpui::{
 };
 use std::ops::Range;
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct InputSelection {
     pub anchor: usize,
     pub head: usize,
     marked: Option<Range<usize>>,
 }
 
-fn boundary(text: &str, offset: usize) -> usize {
+pub(crate) fn boundary(text: &str, offset: usize) -> usize {
     let mut offset = offset.min(text.len());
     while !text.is_char_boundary(offset) {
         offset -= 1;
@@ -22,7 +22,7 @@ fn boundary(text: &str, offset: usize) -> usize {
     offset
 }
 
-fn from_utf16(text: &str, offset: usize) -> usize {
+pub(crate) fn from_utf16(text: &str, offset: usize) -> usize {
     let mut units = 0;
     for (byte, ch) in text.char_indices() {
         if units + ch.len_utf16() > offset {
@@ -33,7 +33,7 @@ fn from_utf16(text: &str, offset: usize) -> usize {
     text.len()
 }
 
-fn to_utf16(text: &str, range: Range<usize>) -> Range<usize> {
+pub(crate) fn to_utf16(text: &str, range: Range<usize>) -> Range<usize> {
     text[..boundary(text, range.start)].encode_utf16().count()
         ..text[..boundary(text, range.end)].encode_utf16().count()
 }
@@ -62,6 +62,14 @@ impl InputSelection {
         self.anchor = self.head;
         self.marked = None;
         true
+    }
+
+    pub fn marked(&self) -> Option<Range<usize>> {
+        self.marked.clone()
+    }
+
+    pub fn set_marked(&mut self, range: Option<Range<usize>>) {
+        self.marked = range;
     }
 
     pub fn key(&mut self, text: &mut String, key: &str, shift: bool) -> bool {
