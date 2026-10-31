@@ -1,6 +1,7 @@
 # Verification Record & Proven Baselines
 
-**Current feature proven:** v2.1.0 Paper & Ink workbench and design samples
+**Current feature proven:** v2.2.0 Liquid Glass default desktop and Paper &
+Ink workspace workbench behind `--workbench`
 
 **Test suites and checks executed:**
 
@@ -8,11 +9,13 @@
 - [x] `cargo clippy --workspace --all-targets -- -D warnings`
 - [x] `cargo test --workspace` - 200 passed, 0 failed
 - [x] `cargo build --release` - `vibe-assembly` and `vibe-assembly-desktop`
-- [x] Desktop smoke test - Paper & Ink workbench window renders from the
-      release binary installed at `target/release`
-- [x] `--design-preview-glass` sample - always-on nav and context capsule,
-      hover-opened Session/Changes/Editor/History panels, pinned state, and
-      compact 1120x720 layout verified with pixel captures
+- [x] Desktop smoke test - a bare launch of the release binary installed at
+      `target/release` opens the Liquid Glass workbench; `--workbench` opens the
+      Paper & Ink workspace workbench
+- [x] Liquid Glass default surface - chat rail, model pill, glass ask bar,
+      auto-hide nav with hover-opened Session/Changes/Editor/History panels,
+      context ring, command sheet, and compact 1120x720 layout verified with
+      pixel captures
 - [x] Windows icon embedded at 16, 20, 24, 32, 40, 48, 64, 96, 128, and
       256 px; rounded transparent corners verified
 - [x] Live HTTP integration test against a local mock OpenAI-compatible server

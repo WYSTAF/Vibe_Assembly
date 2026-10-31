@@ -1,11 +1,11 @@
 # Current Operational State
 
-- **Active Milestone:** v2.1.0 Paper & Ink workbench
-- **Release:** v2.1.0 - warm Paper & Ink redesign of the native desktop
-  workbench, plus design sample surfaces behind `--design-preview*` flags.
-- **Current Assignment:** Complete - Paper & Ink tokens and layout applied to
-  the shipped workbench; conversation-first canvas, restyled `ui_kit`, Lucide
-  icon set, and the Liquid Glass sample.
+- **Active Milestone:** v2.2.0 Liquid Glass desktop
+- **Release:** v2.2.0 - the Liquid Glass workbench ships as the default desktop
+  surface; the Paper & Ink editor workbench opens with `--workbench` or a repo
+  path, and the remaining design samples stay behind `--design-preview*` flags.
+- **Current Assignment:** Complete - Liquid Glass promoted to the default
+  desktop launch; workspace routing kept for the real repo-bound workbench.
 - **Planning Status:** Complete.
 - **Implementation Status:**
   - `va-core`: parser, single-writer task lock, allocator, model knowledge,

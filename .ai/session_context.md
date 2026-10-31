@@ -1,8 +1,8 @@
 # Active Session Context Handoff
 
-**Last session status:** v2.1.0 Paper & Ink redesign of the shipped workbench,
-plus the preview-only design samples (Obsidian, Paper & Ink, Midnight, Studio,
-Liquid Glass); all gates green.
+**Last session status:** v2.2.0 Liquid Glass desktop - a bare launch opens the
+Liquid Glass workbench; the Paper & Ink workspace workbench (and remaining
+samples) stay behind `--workbench` / `--design-preview*`; all gates green.
 
 **Active blockers:** None.
 
