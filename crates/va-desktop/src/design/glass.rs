@@ -7253,8 +7253,21 @@ fn status_bar(
         ))
         .child(branch_chip(branch, repo_loading, cx))
         .child(separator())
-        .child(div().size(px(5.0)).rounded_full().bg(success()))
-        .child(div().text_color(ink_soft()).child("Everything builds"))
+        .child(
+            div()
+                .size(px(5.0))
+                .rounded_full()
+                .bg(if files > 0 { success() } else { ink_muted() }),
+        )
+        .child(
+            div()
+                .text_color(if files > 0 { ink_soft() } else { ink_muted() })
+                .child(if files > 0 {
+                    "Everything builds"
+                } else {
+                    "No checks yet"
+                }),
+        )
         .child(separator())
         .child(
             div()
