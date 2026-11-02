@@ -6,7 +6,7 @@
 //! drawer, and the nav rail. GPUI 0.2.2 has no in-app backdrop blur, so frost
 //! is approximated with translucent fills, specular edges, and long shadows.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::f32::consts::{FRAC_PI_2, TAU};
 use std::ops::Range;
 use std::path::PathBuf;
@@ -226,21 +226,13 @@ fn glass_fill_strong() -> Background {
 }
 
 fn nav_fill() -> Background {
-    // The nav floats over open drawer cards, so it frosts them almost solid -
-    // no diff numbers bleeding through the capsule.
-    if day() {
-        linear_gradient(
-            180.0,
-            linear_color_stop(rgba(0xFFFFFFF7), 0.0),
-            linear_color_stop(rgba(0xF6F1E8F0), 1.0),
-        )
-    } else {
-        linear_gradient(
-            180.0,
-            linear_color_stop(rgba(0x2C2C30F2), 0.0),
-            linear_color_stop(rgba(0x17171AF7), 1.0),
-        )
-    }
+    // The capsule stays black in both themes, matching the chrome reference:
+    // white line icons read cleanly over the frosted drawer underneath.
+    linear_gradient(
+        180.0,
+        linear_color_stop(rgba(0x1C1C1FFA), 0.0),
+        linear_color_stop(rgba(0x08080AF8), 1.0),
+    )
 }
 fn glass_border() -> Rgba {
     if day() {
@@ -250,11 +242,7 @@ fn glass_border() -> Rgba {
     }
 }
 fn nav_border() -> Rgba {
-    if day() {
-        tint(0x26)
-    } else {
-        rgba(0xFFFFFF4D)
-    }
+    rgba(0xFFFFFF24)
 }
 
 // The drawer floats over chat content, and GPUI 0.2.2 cannot blur what is
@@ -639,6 +627,7 @@ enum DrawerSection {
     Changes,
     Editor,
     History,
+    Settings,
 }
 
 impl DrawerSection {
@@ -648,6 +637,7 @@ impl DrawerSection {
             Self::Changes => "Changes",
             Self::Editor => "Editor",
             Self::History => "History",
+            Self::Settings => "Settings",
         }
     }
 
@@ -657,6 +647,7 @@ impl DrawerSection {
             Self::Changes => "files",
             Self::Editor => "code",
             Self::History => "history",
+            Self::Settings => "settings",
         }
     }
 
@@ -666,6 +657,7 @@ impl DrawerSection {
             Self::Changes => "Changes - Pin keeps it open",
             Self::Editor => "Editor - Pin keeps it open",
             Self::History => "History - Pin keeps it open",
+            Self::Settings => "Settings - Panel, checks and integrations",
         }
     }
 
@@ -675,11 +667,18 @@ impl DrawerSection {
             Self::Changes => "glass-body-changes",
             Self::Editor => "glass-body-editor",
             Self::History => "glass-body-history",
+            Self::Settings => "glass-body-settings",
         }
     }
 
     fn cycle(self, forward: bool) -> Self {
-        let all = [Self::Session, Self::Changes, Self::Editor, Self::History];
+        let all = [
+            Self::Session,
+            Self::Changes,
+            Self::Editor,
+            Self::History,
+            Self::Settings,
+        ];
         let index = all.iter().position(|s| *s == self).unwrap_or(0);
         all[if forward {
             (index + 1) % all.len()
@@ -836,6 +835,7 @@ fn section_chip(section: DrawerSection, changes: &[ChangeFile]) -> String {
         }
         DrawerSection::Editor => "Rust".to_string(),
         DrawerSection::History => "24 runs".to_string(),
+        DrawerSection::Settings => format!("v{}", env!("CARGO_PKG_VERSION")),
     }
 }
 
@@ -958,6 +958,14 @@ const SEARCH_ENTRIES: &[SearchEntry] = &[
         title: "Open History",
         meta: "Panel · recent runs",
         action: SearchAction::Section(DrawerSection::History),
+        recent: false,
+    },
+    SearchEntry {
+        id: "glass-search-settings-panel",
+        icon: "settings",
+        title: "Open Settings",
+        meta: "Panel · preferences, checks and about",
+        action: SearchAction::Section(DrawerSection::Settings),
         recent: false,
     },
     SearchEntry {
@@ -1249,6 +1257,8 @@ pub struct GlassPreview {
     search_index: usize,
     show_tokens: bool,
     show_warnings: bool,
+    context_hovered: bool,
+    compacted: HashSet<u64>,
     editor_file: EditorFile,
     selected_change: &'static str,
     all_runs: bool,
@@ -1332,6 +1342,8 @@ impl GlassPreview {
             search_index: 0,
             show_tokens: false,
             show_warnings: false,
+            context_hovered: false,
+            compacted: HashSet::new(),
             editor_file: EditorFile::Theme,
             selected_change: "theme.rs",
             all_runs: false,
@@ -1693,6 +1705,24 @@ impl GlassPreview {
         self.show_tokens = !self.show_tokens;
     }
 
+    fn compact_context(&mut self, cx: &mut Context<Self>) {
+        if self.active_thread().files == 0 {
+            return;
+        }
+        if self.compacted.insert(self.active_chat) {
+            cx.notify();
+        }
+    }
+
+    fn context_used(&self, files: usize) -> f32 {
+        let base = context_usage(files);
+        if self.compacted.contains(&self.active_chat) {
+            (base * 0.55 * 100.0).round() / 100.0
+        } else {
+            base
+        }
+    }
+
     fn toggle_warnings(&mut self) {
         self.show_warnings = !self.show_warnings;
     }
@@ -2032,6 +2062,7 @@ impl Render for GlassPreview {
         let search_index = self.search_index;
         let show_tokens = self.show_tokens;
         let show_warnings = self.show_warnings;
+        let context_hovered = self.context_hovered;
         let editor_file = self.editor_file;
         let selected_change = self.selected_change;
         let all_runs = self.all_runs;
@@ -2044,6 +2075,8 @@ impl Render for GlassPreview {
         let web_search = self.web_search;
         let attachments = self.attachments.clone();
         let chat = self.active_thread().clone();
+        let context_used = self.context_used(chat.files);
+        let compacted = self.compacted.contains(&self.active_chat);
         let changes = changes_for(chat.files);
         let live_run = matches!(chat.kind, ChatKind::Workbench);
         let draft = self.draft.clone();
@@ -2127,11 +2160,10 @@ impl Render for GlassPreview {
                                     .child(conversation(
                                         &thread_scroll,
                                         ConversationState {
-                                            pinned: nav_pinned,
-                                            show_tokens,
-                                            show_warnings,
                                             compact,
                                             applied,
+                                            show_tokens,
+                                            context_used,
                                             chat: chat.clone(),
                                             chat_epoch,
                                             sent,
@@ -2168,7 +2200,12 @@ impl Render for GlassPreview {
                             pinned: nav_pinned,
                             section,
                             section_epoch,
+                            day,
+                            show_tokens,
                             show_warnings,
+                            context_hovered,
+                            context_used,
+                            compacted,
                             editor_file,
                             selected_change,
                             all_runs,
@@ -2199,7 +2236,7 @@ impl Render for GlassPreview {
                     content
                 }
             })
-            .child(status_bar(mode, nav_pinned, chat.files))
+            .child(status_bar(mode, nav_pinned, chat.files, cx))
     }
 }
 
@@ -2971,11 +3008,10 @@ fn project_chip() -> Stateful<Div> {
 // -------------------------------------------------------------- conversation
 
 struct ConversationState {
-    pinned: bool,
-    show_tokens: bool,
-    show_warnings: bool,
     compact: bool,
     applied: bool,
+    show_tokens: bool,
+    context_used: f32,
     chat: ChatThread,
     chat_epoch: usize,
     sent: Vec<SentMessage>,
@@ -2998,11 +3034,10 @@ fn conversation(
     cx: &mut Context<GlassPreview>,
 ) -> Div {
     let ConversationState {
-        pinned,
-        show_tokens,
-        show_warnings,
         compact,
         applied,
+        show_tokens,
+        context_used,
         chat,
         chat_epoch,
         sent,
@@ -3125,13 +3160,6 @@ fn conversation(
                         )),
                 ),
         )
-        .child(suggestions(
-            pinned,
-            show_tokens,
-            show_warnings,
-            chat.files > 0,
-            cx,
-        ))
         .child(composer(
             compact,
             draft,
@@ -3143,7 +3171,7 @@ fn conversation(
             &attachments,
             web_search,
             show_tokens,
-            chat.files,
+            context_used,
             typo_notice,
             cx,
         ))
@@ -3460,7 +3488,8 @@ fn intro_turn() -> Div {
             .child(
                 "Took the sketch: chats on the left, the model pill up top, and a nav at the \
                  right edge. Hover a nav icon to open its panel - Session, Changes, Editor, \
-                 History. Pin keeps it open; the context ring sits beneath the nav.",
+                 History, Settings. Pin keeps it open; hover the context orb for usage, click \
+                 it to compact.",
             ),
     )
 }
@@ -3645,10 +3674,12 @@ fn work_card(compact: bool, applied: bool, cx: &mut Context<GlassPreview>) -> Di
                 ),
         )
         .child(check_line(
-            "Nav opens Session, Changes, Editor and History on hover",
+            "Nav opens Session, Changes, Editor, History and Settings on hover",
         ))
         .child(check_line("Pin in the panel header keeps it open"))
-        .child(check_line("Progress ring shows the 62% context window"))
+        .child(check_line(
+            "Context orb shows usage and compacts on click",
+        ))
         .child(check_line(
             "Live chat still steers the run without stopping it",
         ))
@@ -4011,97 +4042,6 @@ fn diff_row(sign: &'static str, wash: Option<Rgba>, spans: &[(&'static str, Rgba
         }))
 }
 
-fn suggestions(
-    pinned: bool,
-    show_tokens: bool,
-    show_warnings: bool,
-    has_checks: bool,
-    cx: &mut Context<GlassPreview>,
-) -> Div {
-    div()
-        .w_full()
-        .flex()
-        .justify_center()
-        .px(px(20.0))
-        .pb(px(14.0))
-        .child(
-            div()
-                .w_full()
-                .max_w(px(720.0))
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap(px(6.0))
-                .child(suggestion(
-                    "glass-suggest-pin",
-                    if pinned {
-                        "Unpin the panel"
-                    } else {
-                        "Pin the panel"
-                    },
-                    pinned,
-                    |this, cx| this.set_pinned(!this.nav_pinned, cx),
-                    cx,
-                ))
-                .child(suggestion(
-                    "glass-suggest-tokens",
-                    if show_tokens {
-                        "Hide token counts"
-                    } else {
-                        "Show token counts"
-                    },
-                    show_tokens,
-                    |this, _cx| this.toggle_tokens(),
-                    cx,
-                ))
-                // A chat that has not run anything has no warnings to explain;
-                // offering the chip would promise content that does not exist.
-                .when(has_checks, |this| {
-                    this.child(suggestion(
-                        "glass-suggest-warnings",
-                        if show_warnings {
-                            "Hide warnings"
-                        } else {
-                            "Explain warnings"
-                        },
-                        show_warnings,
-                        |this, cx| this.explain_warnings(cx),
-                        cx,
-                    ))
-                }),
-        )
-}
-
-fn suggestion(
-    id: &'static str,
-    label: &'static str,
-    active: bool,
-    action: impl Fn(&mut GlassPreview, &mut Context<GlassPreview>) + 'static,
-    cx: &mut Context<GlassPreview>,
-) -> Stateful<Div> {
-    div()
-        .id(id)
-        .flex()
-        .items_center()
-        .h(px(28.0))
-        .px(px(11.0))
-        .rounded_full()
-        .bg(tint(0x0C))
-        .border_1()
-        .border_color(if active { brand_line() } else { panel_border() })
-        .text_size(px(11.5))
-        .text_color(if active { ink() } else { ink_soft() })
-        .cursor_pointer()
-        .when(active, |this| this.bg(brand_tint()))
-        .when(!active, |this| this.hover(|style| style.bg(hover_wash())))
-        .active(|style| style.bg(press_wash()))
-        .on_click(cx.listener(move |this, _event, _window, cx| {
-            action(this, cx);
-            cx.notify();
-        }))
-        .child(label)
-}
-
 #[allow(clippy::too_many_arguments)]
 fn composer(
     compact: bool,
@@ -4114,28 +4054,28 @@ fn composer(
     attachments: &[Attachment],
     web_search: bool,
     show_tokens: bool,
-    files: usize,
+    context_used: f32,
     typo_notice: Option<usize>,
     cx: &mut Context<GlassPreview>,
 ) -> Div {
     let ready = !draft.trim().is_empty();
     // Keep the token figure and the context ring in agreement: both derive
     // from the active chat, so an empty chat reads zero.
-    let token_label = if files == 0 {
+    let token_label = if context_used == 0.0 {
         if compact {
             "0".to_string()
         } else {
             "0 / 120k".to_string()
         }
     } else {
-        let tokens = (context_usage(files) * 120.0).round() as u32;
+        let tokens = (context_used * 120.0).round() as u32;
         if compact {
             format!("{tokens}k")
         } else {
             format!("{tokens}k / 120k")
         }
     };
-    let token_tip = if files == 0 {
+    let token_tip = if context_used == 0.0 {
         "No context used yet"
     } else {
         "Context window used by this chat"
@@ -4238,15 +4178,22 @@ fn composer(
                         .child(div().flex_1())
                         // Usage sits next to the composer controls, so the
                         // toggle gives feedback even when the drawer is shut.
+                        .child(composer_icon(
+                            "glass-tokens",
+                            "gauge",
+                            token_tip,
+                            show_tokens,
+                            |this, _cx| this.toggle_tokens(),
+                            cx,
+                        ))
                         .when(show_tokens, |this| {
                             this.child(
                                 div()
                                     .id("glass-token-count")
-                                    .pr(px(6.0))
+                                    .pr(px(2.0))
                                     .font_family(theme::code_font())
                                     .text_size(px(10.5))
                                     .text_color(ink_muted())
-                                    .tooltip(hint(token_tip))
                                     .child(token_label),
                             )
                         })
@@ -5895,7 +5842,12 @@ fn live_dot() -> AnyElement {
 
 // ------------------------------------------------------------------ overlay
 
-fn status_bar(mode: ExecutionMode, pinned: bool, files: usize) -> Div {
+fn status_bar(
+    mode: ExecutionMode,
+    pinned: bool,
+    files: usize,
+    cx: &mut Context<GlassPreview>,
+) -> Div {
     div()
         .h(px(STATUS))
         .flex_shrink_0()
@@ -5939,7 +5891,42 @@ fn status_bar(mode: ExecutionMode, pinned: bool, files: usize) -> Div {
         .child(div().size(px(5.0)).rounded_full().bg(success()))
         .child(div().text_color(ink_soft()).child("Everything builds"))
         .child(separator())
-        .child(div().child("3 minor warnings"))
+        .child(
+            div()
+                .id("status-warnings")
+                .flex()
+                .items_center()
+                .gap(px(5.0))
+                .h(px(20.0))
+                .px(px(7.0))
+                .rounded(px(6.0))
+                .when(files > 0, |this| {
+                    this.bg(tint(0x0A))
+                        .border_1()
+                        .border_color(panel_border_soft())
+                        .cursor_pointer()
+                        .tooltip(hint("Explain warnings"))
+                        .hover(|style| style.bg(hover_wash()))
+                        .active(|style| style.bg(press_wash()))
+                        .on_click(cx.listener(|this, _event, _window, cx| {
+                            this.explain_warnings(cx);
+                        }))
+                })
+                .child(icon(
+                    "triangle-alert",
+                    11.0,
+                    if files > 0 { warning() } else { ink_muted() },
+                ))
+                .child(
+                    div()
+                        .text_color(if files > 0 { ink_soft() } else { ink_muted() })
+                        .child(if files > 0 {
+                            "3 minor warnings"
+                        } else {
+                            "No warnings"
+                        }),
+                ),
+        )
         .child(div().flex_1())
         .child(div().child(if files > 0 {
             format!("{files} files changed")
@@ -5988,7 +5975,12 @@ struct EdgeState {
     pinned: bool,
     section: DrawerSection,
     section_epoch: usize,
+    day: bool,
+    show_tokens: bool,
     show_warnings: bool,
+    context_hovered: bool,
+    context_used: f32,
+    compacted: bool,
     editor_file: EditorFile,
     selected_change: &'static str,
     all_runs: bool,
@@ -6220,10 +6212,196 @@ fn section_body(state: EdgeState, cx: &mut Context<GlassPreview>) -> Div {
             .gap(px(10.0))
             .child(history_card(state.active_chat, state.all_runs, cx))
             .child(run_stats_card().flex_grow()),
+        DrawerSection::Settings => div()
+            .flex()
+            .flex_col()
+            .gap(px(10.0))
+            .child(settings_card(state, cx))
+            .child(settings_about_card().flex_grow()),
     };
     // The scroll content fills the viewport when it is short, so the section
     // can absorb spare height instead of ending in a band of empty drawer.
     body.flex_grow().flex_shrink_0()
+}
+
+fn settings_card(state: EdgeState, cx: &mut Context<GlassPreview>) -> Div {
+    panel_card()
+        .flex_shrink_0()
+        .p(px(12.0))
+        .pr(px(DRAWER_CARD_RIGHT))
+        .flex()
+        .flex_col()
+        .gap(px(4.0))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .pb(px(4.0))
+                .child(
+                    div()
+                        .text_size(px(12.5))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(ink())
+                        .child("Preferences"),
+                ),
+        )
+        .child(setting_row(
+            "sun",
+            "Day theme",
+            "Light surface for bright rooms",
+            setting_switch("settings-theme", state.day, |this, cx| {
+                this.toggle_theme(cx);
+            }, cx),
+        ))
+        .child(setting_row(
+            "gauge",
+            "Token counts",
+            "Show context usage beside the composer",
+            setting_switch("settings-tokens", state.show_tokens, |this, _cx| {
+                this.toggle_tokens();
+            }, cx),
+        ))
+        .child(setting_row(
+            "pin",
+            "Keep panel open",
+            "The panel stays put when the pointer leaves",
+            setting_switch("settings-pin", state.pinned, |this, cx| {
+                this.set_pinned(!this.nav_pinned, cx);
+            }, cx),
+        ))
+        .child(setting_row(
+            "triangle-alert",
+            "Checks",
+            "Three minor warnings in this chat",
+            link_button("settings-warnings", "Explain").on_click(cx.listener(
+                |this, _event, _window, cx| {
+                    this.explain_warnings(cx);
+                },
+            )),
+        ))
+}
+
+fn setting_row(
+    icon_name: &'static str,
+    label: &'static str,
+    detail: &'static str,
+    trailing: impl IntoElement,
+) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(10.0))
+        .h(px(42.0))
+        .px(px(2.0))
+        .child(
+            div()
+                .size(px(28.0))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(8.0))
+                .bg(tint(0x0C))
+                .child(icon(icon_name, 14.0, ink_soft())),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(px(1.0))
+                .child(
+                    div()
+                        .text_size(px(12.5))
+                        .text_color(ink_soft())
+                        .child(label),
+                )
+                .child(
+                    div()
+                        .text_size(px(10.5))
+                        .text_color(ink_muted())
+                        .child(detail),
+                ),
+        )
+        .child(trailing)
+}
+
+fn setting_switch(
+    id: &'static str,
+    on: bool,
+    action: impl Fn(&mut GlassPreview, &mut Context<GlassPreview>) + 'static,
+    cx: &mut Context<GlassPreview>,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .w(px(34.0))
+        .h(px(20.0))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .when(on, |this| this.justify_end())
+        .when(!on, |this| this.justify_start())
+        .p(px(2.0))
+        .rounded_full()
+        .bg(if on { brand() } else { tint(0x1C) })
+        .border_1()
+        .border_color(if on { brand_line() } else { panel_border() })
+        .cursor_pointer()
+        .hover(|style| style.opacity(0.9))
+        .active(|style| style.opacity(0.8))
+        .on_click(cx.listener(move |this, _event, _window, cx| {
+            action(this, cx);
+            cx.notify();
+        }))
+        .child(
+            div()
+                .size(px(16.0))
+                .rounded_full()
+                .bg(if on { rgb(0x111113) } else { ink_muted() }),
+        )
+}
+
+fn settings_about_card() -> Div {
+    panel_card()
+        .flex_shrink_0()
+        .p(px(12.0))
+        .pr(px(DRAWER_CARD_RIGHT))
+        .flex()
+        .flex_col()
+        .gap(px(4.0))
+        .child(
+            div()
+                .pb(px(4.0))
+                .text_size(px(12.5))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(ink())
+                .child("About"),
+        )
+        .child(about_row("Vibe Assembly", env!("CARGO_PKG_VERSION")))
+        .child(about_row("License", "Apache-2.0"))
+        .child(about_row("Renderer", "Native GPUI"))
+}
+
+fn about_row(label: &'static str, value: &'static str) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .h(px(26.0))
+        .child(
+            div()
+                .text_size(px(12.0))
+                .text_color(ink_soft())
+                .child(label),
+        )
+        .child(div().flex_1())
+        .child(
+            div()
+                .font_family(theme::code_font())
+                .text_size(px(11.0))
+                .text_color(ink_muted())
+                .child(value),
+        )
 }
 
 fn no_changes_card() -> Div {
@@ -6274,11 +6452,19 @@ fn nav_column(state: EdgeState, focus: &FocusHandle, cx: &mut Context<GlassPrevi
         .justify_center()
         .gap(px(14.0))
         .child(nav_capsule(section, focus, cx))
-        .child(context_indicator(state.changes.len()))
+        .child(context_indicator(state, cx))
 }
 
-fn context_indicator(files: usize) -> Stateful<Div> {
-    let used = context_usage(files);
+fn context_indicator(state: EdgeState, cx: &mut Context<GlassPreview>) -> Stateful<Div> {
+    let used = state.context_used;
+    let hovered = state.context_hovered;
+    let tooltip = if used == 0.0 {
+        "No context used yet"
+    } else if state.compacted {
+        "Context compacted - click to compact again"
+    } else {
+        "Context window - click to compact"
+    };
     div()
         .id("glass-context")
         .block_mouse_except_scroll()
@@ -6292,12 +6478,18 @@ fn context_indicator(files: usize) -> Stateful<Div> {
         .border_1()
         .border_color(nav_border())
         .shadow(glass_shadow())
-        .tooltip(hint(if files == 0 {
-            "No context used yet"
-        } else {
-            "Context window used by this chat"
+        .cursor_pointer()
+        .when(!hovered, |this| this.tooltip(hint(tooltip)))
+        .on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
+            if this.context_hovered != *hovered {
+                this.context_hovered = *hovered;
+                cx.notify();
+            }
         }))
-        .child(context_ring(used))
+        .on_click(cx.listener(|this, _event, _window, cx| {
+            this.compact_context(cx);
+        }))
+        .child(context_ring(used, hovered))
 }
 
 fn nav_capsule(
@@ -6380,6 +6572,11 @@ fn nav_capsule(
             section == DrawerSection::History,
             cx,
         ))
+        .child(nav_icon(
+            DrawerSection::Settings,
+            section == DrawerSection::Settings,
+            cx,
+        ))
 }
 
 fn nav_icon(section: DrawerSection, active: bool, cx: &mut Context<GlassPreview>) -> AnyElement {
@@ -6388,6 +6585,7 @@ fn nav_icon(section: DrawerSection, active: bool, cx: &mut Context<GlassPreview>
         DrawerSection::Changes => "edge-files",
         DrawerSection::Editor => "edge-code",
         DrawerSection::History => "edge-history",
+        DrawerSection::Settings => "edge-settings",
     };
     div()
         .id(id)
@@ -6402,12 +6600,12 @@ fn nav_icon(section: DrawerSection, active: bool, cx: &mut Context<GlassPreview>
         .tooltip(hint(section.tooltip()))
         .when(active, |this| {
             this.child(active_halo())
-                .bg(rgba(0xFDCC0233))
+                .bg(rgba(0xFDCC0226))
                 .border_1()
-                .border_color(brand_line())
+                .border_color(rgba(0xFDCC0266))
         })
-        .when(!active, |this| this.hover(|style| style.bg(hover_wash())))
-        .active(|style| style.bg(press_wash()))
+        .when(!active, |this| this.hover(|style| style.bg(rgba(0xFFFFFF14))))
+        .active(|style| style.bg(rgba(0xFFFFFF1F)))
         .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
             if !*hovered {
                 return;
@@ -6424,12 +6622,14 @@ fn nav_icon(section: DrawerSection, active: bool, cx: &mut Context<GlassPreview>
         .child(icon(
             section.icon(),
             17.0,
-            if active { brand() } else { ink_soft() },
+            if active { brand() } else { rgba(0xFFFFFFD9) },
         ))
         .into_any_element()
 }
 
-fn context_ring(used: f32) -> impl IntoElement {
+fn context_ring(used: f32, hovered: bool) -> impl IntoElement {
+    let percent = (used * 100.0).round() as i32;
+    let tokens = (used * 120.0).round() as u32;
     div()
         .size(px(CONTEXT_RING))
         .flex_shrink_0()
@@ -6443,49 +6643,82 @@ fn context_ring(used: f32) -> impl IntoElement {
                     let radius = (bounds.size.width - stroke) / 2.0;
                     let top = point(center.x, center.y - radius);
                     let bottom = point(center.x, center.y + radius);
-                    let mut track = PathBuilder::stroke(stroke);
-                    track.move_to(top);
-                    track.arc_to(point(radius, radius), px(0.0), false, true, bottom);
-                    track.arc_to(point(radius, radius), px(0.0), false, true, top);
-                    if let Ok(path) = track.build() {
-                        window.paint_path(path, tint(0x24));
-                    }
-                    let end_angle = -FRAC_PI_2 + TAU * used;
-                    let end = point(
-                        center.x + radius * end_angle.cos(),
-                        center.y + radius * end_angle.sin(),
-                    );
-                    let mut arc = PathBuilder::stroke(stroke);
-                    arc.move_to(top);
-                    arc.arc_to(point(radius, radius), px(0.0), used > 0.5, true, end);
-                    if let Ok(path) = arc.build() {
-                        window.paint_path(path, brand());
+                    let arc_point = |angle: f32| {
+                        point(
+                            center.x + radius * angle.cos(),
+                            center.y + radius * angle.sin(),
+                        )
+                    };
+                    if hovered {
+                        let mut track = PathBuilder::stroke(stroke);
+                        track.move_to(top);
+                        track.arc_to(point(radius, radius), px(0.0), false, true, bottom);
+                        track.arc_to(point(radius, radius), px(0.0), false, true, top);
+                        if let Ok(path) = track.build() {
+                            window.paint_path(path, rgba(0xFFFFFF2E));
+                        }
+                        let end_angle = -FRAC_PI_2 + TAU * used;
+                        let mut arc = PathBuilder::stroke(stroke);
+                        arc.move_to(top);
+                        arc.arc_to(
+                            point(radius, radius),
+                            px(0.0),
+                            used > 0.5,
+                            true,
+                            arc_point(end_angle),
+                        );
+                        if let Ok(path) = arc.build() {
+                            window.paint_path(path, brand());
+                        }
+                    } else {
+                        // A short yellow dash at the bottom until the pointer
+                        // arrives; hovering completes it into the full ring.
+                        let start = TAU * 0.16;
+                        let end = TAU * 0.34;
+                        let mut dash = PathBuilder::stroke(stroke);
+                        dash.move_to(arc_point(start));
+                        dash.arc_to(point(radius, radius), px(0.0), false, true, arc_point(end));
+                        if let Ok(path) = dash.build() {
+                            window.paint_path(
+                                path,
+                                if used > 0.0 {
+                                    brand()
+                                } else {
+                                    rgba(0xFFFFFF33)
+                                },
+                            );
+                        }
                     }
                 },
             )
             .size_full(),
         )
-        .child(
-            div()
-                .absolute()
-                .top_0()
-                .left_0()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    div()
-                        .text_size(px(10.0))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(if used > 0.0 {
-                            brand_text()
-                        } else {
-                            ink_muted()
-                        })
-                        .child(format!("{}%", (used * 100.0).round() as i32)),
-                ),
-        )
+        .when(hovered, |this| {
+            this.child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(brand())
+                            .child(format!("{percent}%")),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(8.0))
+                            .text_color(rgba(0xFFFFFF99))
+                            .child(format!("{tokens}k/120k")),
+                    ),
+            )
+        })
 }
 
 fn active_halo() -> Div {
