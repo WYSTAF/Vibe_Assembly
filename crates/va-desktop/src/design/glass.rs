@@ -7719,7 +7719,7 @@ fn github_card(repo: &RepoSnapshot, cx: &mut Context<GlassPreview>) -> Div {
         .when_some(repo.note.as_deref(), |this, note| {
             this.child(
                 div()
-                    .pt(px(2.0))
+                    .pt(px(8.0))
                     .text_size(px(10.5))
                     .text_color(if repo.note_error { warning() } else { success() })
                     .child(ellipsize(note, 120)),
