@@ -1525,6 +1525,7 @@ impl GlassPreview {
             SearchAction::Warnings => {
                 self.show_warnings = true;
                 self.reveal_section(DrawerSection::Session, true, cx);
+                self.scroll_to_warnings(cx);
             }
             SearchAction::Pin => {
                 let next = !self.nav_pinned;
@@ -2068,7 +2069,6 @@ impl Render for GlassPreview {
                             pinned: nav_pinned,
                             section,
                             section_epoch,
-                            show_tokens,
                             show_warnings,
                             editor_file,
                             selected_change,
@@ -2934,7 +2934,9 @@ fn conversation(
         .border_1()
         .border_color(panel_border())
         .shadow(panel_shadow())
-        .child(conversation_header(compact, &chat, model, model_menu, cx))
+        .child(conversation_header(
+            compact, &chat, model, model_menu, show_tokens, cx,
+        ))
         .child(
             div()
                 .flex_1()
@@ -3007,6 +3009,21 @@ fn conversation(
                             180.0,
                             linear_color_stop(panel_top_fade(0xFF), 0.0),
                             linear_color_stop(panel_top_fade(0x00), 1.0),
+                        )),
+                )
+                // Scrolled-up content also meets the composer; soften that cut
+                // the same way as the header edge.
+                .child(
+                    div()
+                        .absolute()
+                        .bottom_0()
+                        .left_0()
+                        .right_0()
+                        .h(px(20.0))
+                        .bg(linear_gradient(
+                            180.0,
+                            linear_color_stop(panel_top_fade(0x00), 0.0),
+                            linear_color_stop(panel_top_fade(0xFF), 1.0),
                         )),
                 ),
         )
@@ -3122,6 +3139,7 @@ fn conversation_header(
     chat: &ChatThread,
     model: usize,
     model_menu: bool,
+    show_tokens: bool,
     cx: &mut Context<GlassPreview>,
 ) -> Div {
     let status = match chat.kind {
@@ -3217,6 +3235,9 @@ fn conversation_header(
                 .items_center()
                 .justify_end()
                 .gap(px(4.0))
+                // The count lives on the conversation itself, so the toggle
+                // has visible feedback whether or not the drawer is open.
+                .when(show_tokens, |this| this.child(soft_chip("75k / 120k")))
                 // At full width both sides grow so the pill stays centred; in
                 // compact the title needs the whole remainder instead.
                 .when(!compact, |this| this.flex_1().child(soft_chip(chip)))
@@ -4162,7 +4183,6 @@ fn send_button(ready: bool, cx: &mut Context<GlassPreview>) -> Stateful<Div> {
 fn drawer_header(
     section: DrawerSection,
     pinned: bool,
-    show_tokens: bool,
     focus: &FocusHandle,
     cx: &mut Context<GlassPreview>,
 ) -> Div {
@@ -4182,7 +4202,6 @@ fn drawer_header(
                 .child(section.title()),
         )
         .child(soft_chip(section.chip()))
-        .when(show_tokens, |this| this.child(soft_chip("75k / 120k")))
         .child(div().flex_1())
         .child(pin_toggle(pinned, focus, cx))
         .child(drawer_close(cx))
@@ -5536,7 +5555,6 @@ struct EdgeState {
     pinned: bool,
     section: DrawerSection,
     section_epoch: usize,
-    show_tokens: bool,
     show_warnings: bool,
     editor_file: EditorFile,
     selected_change: &'static str,
@@ -5603,7 +5621,6 @@ fn edge_drawer(
         pinned,
         section,
         section_epoch,
-        show_tokens,
         ..
     } = state;
     div()
@@ -5631,7 +5648,7 @@ fn edge_drawer(
                 .flex_col()
                 .gap(px(10.0))
                 .p(px(12.0))
-                .child(drawer_header(section, pinned, show_tokens, focus, cx))
+                .child(drawer_header(section, pinned, focus, cx))
                 .child(
                     div()
                         .flex_1()
