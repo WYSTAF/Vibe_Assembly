@@ -963,8 +963,8 @@ const SEARCH_ENTRIES: &[SearchEntry] = &[
     SearchEntry {
         id: "glass-search-tokens",
         icon: "sparkles",
-        title: "Toggle glass tokens",
-        meta: "Command · Appearance",
+        title: "Show or hide token counts",
+        meta: "Command · Composer",
         action: SearchAction::Tokens,
         recent: true,
     },
@@ -5551,9 +5551,9 @@ fn history_card(active_chat: u64, all_runs: bool, cx: &mut Context<GlassPreview>
                     link_button(
                         "glass-open-history",
                         if all_runs {
-                            "Show less"
+                            "Show recent"
                         } else {
-                            "View all runs"
+                            "View more runs"
                         },
                     )
                     .on_click(cx.listener(|this, _event, _window, cx| {
@@ -6748,10 +6748,12 @@ mod tests {
         assert!(files[2..].iter().all(|entry| entry.action.rank() == 2));
 
         let appearance = filter_entries(SEARCH_ENTRIES, "appearance");
-        assert_eq!(appearance.len(), 2);
-        assert!(appearance.iter().all(
-            |entry| entry.title.contains("glass tokens") || entry.title.contains("day / night")
-        ));
+        assert_eq!(appearance.len(), 1);
+        assert!(matches!(appearance[0].action, SearchAction::Theme));
+
+        let tokens = filter_entries(SEARCH_ENTRIES, "token counts");
+        assert_eq!(tokens.len(), 1);
+        assert!(matches!(tokens[0].action, SearchAction::Tokens));
 
         let changes = filter_entries(SEARCH_ENTRIES, "  CHANGES  ");
         assert_eq!(changes.len(), 1);
