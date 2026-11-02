@@ -3147,14 +3147,6 @@ fn conversation(
             typo_notice,
             cx,
         ))
-        .child(
-            div().w_full().flex().justify_center().pb(px(12.0)).child(
-                div()
-                    .text_size(px(10.5))
-                    .text_color(ink_muted())
-                    .child("Vibe can make mistakes - review every change before you apply."),
-            ),
-        )
         .when(model_menu, |this| {
             this.child(
                 div()
@@ -4258,14 +4250,6 @@ fn composer(
                                     .child(token_label),
                             )
                         })
-                        .child(
-                            div()
-                                .pr(px(4.0))
-                                .font_family(theme::code_font())
-                                .text_size(px(10.5))
-                                .text_color(ink_muted())
-                                .child("Rust"),
-                        )
                         .child(send_button(ready, cx)),
                 ),
         )

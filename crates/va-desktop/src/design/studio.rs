@@ -506,9 +506,10 @@ fn conversation() -> Div {
         )
         .child(composer())
         .child(div().w_full().flex().justify_center().pb(px(12.0)).child(
-            div().text_size(px(10.0)).text_color(ink_muted()).child(
-                "Vibe can make mistakes - review every change before you apply. · 62% context used",
-            ),
+            div()
+                .text_size(px(10.0))
+                .text_color(ink_muted())
+                .child("62% context used"),
         ))
 }
 

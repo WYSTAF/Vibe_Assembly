@@ -464,14 +464,6 @@ fn conversation() -> Div {
                 ),
         )
         .child(composer())
-        .child(
-            div().w_full().flex().justify_center().pb(px(10.0)).child(
-                div()
-                    .text_size(px(10.0))
-                    .text_color(ink_muted())
-                    .child("Vibe can make mistakes - review every change before you apply."),
-            ),
-        )
 }
 
 fn conversation_header() -> Div {

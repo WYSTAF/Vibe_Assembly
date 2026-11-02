@@ -502,9 +502,7 @@ pub fn render(
                     cx.notify();
                 }))
                 .child(format!("{}% context", state.context_pct)),
-        )
-        .child(div().flex_1())
-        .child("Vibe can make mistakes - review every change before you apply it.");
+        );
 
     div()
         .flex_1()
