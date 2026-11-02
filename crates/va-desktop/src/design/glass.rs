@@ -1234,7 +1234,6 @@ pub struct GlassPreview {
     show_warnings: bool,
     editor_file: EditorFile,
     selected_change: &'static str,
-    selected_run: &'static str,
     all_runs: bool,
     applied_chats: Vec<u64>,
     chats: Vec<ChatThread>,
@@ -1314,7 +1313,6 @@ impl GlassPreview {
             show_warnings: false,
             editor_file: EditorFile::Theme,
             selected_change: "theme.rs",
-            selected_run: "Restyle the workbench",
             all_runs: false,
             applied_chats: Vec::new(),
             chats,
@@ -2012,7 +2010,6 @@ impl Render for GlassPreview {
         let show_warnings = self.show_warnings;
         let editor_file = self.editor_file;
         let selected_change = self.selected_change;
-        let selected_run = self.selected_run;
         let all_runs = self.all_runs;
         let applied = self.applied_chats.contains(&self.active_chat);
         let chats = self.chats.clone();
@@ -2150,8 +2147,8 @@ impl Render for GlassPreview {
                             show_warnings,
                             editor_file,
                             selected_change,
-                            selected_run,
                             all_runs,
+                            active_chat,
                             changes,
                             applied,
                             live: live_run,
@@ -5390,7 +5387,7 @@ fn code_line(no: &'static str, spans: &[(&'static str, Rgba)]) -> Div {
         )
 }
 
-fn history_card(selected: &'static str, all_runs: bool, cx: &mut Context<GlassPreview>) -> Div {
+fn history_card(active_chat: u64, all_runs: bool, cx: &mut Context<GlassPreview>) -> Div {
     let shown = if all_runs { 12 } else { 6 };
     panel_card()
         .flex_shrink_0()
@@ -5419,21 +5416,24 @@ fn history_card(selected: &'static str, all_runs: bool, cx: &mut Context<GlassPr
             "glass-hist-1",
             "Restyle the workbench",
             "Now · 6 files changed",
-            selected == "Restyle the workbench",
+            Some(0),
+            active_chat,
             cx,
         ))
         .child(history_row(
             "glass-hist-2",
             "Glass dock, round two",
             "42m ago · 4 files changed",
-            selected == "Glass dock, round two",
+            Some(1),
+            active_chat,
             cx,
         ))
         .child(history_row(
             "glass-hist-3",
             "Midnight palette pass",
             "2h ago · 9 files changed",
-            selected == "Midnight palette pass",
+            Some(2),
+            active_chat,
             cx,
         ))
         .child(chat_section_label("YESTERDAY"))
@@ -5441,65 +5441,76 @@ fn history_card(selected: &'static str, all_runs: bool, cx: &mut Context<GlassPr
             "glass-hist-4",
             "Paper & Ink rollout",
             "21:40 · 12 files changed",
-            selected == "Paper & Ink rollout",
+            Some(3),
+            active_chat,
             cx,
         ))
         .child(history_row(
             "glass-hist-5",
             "Studio direction",
             "15:15 · 2 files changed",
-            selected == "Studio direction",
+            Some(4),
+            active_chat,
             cx,
         ))
         .child(history_row(
             "glass-hist-6",
             "Obsidian first look",
             "11:02 · no changes",
-            selected == "Obsidian first look",
+            Some(5),
+            active_chat,
             cx,
         ))
         .when(all_runs, |this| {
+            // Archived runs have no chat left in the rail, so they are
+            // informational only — no pointer, no click, no chevron.
             this.child(chat_section_label("LAST WEEK"))
                 .child(history_row(
                     "glass-hist-7",
                     "Dock spacing pass",
                     "Mon 18:20 · 3 files changed",
-                    selected == "Dock spacing pass",
+                    None,
+                    active_chat,
                     cx,
                 ))
                 .child(history_row(
                     "glass-hist-8",
                     "Context ring math",
                     "Mon 14:05 · 2 files changed",
-                    selected == "Context ring math",
+                    None,
+                    active_chat,
                     cx,
                 ))
                 .child(history_row(
                     "glass-hist-9",
                     "Glass nav overlay",
                     "Sun 16:40 · 7 files changed",
-                    selected == "Glass nav overlay",
+                    None,
+                    active_chat,
                     cx,
                 ))
                 .child(history_row(
                     "glass-hist-10",
                     "Search palette probe",
                     "Sat 11:12 · 5 files changed",
-                    selected == "Search palette probe",
+                    None,
+                    active_chat,
                     cx,
                 ))
                 .child(history_row(
                     "glass-hist-11",
                     "Day mode contrast",
                     "Fri 09:30 · 4 files changed",
-                    selected == "Day mode contrast",
+                    None,
+                    active_chat,
                     cx,
                 ))
                 .child(history_row(
                     "glass-hist-12",
                     "Type scale sweep",
                     "Thu 17:22 · 8 files changed",
-                    selected == "Type scale sweep",
+                    None,
+                    active_chat,
                     cx,
                 ))
         })
@@ -5651,9 +5662,12 @@ fn history_row(
     id: &'static str,
     title: &'static str,
     meta: &'static str,
-    active: bool,
+    chat: Option<u64>,
+    active_chat: u64,
     cx: &mut Context<GlassPreview>,
 ) -> Stateful<Div> {
+    let active = chat == Some(active_chat);
+    let clickable = chat.is_some();
     div()
         .id(id)
         .flex()
@@ -5669,15 +5683,16 @@ fn history_row(
             rgba(0x00000000)
         })
         .when(active, |this| this.bg(brand_tint()))
-        .when(!active, |this| {
+        .when(clickable, |this| this.cursor_pointer())
+        .when(clickable && !active, |this| {
             this.hover(|style| style.bg(hover_wash()))
                 .active(|style| style.bg(press_wash()))
         })
-        .cursor_pointer()
-        .on_click(cx.listener(move |this, _event, _window, cx| {
-            this.selected_run = title;
-            cx.notify();
-        }))
+        .when_some(chat, |this, chat| {
+            this.on_click(cx.listener(move |this, _event, window, cx| {
+                this.select_chat(chat, window, cx);
+            }))
+        })
         .child(
             div()
                 .size(px(24.0))
@@ -5716,7 +5731,9 @@ fn history_row(
                         .child(meta),
                 ),
         )
-        .child(icon("chevron-right", 12.0, ink_muted()))
+        .when(clickable, |this| {
+            this.child(icon("chevron-right", 12.0, ink_muted()))
+        })
 }
 
 // ---------------------------------------------------------------- live chat
@@ -5967,8 +5984,8 @@ struct EdgeState {
     show_warnings: bool,
     editor_file: EditorFile,
     selected_change: &'static str,
-    selected_run: &'static str,
     all_runs: bool,
+    active_chat: u64,
     changes: &'static [ChangeFile],
     applied: bool,
     live: bool,
@@ -6194,7 +6211,7 @@ fn section_body(state: EdgeState, cx: &mut Context<GlassPreview>) -> Div {
             .flex()
             .flex_col()
             .gap(px(10.0))
-            .child(history_card(state.selected_run, state.all_runs, cx))
+            .child(history_card(state.active_chat, state.all_runs, cx))
             .child(run_stats_card().flex_grow()),
     };
     // The scroll content fills the viewport when it is short, so the section
@@ -6757,5 +6774,24 @@ mod tests {
         assert_eq!(edge_reveal(false, 1, 0.0), 1.0);
         assert!((edge_reveal(true, 2, 0.25) - 0.25).abs() < f32::EPSILON);
         assert!((edge_reveal(false, 2, 0.25) - 0.75).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn history_rows_open_the_chat_with_the_same_title() {
+        let chats = seeded_chats();
+        for (id, title) in [
+            (0, "Restyle the workbench"),
+            (1, "Glass dock, round two"),
+            (2, "Midnight palette pass"),
+            (3, "Paper & Ink rollout"),
+            (4, "Studio direction"),
+            (5, "Obsidian first look"),
+        ] {
+            let chat = chats
+                .iter()
+                .find(|chat| chat.id == id)
+                .expect("history row should point at a seeded chat");
+            assert_eq!(chat.title, title);
+        }
     }
 }
