@@ -51,6 +51,7 @@ icon_set!(
     "square",
     "sun",
     "triangle-alert",
+    "undo-2",
     "x",
 );
 

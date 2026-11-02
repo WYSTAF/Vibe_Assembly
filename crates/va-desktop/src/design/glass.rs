@@ -3524,6 +3524,7 @@ fn work_card(compact: bool, applied: bool, cx: &mut Context<GlassPreview>) -> Di
                 .pt(px(2.0))
                 .child(apply_button(applied, cx))
                 .child(review_button(cx))
+                .when(applied, |this| this.child(undo_button(cx)))
                 .child(div().flex_1())
                 // Below ~600px the row has no room for the reassurance copy.
                 .when(!compact, |this| {
@@ -6141,6 +6142,34 @@ fn apply_button(applied: bool, cx: &mut Context<GlassPreview>) -> Stateful<Div> 
             if applied { success() } else { brand_ink() },
         ))
         .child(if applied { "Applied" } else { "Apply changes" })
+}
+
+fn undo_button(cx: &mut Context<GlassPreview>) -> Stateful<Div> {
+    div()
+        .id("glass-undo")
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap(px(5.0))
+        .h(px(32.0))
+        .px(px(12.0))
+        .rounded_full()
+        .bg(raised())
+        .border_1()
+        .border_color(panel_border())
+        .text_size(px(12.0))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(ink_soft())
+        .cursor_pointer()
+        .hover(|style| style.bg(hover_wash()))
+        .active(|style| style.bg(press_wash()))
+        .tooltip(hint("Undo the applied changes"))
+        .on_click(cx.listener(|this, _event, _window, cx| {
+            this.applied = false;
+            cx.notify();
+        }))
+        .child(icon("undo-2", 12.0, ink_soft()))
+        .child("Undo")
 }
 
 fn review_button(cx: &mut Context<GlassPreview>) -> Stateful<Div> {
