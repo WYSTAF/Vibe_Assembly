@@ -218,7 +218,7 @@ fn titlebar() -> Div {
                     div()
                         .text_size(px(10.5))
                         .text_color(ink_muted())
-                        .child("Synced just now"),
+                        .child("Local-first workspace"),
                 ),
         )
         .child(div().flex_1())
