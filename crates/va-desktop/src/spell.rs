@@ -1,10 +1,22 @@
-//! Prompt spellcheck: a curated typo table and case-preserving corrections.
+//! Prompt spellcheck: curated fixes plus a dictionary-backed typo detector.
 //!
-//! Only exact, unambiguous misspellings are corrected — valid words such as
-//! "form", "its" and "cant"-as-a-noun are left alone. Words inside backticks,
-//! paths, URLs, handles and identifiers are never touched.
+//! The curated table catches ambiguous misspellings exactly. Anything else is
+//! compared against an embedded dictionary, and lowercase words that are one
+//! edit away from a common word are underlined. Words inside backticks, paths,
+//! URLs, handles and identifiers are never touched.
 
+use std::cmp::Ordering;
+use std::collections::HashSet;
 use std::ops::Range;
+use std::sync::OnceLock;
+
+const DICTIONARY: &str = include_str!("../assets/dictionary.txt");
+const BANDS: &str = include_str!("../assets/bands.txt");
+const VOCAB: &str = include_str!("../assets/vocab.txt");
+
+/// Below this score a dictionary match is too weak to show.
+const MIN_SCORE: u32 = 1150;
+const VOCAB_TIER: u32 = 230;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Suggestion {
@@ -18,15 +30,30 @@ struct Word {
     lower: String,
 }
 
-/// Every typo in `text` that has a known correction.
+/// Every typo in `text`, curated or dictionary-backed.
 pub fn suggestions(text: &str) -> Vec<Suggestion> {
+    detect(text, true)
+}
+
+fn detect(text: &str, general: bool) -> Vec<Suggestion> {
     words(text)
         .into_iter()
         .filter_map(|word| {
-            let fix = correction(&word.lower)?;
+            let original = &text[word.range.clone()];
+            let replacement = if let Some(fix) = correction(&word.lower) {
+                apply_case(original, fix)
+            } else if general && suspect(original, &word.lower) {
+                let lexicon = lexicon();
+                if lexicon.is_known(&word.lower) {
+                    return None;
+                }
+                apply_case(original, &lexicon.best(&word.lower)?)
+            } else {
+                return None;
+            };
             Some(Suggestion {
-                original: text[word.range.clone()].to_string(),
-                replacement: apply_case(&text[word.range.clone()], fix),
+                original: original.to_string(),
+                replacement,
                 range: word.range,
             })
         })
@@ -48,9 +75,10 @@ pub fn nearest(text: &str, caret: usize) -> Option<Suggestion> {
     })
 }
 
-/// Rewrites every known typo; returns the new text and how many were fixed.
+/// Rewrites every curated misspelling on send. Dictionary suggestions stay
+/// opt-in so names and jargon are never rewritten automatically.
 pub fn correct(text: &str) -> (String, usize) {
-    let fixes = suggestions(text);
+    let fixes = detect(text, false);
     if fixes.is_empty() {
         return (text.to_string(), 0);
     }
@@ -59,6 +87,261 @@ pub fn correct(text: &str) -> (String, usize) {
         out.replace_range(fix.range.clone(), &fix.replacement);
     }
     (out, fixes.len())
+}
+
+fn lexicon() -> &'static Lexicon {
+    static LEXICON: OnceLock<Lexicon> = OnceLock::new();
+    LEXICON.get_or_init(Lexicon::load)
+}
+
+struct Lexicon {
+    dictionary: WordList,
+    bands: Bands,
+    vocab: HashSet<&'static str>,
+}
+
+impl Lexicon {
+    fn load() -> Self {
+        Self {
+            dictionary: WordList::new(DICTIONARY),
+            bands: Bands::new(BANDS),
+            vocab: VOCAB.lines().collect(),
+        }
+    }
+
+    fn is_known(&self, word: &str) -> bool {
+        self.dictionary.index_of(word).is_some()
+            || self.bands.index_of(word).is_some()
+            || self.vocab.contains(word)
+    }
+
+    fn best(&self, word: &str) -> Option<String> {
+        let bytes = word.as_bytes();
+        let mut best = None;
+        let mut candidate = String::with_capacity(word.len() + 1);
+
+        // Insertions score extra: every letter the writer typed is preserved in order.
+        for position in 0..=bytes.len() {
+            for letter in b'a'..=b'z' {
+                candidate.clear();
+                candidate.push_str(&word[..position]);
+                candidate.push(letter as char);
+                candidate.push_str(&word[position..]);
+                self.consider(word, &candidate, 1000, &mut best);
+            }
+        }
+
+        for position in 0..bytes.len() {
+            candidate.clear();
+            candidate.push_str(&word[..position]);
+            candidate.push_str(&word[position + 1..]);
+            self.consider(word, &candidate, 900, &mut best);
+        }
+
+        for position in 0..bytes.len() {
+            for letter in b'a'..=b'z' {
+                if letter == bytes[position] {
+                    continue;
+                }
+                candidate.clear();
+                candidate.push_str(&word[..position]);
+                candidate.push(letter as char);
+                candidate.push_str(&word[position + 1..]);
+                let nearby = if adjacent_keys(bytes[position], letter) {
+                    200
+                } else {
+                    0
+                };
+                self.consider(word, &candidate, 600 + nearby, &mut best);
+            }
+        }
+
+        for position in 0..bytes.len().saturating_sub(1) {
+            if bytes[position] == bytes[position + 1] {
+                continue;
+            }
+            candidate.clear();
+            candidate.push_str(&word[..position]);
+            candidate.push(bytes[position + 1] as char);
+            candidate.push(bytes[position] as char);
+            candidate.push_str(&word[position + 2..]);
+            self.consider(word, &candidate, 1200, &mut best);
+        }
+
+        best.map(|(_, word)| word)
+    }
+
+    fn consider(&self, word: &str, candidate: &str, base: u32, best: &mut Option<(u32, String)>) {
+        let Some(tier) = self.tier(candidate) else {
+            return;
+        };
+        let (prefix, suffix) = common_affixes(word, candidate);
+        let length_bonus = if word.len() == candidate.len() {
+            80
+        } else {
+            60
+        };
+        let score = base + prefix as u32 * 60 + suffix as u32 * 100 + length_bonus + tier;
+        if score < MIN_SCORE {
+            return;
+        }
+        let better = match best {
+            Some((top, top_word)) => {
+                score > *top || (score == *top && candidate < top_word.as_str())
+            }
+            None => true,
+        };
+        if better {
+            *best = Some((score, candidate.to_string()));
+        }
+    }
+
+    fn tier(&self, candidate: &str) -> Option<u32> {
+        let band = self.bands.tier(candidate);
+        let vocab = self.vocab.contains(candidate).then_some(VOCAB_TIER);
+        match (band, vocab) {
+            (Some(band), Some(vocab)) => Some(band.max(vocab)),
+            (Some(band), None) => Some(band),
+            (None, Some(vocab)) => Some(vocab),
+            (None, None) => None,
+        }
+    }
+}
+
+fn suspect(original: &str, lower: &str) -> bool {
+    if original.len() < 3 || !original.bytes().all(|letter| letter.is_ascii_lowercase()) {
+        return false;
+    }
+    // Three consonants are usually an acronym or identifier, not prose.
+    lower.len() != 3
+        || lower
+            .bytes()
+            .any(|letter| matches!(letter, b'a' | b'e' | b'i' | b'o' | b'u' | b'y'))
+}
+
+fn common_affixes(word: &str, candidate: &str) -> (usize, usize) {
+    let word = word.as_bytes();
+    let candidate = candidate.as_bytes();
+    let mut prefix = 0;
+    while prefix < word.len().min(candidate.len()) && word[prefix] == candidate[prefix] {
+        prefix += 1;
+    }
+    let mut suffix = 0;
+    let limit = word.len().min(candidate.len()) - prefix;
+    while suffix < limit && word[word.len() - 1 - suffix] == candidate[candidate.len() - 1 - suffix]
+    {
+        suffix += 1;
+    }
+    (prefix, suffix)
+}
+
+fn adjacent_keys(first: u8, second: u8) -> bool {
+    const ROWS: [&[u8]; 3] = [b"qwertyuiop", b"asdfghjkl", b"zxcvbnm"];
+    let position = |key: u8| {
+        ROWS.iter().enumerate().find_map(|(row, keys)| {
+            keys.iter()
+                .position(|&slot| slot == key)
+                .map(|column| (row as i32, column as i32))
+        })
+    };
+    let (Some((first_row, first_column)), Some((second_row, second_column))) =
+        (position(first), position(second))
+    else {
+        return false;
+    };
+    let rows = (first_row - second_row).abs();
+    let columns = (first_column - second_column).abs();
+    (rows == 0 && columns == 1) || (rows == 1 && columns <= 1)
+}
+
+/// Newline-separated words sorted by byte order.
+struct WordList {
+    text: &'static str,
+    ends: Vec<u32>,
+}
+
+impl WordList {
+    fn new(text: &'static str) -> Self {
+        let mut ends = Vec::with_capacity(text.len() / 8);
+        let mut offset = 0;
+        for line in text.lines() {
+            offset += line.len();
+            ends.push(offset as u32);
+            offset += 1;
+        }
+        Self { text, ends }
+    }
+
+    fn index_of(&self, word: &str) -> Option<usize> {
+        let (mut low, mut high) = (0, self.ends.len());
+        while low < high {
+            let middle = (low + high) / 2;
+            match self.line(middle).cmp(word) {
+                Ordering::Less => low = middle + 1,
+                Ordering::Greater => high = middle,
+                Ordering::Equal => return Some(middle),
+            }
+        }
+        None
+    }
+
+    fn line(&self, index: usize) -> &'static str {
+        let start = match index {
+            0 => 0,
+            _ => self.ends[index - 1] as usize + 1,
+        };
+        &self.text[start..self.ends[index] as usize]
+    }
+}
+
+/// A word list with a SCOWL commonness tier per line (`word 10`).
+struct Bands {
+    words: WordList,
+}
+
+impl Bands {
+    fn new(text: &'static str) -> Self {
+        Self {
+            words: WordList::new(text),
+        }
+    }
+
+    fn index_of(&self, word: &str) -> Option<usize> {
+        self.words.index_of_word(word)
+    }
+
+    fn tier(&self, word: &str) -> Option<u32> {
+        let index = self.index_of(word)?;
+        let band = self.words.line(index).rsplit_once(' ')?.1.parse().ok()?;
+        match band {
+            10 => Some(260),
+            20 => Some(230),
+            35 => Some(200),
+            40 => Some(165),
+            50 => Some(130),
+            55 => Some(110),
+            60 => Some(95),
+            70 => Some(80),
+            _ => None,
+        }
+    }
+}
+
+impl WordList {
+    fn index_of_word(&self, word: &str) -> Option<usize> {
+        let (mut low, mut high) = (0, self.ends.len());
+        while low < high {
+            let middle = (low + high) / 2;
+            let line = self.line(middle);
+            let candidate = line.rsplit_once(' ').map_or(line, |(word, _)| word);
+            match candidate.cmp(word) {
+                Ordering::Less => low = middle + 1,
+                Ordering::Greater => high = middle,
+                Ordering::Equal => return Some(middle),
+            }
+        }
+        None
+    }
 }
 
 fn words(text: &str) -> Vec<Word> {
@@ -199,6 +482,7 @@ fn correction(word: &str) -> Option<&'static str> {
         "differnt" => "different",
         "diffcult" => "difficult",
         "enought" => "enough",
+        "enviroment" => "environment",
         "experiance" => "experience",
         "familar" => "familiar",
         "finaly" => "finally",
@@ -245,6 +529,7 @@ fn correction(word: &str) -> Option<&'static str> {
         "similiar" => "similar",
         "sincerly" => "sincerely",
         "suprise" => "surprise",
+        "tabel" => "table",
         "tommorow" => "tomorrow",
         "tommorrow" => "tomorrow",
         "truely" => "truly",
@@ -458,6 +743,41 @@ mod tests {
         assert_eq!(fix("recieve the paramters"), "receive|parameters");
         assert_eq!(fix("dont do it"), "don't");
         assert_eq!(fix("is teh functoin working"), "the|function");
+    }
+
+    #[test]
+    fn catches_ordinary_typos_beyond_the_curated_list() {
+        assert_eq!(fix("helo wrld thisisnotaword"), "hello|world");
+        assert_eq!(fix("inpt colum scrool"), "input|column|scroll");
+        assert_eq!(fix("seperate definately"), "separate|definitely");
+    }
+
+    #[test]
+    fn keeps_valid_words_and_technical_terms_alone() {
+        assert_eq!(fix("hello world form from its"), "");
+        assert_eq!(fix("gpui tokio redis tmux winget stdio utf8"), "");
+        assert_eq!(fix("function receives message"), "");
+    }
+
+    #[test]
+    fn general_detection_skips_capitalized_words() {
+        assert_eq!(fix("Helo Wrld"), "");
+        assert_eq!(fix("Qoder"), "");
+    }
+
+    #[test]
+    fn curated_corrections_win_over_dictionary_entries() {
+        assert_eq!(
+            fix("wich wierd untill tabel enviroment"),
+            "which|weird|until|table|environment"
+        );
+    }
+
+    #[test]
+    fn send_correction_stays_limited_to_the_curated_list() {
+        let (text, fixed) = correct("helo wrld recieve teh");
+        assert_eq!(text, "helo wrld receive the");
+        assert_eq!(fixed, 2);
     }
 
     #[test]
