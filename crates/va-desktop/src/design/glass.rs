@@ -2192,13 +2192,9 @@ impl GlassPreview {
     }
 
     fn explain_warnings(&mut self, cx: &mut Context<Self>) {
-        if self.show_warnings {
-            self.show_warnings = false;
-            cx.notify();
-            return;
-        }
         // The explanation lives in the Session panel, so reveal it instead of
-        // flipping a flag the user cannot see.
+        // flipping a flag the user cannot see. This is the show action; the
+        // panel's own Review/Hide link handles collapsing.
         self.show_warnings = true;
         self.reveal_section(DrawerSection::Session, true, cx);
         self.scroll_to_warnings(cx);
