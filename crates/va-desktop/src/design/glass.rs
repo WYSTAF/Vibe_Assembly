@@ -9,9 +9,10 @@
 use std::collections::{HashMap, HashSet};
 use std::f32::consts::{FRAC_PI_2, TAU};
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
 use gpui::{
@@ -19,7 +20,7 @@ use gpui::{
     pulsating_between, px, rgb, rgba, Animation, AnimationExt, AnyElement, AnyView, App,
     Background, BoxShadow, ClipboardItem, Context, Div, ElementId, ElementInputHandler, Entity,
     EntityInputHandler, FocusHandle, FontWeight, HighlightStyle, IntoElement, KeyDownEvent,
-    Keystroke, PathBuilder, PathPromptOptions, Point, Rgba, ScrollHandle, Stateful,
+    Keystroke, PathBuilder, PathPromptOptions, Point, Rgba, ScrollHandle, SharedString, Stateful,
     StyleRefinement, StyledText, UTF16Selection, UnderlineStyle, Window, WindowControlArea,
 };
 use va_core::modes::ExecutionMode;
@@ -546,7 +547,7 @@ fn focus_ring_neutral(style: StyleRefinement) -> StyleRefinement {
 }
 
 struct HintView {
-    label: &'static str,
+    label: SharedString,
 }
 
 impl Render for HintView {
@@ -563,12 +564,13 @@ impl Render for HintView {
             .text_size(px(11.0))
             .line_height(px(15.0))
             .text_color(ink_soft())
-            .child(self.label)
+            .child(self.label.clone())
     }
 }
 
-fn hint(label: &'static str) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
-    move |_window, cx| cx.new(|_| HintView { label }).into()
+fn hint(label: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+    let label = label.into();
+    move |_window, cx| cx.new(|_| HintView { label: label.clone() }).into()
 }
 
 // ------------------------------------------------------------- preferences
@@ -619,6 +621,252 @@ fn store_theme(day: bool) {
     let _ = std::fs::write(path, format_theme(day));
 }
 
+// ---------------------------------------------------------------- repository
+
+/// One read of the local checkout. Every field is optional so the GitHub panel
+/// can say what it does not know instead of inventing a clean tree.
+#[derive(Clone, Default)]
+struct RepoSnapshot {
+    root: Option<PathBuf>,
+    branch: Option<String>,
+    origin: Option<String>,
+    slug: Option<String>,
+    web_url: Option<String>,
+    upstream: Option<String>,
+    dirty: Option<usize>,
+    ahead: u32,
+    behind: u32,
+    commit: Option<String>,
+    subject: Option<String>,
+    when: Option<String>,
+    loading: bool,
+    pushing: bool,
+    note: Option<String>,
+    note_error: bool,
+}
+
+impl RepoSnapshot {
+    fn github(&self) -> bool {
+        self.web_url.is_some()
+    }
+}
+
+fn git_output(root: &Path, args: &[&str]) -> Option<String> {
+    let mut command = Command::new("git");
+    quiet_command(&mut command);
+    let output = command
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn quiet_command(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // Every probe would otherwise flash a console window.
+        command.creation_flags(0x0800_0000);
+    }
+}
+
+/// Walks up from the workspace, the launch directory, and the executable so
+/// both `cargo run` and the installed build find the checkout they live in.
+fn repo_root() -> Option<PathBuf> {
+    let mut starts: Vec<PathBuf> = Vec::new();
+    if let Some(dir) = std::env::var_os("VIBE_WORKSPACE") {
+        starts.push(PathBuf::from(dir));
+    }
+    if let Ok(dir) = std::env::current_dir() {
+        starts.push(dir);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            starts.push(parent.to_path_buf());
+        }
+    }
+    starts.into_iter().find_map(|start| {
+        let mut dir = start.as_path();
+        loop {
+            if dir.join(".git").exists() {
+                return Some(dir.to_path_buf());
+            }
+            dir = dir.parent()?;
+        }
+    })
+}
+
+fn snapshot_repo() -> RepoSnapshot {
+    let Some(root) = repo_root() else {
+        return RepoSnapshot::default();
+    };
+    let branch = git_output(&root, &["branch", "--show-current"])
+        .filter(|name| !name.is_empty())
+        .or_else(|| {
+            git_output(&root, &["rev-parse", "--short", "HEAD"])
+                .map(|hash| format!("detached at {hash}"))
+        });
+    let origin = git_output(&root, &["remote", "get-url", "origin"]);
+    let (slug, web_url) = origin
+        .as_deref()
+        .map(github_parts)
+        .unwrap_or((None, None));
+    let upstream = git_output(
+        &root,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    );
+    let (ahead, behind) = upstream
+        .as_ref()
+        .and_then(|_| {
+            git_output(
+                &root,
+                &["rev-list", "--left-right", "--count", "@{u}...HEAD"],
+            )
+        })
+        .and_then(|text| {
+            let mut parts = text.split_whitespace();
+            let behind = parts.next()?.parse().ok()?;
+            let ahead = parts.next()?.parse().ok()?;
+            Some((ahead, behind))
+        })
+        .unwrap_or((0, 0));
+    let dirty = git_output(&root, &["status", "--porcelain=v1"])
+        .map(|text| text.lines().filter(|line| !line.trim().is_empty()).count());
+    let (commit, subject, when) = git_output(&root, &["log", "-1", "--format=%h%n%s%n%cr"])
+        .map(|text| {
+            let mut lines = text.lines();
+            (
+                lines.next().map(str::to_string),
+                lines.next().map(str::to_string),
+                lines.next().map(str::to_string),
+            )
+        })
+        .unwrap_or((None, None, None));
+    RepoSnapshot {
+        root: Some(root),
+        branch,
+        origin,
+        slug,
+        web_url,
+        upstream,
+        dirty,
+        ahead,
+        behind,
+        commit,
+        subject,
+        when,
+        ..RepoSnapshot::default()
+    }
+}
+
+fn github_parts(remote: &str) -> (Option<String>, Option<String>) {
+    let trimmed = remote.trim().trim_end_matches('/');
+    let trimmed = trimmed.strip_suffix(".git").unwrap_or(trimmed);
+    let path = [
+        "https://github.com/",
+        "http://github.com/",
+        "ssh://git@github.com/",
+        "git@github.com:",
+    ]
+    .iter()
+    .find_map(|prefix| trimmed.strip_prefix(prefix));
+    let slug = path
+        .map(str::to_string)
+        .filter(|path| path.split('/').count() == 2 && !path.contains(' '));
+    let web_url = slug
+        .as_ref()
+        .map(|slug| format!("https://github.com/{slug}"));
+    (slug, web_url)
+}
+
+fn open_external(url: &str) {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return;
+    }
+    #[cfg(windows)]
+    {
+        let mut command = Command::new("rundll32");
+        quiet_command(&mut command);
+        let _ = command.args(["url.dll,FileProtocolHandler", url]).spawn();
+    }
+    #[cfg(not(windows))]
+    {
+        let opener = if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
+        let _ = Command::new(opener).arg(url).spawn();
+    }
+}
+
+/// Runs the push off the UI thread. Returns whether a ref actually moved, so
+/// an already-current branch is reported as such.
+fn push_repo_blocking(root: &Path, has_upstream: bool) -> Result<bool, String> {
+    let mut command = Command::new("git");
+    quiet_command(&mut command);
+    command.arg("-C").arg(root);
+    if has_upstream {
+        command.args(["push", "--porcelain"]);
+    } else {
+        command.args(["push", "--porcelain", "-u", "origin", "HEAD"]);
+    }
+    command
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("Could not run git: {error}"))?;
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                let output = child
+                    .wait_with_output()
+                    .map_err(|error| format!("Could not read git output: {error}"))?;
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if output.status.success() {
+                    let quiet =
+                        stdout.contains("[up to date]") || stdout.trim().is_empty();
+                    return Ok(!quiet);
+                }
+                let message = stderr
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .next_back()
+                    .or_else(|| {
+                        stdout
+                            .lines()
+                            .map(str::trim)
+                            .filter(|line| !line.is_empty())
+                            .next_back()
+                    })
+                    .unwrap_or("git push failed");
+                return Err(message.to_string());
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("Push timed out after 60 seconds".to_string());
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(120)),
+            Err(error) => return Err(format!("git push failed: {error}")),
+        }
+    }
+}
+
 // ------------------------------------------------------------------- screen
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -627,6 +875,7 @@ enum DrawerSection {
     Changes,
     Editor,
     History,
+    GitHub,
     Settings,
 }
 
@@ -637,6 +886,7 @@ impl DrawerSection {
             Self::Changes => "Changes",
             Self::Editor => "Editor",
             Self::History => "History",
+            Self::GitHub => "GitHub",
             Self::Settings => "Settings",
         }
     }
@@ -647,6 +897,7 @@ impl DrawerSection {
             Self::Changes => "files",
             Self::Editor => "code",
             Self::History => "history",
+            Self::GitHub => "github",
             Self::Settings => "settings",
         }
     }
@@ -657,6 +908,7 @@ impl DrawerSection {
             Self::Changes => "Changes - Pin keeps it open",
             Self::Editor => "Editor - Pin keeps it open",
             Self::History => "History - Pin keeps it open",
+            Self::GitHub => "GitHub - Branch, status and push",
             Self::Settings => "Settings - Panel, checks and integrations",
         }
     }
@@ -667,6 +919,7 @@ impl DrawerSection {
             Self::Changes => "glass-body-changes",
             Self::Editor => "glass-body-editor",
             Self::History => "glass-body-history",
+            Self::GitHub => "glass-body-github",
             Self::Settings => "glass-body-settings",
         }
     }
@@ -677,6 +930,7 @@ impl DrawerSection {
             Self::Changes,
             Self::Editor,
             Self::History,
+            Self::GitHub,
             Self::Settings,
         ];
         let index = all.iter().position(|s| *s == self).unwrap_or(0);
@@ -818,7 +1072,7 @@ fn change_totals(files: &[ChangeFile]) -> (u32, u32) {
     })
 }
 
-fn section_chip(section: DrawerSection, changes: &[ChangeFile]) -> String {
+fn section_chip(section: DrawerSection, changes: &[ChangeFile], repo: &RepoSnapshot) -> String {
     match section {
         DrawerSection::Session => match changes.len() {
             0 => "No files".to_string(),
@@ -835,6 +1089,11 @@ fn section_chip(section: DrawerSection, changes: &[ChangeFile]) -> String {
         }
         DrawerSection::Editor => "Rust".to_string(),
         DrawerSection::History => "24 runs".to_string(),
+        DrawerSection::GitHub => repo
+            .branch
+            .clone()
+            .or_else(|| repo.loading.then(|| "Reading".to_string()))
+            .unwrap_or_else(|| "No repo".to_string()),
         DrawerSection::Settings => format!("v{}", env!("CARGO_PKG_VERSION")),
     }
 }
@@ -959,6 +1218,14 @@ const SEARCH_ENTRIES: &[SearchEntry] = &[
         title: "Open History",
         meta: "Panel · recent runs",
         action: SearchAction::Section(DrawerSection::History),
+        recent: false,
+    },
+    SearchEntry {
+        id: "glass-search-github-panel",
+        icon: "github",
+        title: "Open GitHub",
+        meta: "Panel · branch, status and push",
+        action: SearchAction::Section(DrawerSection::GitHub),
         recent: false,
     },
     SearchEntry {
@@ -1405,6 +1672,7 @@ pub struct GlassPreview {
     thinking: ThinkingLevel,
     model_menu: bool,
     session_map: bool,
+    repo: RepoSnapshot,
     web_search: bool,
     attachments: Vec<Attachment>,
     draft: String,
@@ -1494,6 +1762,7 @@ impl GlassPreview {
             thinking: ThinkingLevel::Auto,
             model_menu: false,
             session_map: false,
+            repo: RepoSnapshot::default(),
             web_search: false,
             attachments: seeded_attachments(),
             draft: String::new(),
@@ -1512,6 +1781,7 @@ impl GlassPreview {
             focus_settled: false,
         };
         preview.refresh_models(cx);
+        preview.refresh_repo(cx);
         preview
     }
 
@@ -1586,6 +1856,9 @@ impl GlassPreview {
             // Each panel starts at its own top, not at the offset the previous
             // panel was scrolled to.
             self.drawer_scroll.set_offset(point(px(0.0), px(0.0)));
+            if section == DrawerSection::GitHub {
+                self.refresh_repo(cx);
+            }
         }
         self.model_menu = false;
         self.set_nav_open(true, cx);
@@ -2089,6 +2362,83 @@ impl GlassPreview {
         cx.notify();
     }
 
+    fn refresh_repo(&mut self, cx: &mut Context<Self>) {
+        if self.repo.loading {
+            return;
+        }
+        self.repo.loading = true;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let mut snapshot = cx
+                .background_executor()
+                .spawn(async { snapshot_repo() })
+                .await;
+            this.update(cx, |this, cx| {
+                snapshot.pushing = this.repo.pushing;
+                snapshot.note = this.repo.note.clone();
+                snapshot.note_error = this.repo.note_error;
+                this.repo = snapshot;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn push_repo(&mut self, cx: &mut Context<Self>) {
+        if self.repo.pushing {
+            return;
+        }
+        let Some(root) = self.repo.root.clone() else {
+            self.refresh_repo(cx);
+            return;
+        };
+        self.repo.pushing = true;
+        self.repo.note = None;
+        self.repo.note_error = false;
+        cx.notify();
+        let has_upstream = self.repo.upstream.is_some();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { push_repo_blocking(&root, has_upstream) })
+                .await;
+            let mut snapshot = cx
+                .background_executor()
+                .spawn(async { snapshot_repo() })
+                .await;
+            this.update(cx, |this, cx| {
+                snapshot.pushing = false;
+                snapshot.note_error = result.is_err();
+                snapshot.note = Some(match result {
+                    Ok(false) => {
+                        let where_to = snapshot
+                            .upstream
+                            .clone()
+                            .unwrap_or_else(|| "origin".to_string());
+                        format!("Already up to date on {where_to}")
+                    }
+                    Ok(true) => {
+                        let branch = snapshot
+                            .branch
+                            .clone()
+                            .unwrap_or_else(|| "HEAD".to_string());
+                        let where_to = snapshot
+                            .upstream
+                            .clone()
+                            .unwrap_or_else(|| "origin".to_string());
+                        format!("Pushed {branch} to {where_to}")
+                    }
+                    Err(error) => error,
+                });
+                this.repo = snapshot;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn fix_typo(&mut self, cx: &mut Context<Self>) -> bool {
         if !self.draft_selection.range(&self.draft).is_empty() {
             return false;
@@ -2431,6 +2781,7 @@ impl Render for GlassPreview {
                             applied,
                             live: live_run,
                         },
+                        &self.repo,
                         &nav_focus,
                         &self.drawer_scroll,
                         cx,
@@ -2453,7 +2804,14 @@ impl Render for GlassPreview {
                     content
                 }
             })
-            .child(status_bar(mode, nav_pinned, chat.files, cx))
+            .child(status_bar(
+                mode,
+                nav_pinned,
+                chat.files,
+                self.repo.branch.as_deref(),
+                self.repo.loading,
+                cx,
+            ))
     }
 }
 
@@ -5462,6 +5820,7 @@ fn send_button(ready: bool, cx: &mut Context<GlassPreview>) -> Stateful<Div> {
 fn drawer_header(
     section: DrawerSection,
     changes: &[ChangeFile],
+    repo: &RepoSnapshot,
     pinned: bool,
     focus: &FocusHandle,
     cx: &mut Context<GlassPreview>,
@@ -5481,7 +5840,7 @@ fn drawer_header(
                 .text_color(ink())
                 .child(section.title()),
         )
-        .child(soft_chip(section_chip(section, changes)))
+        .child(soft_chip(section_chip(section, changes, repo)))
         .child(div().flex_1())
         .child(pin_toggle(pinned, focus, cx))
         .child(drawer_close(cx))
@@ -6819,6 +7178,8 @@ fn status_bar(
     mode: ExecutionMode,
     pinned: bool,
     files: usize,
+    branch: Option<&str>,
+    repo_loading: bool,
     cx: &mut Context<GlassPreview>,
 ) -> Div {
     div()
@@ -6854,12 +7215,7 @@ fn status_bar(
             "Local",
             "Running on this machine",
         ))
-        .child(status_chip(
-            "status-branch",
-            "git-branch",
-            "main",
-            "Current branch",
-        ))
+        .child(branch_chip(branch, repo_loading, cx))
         .child(separator())
         .child(div().size(px(5.0)).rounded_full().bg(success()))
         .child(div().text_color(ink_soft()).child("Everything builds"))
@@ -6919,6 +7275,35 @@ fn status_bar(
         }))
 }
 
+fn branch_chip(
+    branch: Option<&str>,
+    loading: bool,
+    cx: &mut Context<GlassPreview>,
+) -> Stateful<Div> {
+    let label = branch.unwrap_or(if loading { "..." } else { "No repo" });
+    div()
+        .id("status-branch")
+        .flex()
+        .items_center()
+        .gap(px(5.0))
+        .h(px(20.0))
+        .px(px(7.0))
+        .rounded(px(6.0))
+        .bg(tint(0x0A))
+        .border_1()
+        .border_color(panel_border_soft())
+        .cursor_pointer()
+        .tooltip(hint("Repository - open the GitHub panel"))
+        .hover(|style| style.bg(hover_wash()))
+        .active(|style| style.bg(press_wash()))
+        .on_click(cx.listener(|this, _event, _window, cx| {
+            this.reveal_section(DrawerSection::GitHub, false, cx);
+            cx.notify();
+        }))
+        .child(icon("git-branch", 11.0, ink_muted()))
+        .child(div().text_color(ink_soft()).child(ellipsize(label, 18)))
+}
+
 fn status_chip(
     id: &'static str,
     name: &'static str,
@@ -6965,6 +7350,7 @@ struct EdgeState {
 
 fn edge_overlay(
     state: EdgeState,
+    repo: &RepoSnapshot,
     focus: &FocusHandle,
     scroll: &ScrollHandle,
     cx: &mut Context<GlassPreview>,
@@ -6988,7 +7374,7 @@ fn edge_overlay(
                 }
             }
         }))
-        .child(edge_drawer(state, focus, scroll, cx))
+        .child(edge_drawer(state, repo, focus, scroll, cx))
         .child(nav_column(state, focus, cx))
         .with_animation(
             ("glass-edge", epoch),
@@ -7012,6 +7398,7 @@ fn edge_reveal(open: bool, epoch: usize, t: f32) -> f32 {
 
 fn edge_drawer(
     state: EdgeState,
+    repo: &RepoSnapshot,
     focus: &FocusHandle,
     scroll: &ScrollHandle,
     cx: &mut Context<GlassPreview>,
@@ -7049,7 +7436,7 @@ fn edge_drawer(
                 .flex_col()
                 .gap(px(10.0))
                 .p(px(12.0))
-                .child(drawer_header(section, state.changes, pinned, focus, cx))
+                .child(drawer_header(section, state.changes, repo, pinned, focus, cx))
                 .child(
                     div()
                         .flex_1()
@@ -7074,7 +7461,7 @@ fn edge_drawer(
                                         .flex()
                                         .flex_col()
                                         .gap(px(10.0))
-                                        .child(section_body(state, cx))
+                                        .child(section_body(state, repo, cx))
                                         .with_animation(
                                             ("glass-section", section_epoch),
                                             Animation::new(motion(170))
@@ -7128,7 +7515,7 @@ fn edge_drawer(
         )
 }
 
-fn section_body(state: EdgeState, cx: &mut Context<GlassPreview>) -> Div {
+fn section_body(state: EdgeState, repo: &RepoSnapshot, cx: &mut Context<GlassPreview>) -> Div {
     let file = state
         .changes
         .iter()
@@ -7185,6 +7572,12 @@ fn section_body(state: EdgeState, cx: &mut Context<GlassPreview>) -> Div {
             .gap(px(10.0))
             .child(history_card(state.active_chat, state.all_runs, cx))
             .child(run_stats_card().flex_grow()),
+        DrawerSection::GitHub => div()
+            .flex()
+            .flex_col()
+            .gap(px(10.0))
+            .child(github_card(repo, cx))
+            .child(github_commit_card(repo).flex_grow()),
         DrawerSection::Settings => div()
             .flex()
             .flex_col()
@@ -7195,6 +7588,376 @@ fn section_body(state: EdgeState, cx: &mut Context<GlassPreview>) -> Div {
     // The scroll content fills the viewport when it is short, so the section
     // can absorb spare height instead of ending in a band of empty drawer.
     body.flex_grow().flex_shrink_0()
+}
+
+fn github_card(repo: &RepoSnapshot, cx: &mut Context<GlassPreview>) -> Div {
+    let card = panel_card()
+        .flex_shrink_0()
+        .p(px(12.0))
+        .pr(px(DRAWER_CARD_RIGHT))
+        .flex()
+        .flex_col()
+        .gap(px(6.0))
+        .child(github_header(repo, cx));
+    if repo.root.is_none() {
+        return card.child(
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(6.0))
+                .py(px(14.0))
+                .child(icon("github", 20.0, ink_muted()))
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(ink_soft())
+                        .child(if repo.loading {
+                            "Looking for a repository"
+                        } else {
+                            "No git repository found"
+                        }),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(ink_muted())
+                        .child(if repo.loading {
+                            "Reading the local checkout..."
+                        } else {
+                            "Launch from a checkout or set VIBE_WORKSPACE."
+                        }),
+                ),
+        );
+    }
+    let branch = repo.branch.clone().unwrap_or_else(|| "unknown".to_string());
+    let sync = match (&repo.upstream, repo.ahead, repo.behind) {
+        (None, _, _) => "No upstream".to_string(),
+        (Some(_), 0, 0) => "In sync".to_string(),
+        (Some(_), ahead, 0) => format!("{ahead} ahead"),
+        (Some(_), 0, behind) => format!("{behind} behind"),
+        (Some(_), ahead, behind) => format!("{ahead} ahead, {behind} behind"),
+    };
+    let tree = match repo.dirty {
+        Some(0) => "Clean".to_string(),
+        Some(1) => "1 uncommitted file".to_string(),
+        Some(count) => format!("{count} uncommitted files"),
+        None => "Status unavailable".to_string(),
+    };
+    let name = repo
+        .slug
+        .clone()
+        .or_else(|| {
+            repo.root
+                .as_ref()
+                .and_then(|root| root.file_name())
+                .map(|name| name.to_string_lossy().to_string())
+        })
+        .unwrap_or_else(|| "Local checkout".to_string());
+    let remote = repo
+        .origin
+        .as_deref()
+        .map(|origin| {
+            // The repository row already spells out owner/name.
+            if repo.github() {
+                "github.com".to_string()
+            } else {
+                display_origin(origin)
+            }
+        })
+        .unwrap_or_else(|| "No origin".to_string());
+    card.child(repo_row("Repository", name))
+        .child(repo_row("Branch", branch))
+        .child(repo_row("Sync", sync))
+        .child(repo_row("Working tree", tree))
+        .child(repo_row("Remote", remote))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .pt(px(4.0))
+                .child(repo_push_button(repo, cx))
+                .when(repo.github(), |this| {
+                    this.child(repo_open_button(repo))
+                }),
+        )
+        .when_some(repo.note.as_deref(), |this, note| {
+            this.child(
+                div()
+                    .pt(px(2.0))
+                    .text_size(px(10.5))
+                    .text_color(if repo.note_error { warning() } else { success() })
+                    .child(ellipsize(note, 120)),
+            )
+        })
+}
+
+fn github_header(repo: &RepoSnapshot, cx: &mut Context<GlassPreview>) -> Div {
+    let status = if repo.loading {
+        "Reading git..."
+    } else if repo.root.is_none() {
+        "No repository linked"
+    } else if repo.github() {
+        "origin on GitHub"
+    } else if repo.origin.is_some() {
+        "origin remote"
+    } else {
+        "No origin remote"
+    };
+    div()
+        .flex()
+        .items_center()
+        .gap(px(8.0))
+        .pb(px(2.0))
+        .child(
+            div()
+                .size(px(26.0))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(8.0))
+                .bg(tint(0x0C))
+                .child(icon("github", 14.0, ink_soft())),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(px(1.0))
+                .child(
+                    div()
+                        .text_size(px(12.5))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(ink())
+                        .child("Repository"),
+                )
+                .child(
+                    div()
+                        .text_size(px(10.5))
+                        .text_color(ink_muted())
+                        .child(status),
+                ),
+        )
+        .child(repo_refresh_button(repo.loading, cx))
+}
+
+fn repo_refresh_button(loading: bool, cx: &mut Context<GlassPreview>) -> Stateful<Div> {
+    div()
+        .id("glass-github-refresh")
+        .size(px(24.0))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(6.0))
+        .cursor_pointer()
+        .tooltip(hint(if loading {
+            "Reading git..."
+        } else {
+            "Refresh repository"
+        }))
+        .hover(|style| style.bg(hover_wash()))
+        .active(|style| style.bg(press_wash()))
+        .on_click(cx.listener(|this, _event, _window, cx| {
+            this.refresh_repo(cx);
+        }))
+        .child(icon(
+            "refresh-cw",
+            13.0,
+            if loading { brand_text() } else { ink_muted() },
+        ))
+}
+
+fn repo_row(label: &'static str, value: String) -> Stateful<Div> {
+    let shown = ellipsize(&value, 30);
+    let truncated = shown != value;
+    div()
+        .id(label)
+        .flex()
+        .items_center()
+        .h(px(24.0))
+        .child(
+            div()
+                .flex_shrink_0()
+                .text_size(px(11.5))
+                .text_color(ink_muted())
+                .child(label),
+        )
+        .child(div().flex_1())
+        .child(
+            div()
+                .font_family(theme::code_font())
+                .text_size(px(10.5))
+                .text_color(ink_soft())
+                .child(shown),
+        )
+        .when(truncated, |this| this.tooltip(hint(value)))
+}
+
+fn repo_push_button(repo: &RepoSnapshot, cx: &mut Context<GlassPreview>) -> Stateful<Div> {
+    let ready = repo.origin.is_some() && !repo.pushing;
+    let label = if repo.pushing {
+        "Pushing..."
+    } else if repo.github() {
+        "Push to GitHub"
+    } else {
+        "Push to origin"
+    };
+    let tip = if repo.pushing {
+        "A push is already running"
+    } else if repo.origin.is_none() {
+        "Add an origin remote before pushing"
+    } else {
+        "Run git push from the repository root"
+    };
+    div()
+        .id("glass-github-push")
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap(px(6.0))
+        .h(px(30.0))
+        .px(px(12.0))
+        .rounded_full()
+        .bg(if ready { brand() } else { tint(0x10) })
+        .text_size(px(11.0))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(if ready { brand_ink() } else { ink_muted() })
+        .tooltip(hint(tip))
+        .when(ready, |this| {
+            this.cursor_pointer()
+                .shadow(brand_glow())
+                .hover(|style| style.bg(brand_hover()))
+                .active(|style| style.bg(brand_press()))
+                .on_click(cx.listener(|this, _event, _window, cx| {
+                    this.push_repo(cx);
+                }))
+        })
+        .child(icon(
+            "upload",
+            12.0,
+            if ready { brand_ink() } else { ink_muted() },
+        ))
+        .child(label)
+}
+
+fn repo_open_button(repo: &RepoSnapshot) -> Stateful<Div> {
+    let url = repo.web_url.clone().unwrap_or_default();
+    div()
+        .id("glass-github-open")
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap(px(5.0))
+        .h(px(30.0))
+        .px(px(10.0))
+        .flex_shrink_0()
+        .rounded_full()
+        .bg(tint(0x0A))
+        .border_1()
+        .border_color(panel_border_soft())
+        .text_size(px(11.0))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(ink_soft())
+        .cursor_pointer()
+        .hover(|style| style.bg(hover_wash()))
+        .active(|style| style.bg(press_wash()))
+        .on_click(move |_event, _window, _cx| open_external(&url))
+        .child(icon("external-link", 12.0, ink_soft()))
+        .child("Open on GitHub")
+}
+
+fn github_commit_card(repo: &RepoSnapshot) -> Div {
+    let card = panel_card()
+        .flex_shrink_0()
+        .p(px(12.0))
+        .pr(px(DRAWER_CARD_RIGHT))
+        .flex()
+        .flex_col()
+        .gap(px(6.0))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .pb(px(2.0))
+                .child(
+                    div()
+                        .text_size(px(12.5))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(ink())
+                        .child("Latest commit"),
+                )
+                .child(div().flex_1())
+                .when_some(repo.when.clone(), |this, when| {
+                    this.child(
+                        div()
+                            .text_size(px(10.5))
+                            .text_color(ink_muted())
+                            .child(when),
+                    )
+                }),
+        );
+    if repo.root.is_none() {
+        return card
+            .child(about_row("Workspace", "VIBE_WORKSPACE if set"))
+            .child(about_row("Fallback", "launch and app folders"))
+            .child(about_row("Needs", "Git on PATH"));
+    }
+    let Some(subject) = repo.subject.clone() else {
+        return card.child(
+            div()
+                .py(px(6.0))
+                .text_size(px(11.5))
+                .text_color(ink_muted())
+                .child("This repository has no commits yet."),
+        );
+    };
+    card.child(
+        div()
+            .text_size(px(11.5))
+            .text_color(ink_soft())
+            .child(subject),
+    )
+    .child(
+        div()
+            .flex()
+            .items_center()
+            .gap(px(6.0))
+            .pt(px(2.0))
+            .when_some(repo.commit.clone(), |this, hash| {
+                this.child(
+                    div()
+                        .font_family(theme::code_font())
+                        .text_size(px(10.0))
+                        .text_color(ink_muted())
+                        .child(hash),
+                )
+            })
+            .child(div().flex_1())
+            .child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(ink_muted())
+                    .child("HEAD"),
+            ),
+    )
+}
+
+fn display_origin(origin: &str) -> String {
+    let Some(sep) = origin.find("://") else {
+        return origin.to_string();
+    };
+    let rest = &origin[sep + 3..];
+    let host_end = rest.find('/').unwrap_or(rest.len());
+    let Some(at) = rest[..host_end].rfind('@') else {
+        return origin.to_string();
+    };
+    format!("{}{}", &origin[..sep + 3], &rest[at + 1..])
 }
 
 fn settings_card(state: EdgeState, cx: &mut Context<GlassPreview>) -> Div {
@@ -7546,6 +8309,11 @@ fn nav_capsule(
             cx,
         ))
         .child(nav_icon(
+            DrawerSection::GitHub,
+            section == DrawerSection::GitHub,
+            cx,
+        ))
+        .child(nav_icon(
             DrawerSection::Settings,
             section == DrawerSection::Settings,
             cx,
@@ -7558,6 +8326,7 @@ fn nav_icon(section: DrawerSection, active: bool, cx: &mut Context<GlassPreview>
         DrawerSection::Changes => "edge-files",
         DrawerSection::Editor => "edge-code",
         DrawerSection::History => "edge-history",
+        DrawerSection::GitHub => "edge-github",
         DrawerSection::Settings => "edge-settings",
     };
     div()
@@ -7962,6 +8731,38 @@ mod tests {
         assert_eq!(catalog[3].label, "gpt-5.1-codex");
         assert_eq!(model_blurb("gpt-5.1-codex"), "OpenAI coding model");
         assert!(catalog_from_ids(Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn github_remote_parsing_accepts_https_and_ssh() {
+        for remote in [
+            "https://github.com/WYSTAF/Vibe_Assembly.git",
+            "git@github.com:WYSTAF/Vibe_Assembly.git",
+            "ssh://git@github.com/WYSTAF/Vibe_Assembly",
+            "https://github.com/WYSTAF/Vibe_Assembly/",
+        ] {
+            let (slug, web) = github_parts(remote);
+            assert_eq!(slug.as_deref(), Some("WYSTAF/Vibe_Assembly"), "{remote}");
+            assert_eq!(
+                web.as_deref(),
+                Some("https://github.com/WYSTAF/Vibe_Assembly"),
+                "{remote}"
+            );
+        }
+        assert_eq!(github_parts("https://gitlab.com/a/b.git"), (None, None));
+        assert_eq!(github_parts("https://github.com/just-owner"), (None, None));
+    }
+
+    #[test]
+    fn origin_display_strips_credentials() {
+        assert_eq!(
+            display_origin("https://ghp_secret@github.com/a/b.git"),
+            "https://github.com/a/b.git"
+        );
+        assert_eq!(
+            display_origin("git@github.com:a/b.git"),
+            "git@github.com:a/b.git"
+        );
     }
 
     #[test]

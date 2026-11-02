@@ -21,6 +21,7 @@ icon_set!(
     "chevron-left",
     "chevron-right",
     "code",
+    "external-link",
     "file-code",
     "file-text",
     "files",
@@ -56,6 +57,7 @@ icon_set!(
     "sun",
     "triangle-alert",
     "undo-2",
+    "upload",
     "x",
 );
 
