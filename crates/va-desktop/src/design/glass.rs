@@ -20,8 +20,9 @@ use gpui::{
     pulsating_between, px, rgb, rgba, Animation, AnimationExt, AnyElement, AnyView, App,
     Background, BoxShadow, ClipboardItem, Context, Div, ElementId, ElementInputHandler, Entity,
     EntityInputHandler, FocusHandle, FontWeight, HighlightStyle, IntoElement, KeyDownEvent,
-    Keystroke, PathBuilder, PathPromptOptions, Point, Rgba, ScrollHandle, SharedString, Stateful,
-    StyleRefinement, StyledText, UTF16Selection, UnderlineStyle, Window, WindowControlArea,
+    Keystroke, MouseMoveEvent, PathBuilder, PathPromptOptions, Point, Rgba, ScrollHandle,
+    SharedString, Stateful, StyleRefinement, StyledText, UTF16Selection, UnderlineStyle, Window,
+    WindowControlArea,
 };
 use va_core::modes::ExecutionMode;
 
@@ -2670,6 +2671,24 @@ impl Render for GlassPreview {
             .flex_col()
             .font_family(theme::ui_font())
             .text_color(ink())
+            // The drawer's hover listener cannot be trusted for the leave
+            // edge (its transition state resets when sibling counts shift),
+            // so the window tracks the pointer itself and hides the panel
+            // once it moves left of the drawer's swept edge.
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
+                let edge = if this.nav_open {
+                    DRAWER_W
+                } else {
+                    NAV_INSET + NAV_W
+                };
+                let inside =
+                    event.position.x >= window.viewport_size().width - px(edge + EDGE_INSET);
+                this.nav_hovered = inside;
+                if !inside && this.nav_open && !this.nav_pinned {
+                    this.set_nav_open(false, cx);
+                    cx.notify();
+                }
+            }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 if event.is_held {
                     return;
@@ -7375,18 +7394,6 @@ fn edge_overlay(
         .top_0()
         .bottom(px(8.0))
         .right(px(EDGE_INSET))
-        .on_hover(cx.listener(|this, hovered, _window, cx| {
-            if *hovered {
-                // The nav is always on screen; only its icons open a section.
-                this.nav_hovered = true;
-            } else {
-                this.nav_hovered = false;
-                if this.nav_open && !this.nav_pinned {
-                    this.set_nav_open(false, cx);
-                    cx.notify();
-                }
-            }
-        }))
         .child(edge_drawer(state, repo, focus, scroll, cx))
         .child(nav_column(state, focus, cx))
         .with_animation(
