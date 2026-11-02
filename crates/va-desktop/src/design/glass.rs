@@ -950,15 +950,20 @@ const SEARCH_ENTRIES: &[SearchEntry] = &[
 ];
 
 fn filter_entries(entries: &'static [SearchEntry], query: &str) -> Vec<&'static SearchEntry> {
-    let query = query.trim().to_lowercase();
-    if query.is_empty() {
+    let tokens: Vec<String> = query
+        .split_whitespace()
+        .map(|token| token.to_lowercase())
+        .collect();
+    if tokens.is_empty() {
         return entries.iter().filter(|entry| entry.recent).collect();
     }
     let mut hits: Vec<_> = entries
         .iter()
         .filter(|entry| {
-            entry.title.to_lowercase().contains(&query)
-                || entry.meta.to_lowercase().contains(&query)
+            let haystack = format!("{} {}", entry.title, entry.meta).to_lowercase();
+            // Words may be separated by punctuation in the label ("day / night"),
+            // so every token must appear rather than one contiguous substring.
+            tokens.iter().all(|token| haystack.contains(token))
         })
         .collect();
     // Grouped display: this session, then files, panels, commands.
@@ -2574,21 +2579,39 @@ fn search_result(
 }
 
 fn search_title(title: &'static str, query: &str, active: bool) -> Div {
-    let needle = query.trim().to_lowercase();
-    let highlights = if needle.is_empty() || !title.is_ascii() {
-        Vec::new()
-    } else {
-        match title.to_lowercase().find(&needle) {
-            Some(start) => vec![(
-                start..start + needle.len(),
+    let mut ranges: Vec<Range<usize>> = Vec::new();
+    if title.is_ascii() {
+        let lowered = title.to_lowercase();
+        for token in query.split_whitespace() {
+            let needle = token.to_lowercase();
+            let mut from = 0;
+            while let Some(found) = lowered[from..].find(&needle) {
+                let start = from + found;
+                ranges.push(start..start + needle.len());
+                from = start + needle.len();
+            }
+        }
+    }
+    ranges.sort_by_key(|range| range.start);
+    let mut merged: Vec<Range<usize>> = Vec::new();
+    for range in ranges {
+        match merged.last_mut() {
+            Some(last) if range.start <= last.end => last.end = last.end.max(range.end),
+            _ => merged.push(range),
+        }
+    }
+    let highlights: Vec<_> = merged
+        .into_iter()
+        .map(|range| {
+            (
+                range,
                 HighlightStyle {
                     background_color: Some(rgba(0xFDCC0240).into()),
                     ..Default::default()
                 },
-            )],
-            None => Vec::new(),
-        }
-    };
+            )
+        })
+        .collect();
     div()
         .flex_1()
         .min_w_0()
@@ -6140,6 +6163,19 @@ mod tests {
         }
 
         assert!(filter_entries(SEARCH_ENTRIES, "zzz-no-match").is_empty());
+    }
+
+    #[test]
+    fn search_matches_every_word_across_punctuation() {
+        let theme = filter_entries(SEARCH_ENTRIES, "day night");
+        assert_eq!(theme.len(), 1);
+        assert!(matches!(theme[0].action, SearchAction::Theme));
+
+        let pin = filter_entries(SEARCH_ENTRIES, "pin panel");
+        assert_eq!(pin.len(), 1);
+        assert!(matches!(pin[0].action, SearchAction::Pin));
+
+        assert!(filter_entries(SEARCH_ENTRIES, "day zzz").is_empty());
     }
 
     #[test]
