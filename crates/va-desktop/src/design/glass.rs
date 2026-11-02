@@ -4589,7 +4589,9 @@ fn pin_toggle(pinned: bool, focus: &FocusHandle, cx: &mut Context<GlassPreview>)
                     this.set_pinned(next, cx);
                     cx.notify();
                 }
-                "escape" => {
+                // With the model menu open, Escape belongs to it: the root
+                // handler closes the menu, and the drawer stays put.
+                "escape" if !this.model_menu => {
                     this.close_nav(cx);
                     cx.notify();
                 }
@@ -6285,7 +6287,9 @@ fn nav_capsule(
                 return;
             }
             match event.keystroke.key.as_str() {
-                "escape" => this.close_nav(cx),
+                // With the model menu open, Escape belongs to it: the root
+                // handler closes the menu, and the drawer stays put.
+                "escape" if !this.model_menu => this.close_nav(cx),
                 "enter" | "space" => {
                     let section = this.section;
                     this.open_section(section, cx);
