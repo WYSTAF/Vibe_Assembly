@@ -4140,15 +4140,19 @@ fn conversation_header(
                 // compact the title needs the whole remainder instead.
                 .when(!compact, |this| this.flex_1().child(soft_chip(chip)))
                 .child(map_toggle(session_map, cx))
-                .child(bare_icon(
-                    "glass-history",
-                    "history",
-                    "Run history",
-                    |this, _window, cx| {
-                        this.reveal_section(DrawerSection::History, true, cx);
-                    },
-                    cx,
-                ))
+                // History already lives in the nav; drop the shortcut when the
+                // header is tight so the session title keeps its room.
+                .when(!compact, |this| {
+                    this.child(bare_icon(
+                        "glass-history",
+                        "history",
+                        "Run history",
+                        |this, _window, cx| {
+                            this.reveal_section(DrawerSection::History, true, cx);
+                        },
+                        cx,
+                    ))
+                })
                 .child(bare_icon(
                     "glass-new",
                     "plus",
