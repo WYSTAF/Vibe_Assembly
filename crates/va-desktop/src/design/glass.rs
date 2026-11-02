@@ -8443,14 +8443,16 @@ fn context_ring(used: f32, hovered: bool) -> impl IntoElement {
                     .child(
                         div()
                             .text_size(px(10.0))
+                            .line_height(px(11.0))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(brand())
                             .child(format!("{percent}%")),
                     )
                     .child(
                         div()
-                            .text_size(px(8.0))
-                            .text_color(rgba(0xFFFFFF99))
+                            .text_size(px(7.5))
+                            .line_height(px(9.0))
+                            .text_color(rgba(0xFFFFFFB3))
                             .child(format!("{tokens}k/120k")),
                     ),
             )
