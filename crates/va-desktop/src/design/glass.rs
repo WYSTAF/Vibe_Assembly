@@ -5482,6 +5482,10 @@ fn composer(
                     glass_border()
                 })
                 .shadow(glass_shadow())
+                // Clicking the card's padding or toolbar strip should place
+                // the caret, not leave focus on whatever the pointer last
+                // touched.
+                .track_focus(&focus)
                 .when(!attachments.is_empty(), |this| {
                     this.child(attachment_row(attachments, compact, cx))
                 })
