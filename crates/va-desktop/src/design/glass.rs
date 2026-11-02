@@ -845,6 +845,7 @@ enum SearchAction {
     File(EditorFile),
     Change(&'static str),
     Section(DrawerSection),
+    Map,
     Theme,
     Tokens,
     Warnings,
@@ -857,7 +858,7 @@ impl SearchAction {
             Self::Chat => 0,
             Self::File(_) | Self::Change(_) => 1,
             Self::Section(_) => 2,
-            Self::Theme | Self::Tokens | Self::Warnings | Self::Pin => 3,
+            Self::Map | Self::Theme | Self::Tokens | Self::Warnings | Self::Pin => 3,
         }
     }
 }
@@ -966,6 +967,14 @@ const SEARCH_ENTRIES: &[SearchEntry] = &[
         title: "Open Settings",
         meta: "Panel · preferences, checks and about",
         action: SearchAction::Section(DrawerSection::Settings),
+        recent: false,
+    },
+    SearchEntry {
+        id: "glass-search-map",
+        icon: "network",
+        title: "Open session network",
+        meta: "View · prompt, reads, edits and checks",
+        action: SearchAction::Map,
         recent: false,
     },
     SearchEntry {
@@ -1269,6 +1278,7 @@ pub struct GlassPreview {
     chat_epoch: usize,
     model: usize,
     model_menu: bool,
+    session_map: bool,
     web_search: bool,
     attachments: Vec<Attachment>,
     draft: String,
@@ -1354,6 +1364,7 @@ impl GlassPreview {
             chat_epoch: 0,
             model: 0,
             model_menu: false,
+            session_map: false,
             web_search: false,
             attachments: seeded_attachments(),
             draft: String::new(),
@@ -1608,6 +1619,10 @@ impl GlassPreview {
                 self.reveal_section(DrawerSection::Changes, true, cx);
             }
             SearchAction::Section(section) => self.reveal_section(section, true, cx),
+            SearchAction::Map => {
+                self.session_map = true;
+                self.model_menu = false;
+            }
             SearchAction::Theme => self.toggle_theme(cx),
             SearchAction::Tokens => {
                 self.toggle_tokens();
@@ -1703,6 +1718,20 @@ impl GlassPreview {
 
     fn toggle_tokens(&mut self) {
         self.show_tokens = !self.show_tokens;
+    }
+
+    fn toggle_session_map(&mut self, cx: &mut Context<Self>) {
+        self.session_map = !self.session_map;
+        self.model_menu = false;
+        cx.notify();
+    }
+
+    fn close_session_map(&mut self, cx: &mut Context<Self>) {
+        if !self.session_map {
+            return;
+        }
+        self.session_map = false;
+        cx.notify();
     }
 
     fn compact_context(&mut self, cx: &mut Context<Self>) {
@@ -2072,6 +2101,7 @@ impl Render for GlassPreview {
         let chat_epoch = self.chat_epoch;
         let model = self.model;
         let model_menu = self.model_menu;
+        let session_map = self.session_map;
         let web_search = self.web_search;
         let attachments = self.attachments.clone();
         let chat = self.active_thread().clone();
@@ -2135,6 +2165,8 @@ impl Render for GlassPreview {
                 } else if event.keystroke.key == "escape" && this.model_menu {
                     this.model_menu = false;
                     cx.notify();
+                } else if event.keystroke.key == "escape" && this.session_map {
+                    this.close_session_map(cx);
                 }
             }))
             .child(backdrop())
@@ -2176,6 +2208,7 @@ impl Render for GlassPreview {
                                             entity: entity.clone(),
                                             model,
                                             model_menu,
+                                            session_map,
                                             web_search,
                                             attachments: attachments.clone(),
                                         },
@@ -3024,6 +3057,7 @@ struct ConversationState {
     entity: Entity<GlassPreview>,
     model: usize,
     model_menu: bool,
+    session_map: bool,
     web_search: bool,
     attachments: Vec<Attachment>,
 }
@@ -3050,6 +3084,7 @@ fn conversation(
         entity,
         model,
         model_menu,
+        session_map,
         web_search,
         attachments,
     } = state;
@@ -3067,7 +3102,14 @@ fn conversation(
         .border_1()
         .border_color(panel_border())
         .shadow(panel_shadow())
-        .child(conversation_header(compact, &chat, model, model_menu, cx))
+        .child(conversation_header(
+            compact,
+            &chat,
+            model,
+            model_menu,
+            session_map,
+            cx,
+        ))
         .child(
             div()
                 .flex_1()
@@ -3190,6 +3232,19 @@ fn conversation(
                     })),
             )
         })
+        .when(session_map, |this| {
+            this.child(
+                div()
+                    .id("glass-session-map")
+                    .absolute()
+                    .top(px(56.0))
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .occlude()
+                    .child(session_map_view(&chat, sent.len(), cx)),
+            )
+        })
 }
 
 fn model_menu_panel(model: usize, cx: &mut Context<GlassPreview>) -> Stateful<Div> {
@@ -3266,6 +3321,7 @@ fn conversation_header(
     chat: &ChatThread,
     model: usize,
     model_menu: bool,
+    session_map: bool,
     cx: &mut Context<GlassPreview>,
 ) -> Div {
     let status = match chat.kind {
@@ -3365,6 +3421,7 @@ fn conversation_header(
                 // At full width both sides grow so the pill stays centred; in
                 // compact the title needs the whole remainder instead.
                 .when(!compact, |this| this.flex_1().child(soft_chip(chip)))
+                .child(map_toggle(session_map, cx))
                 .child(bare_icon(
                     "glass-history",
                     "history",
@@ -3381,6 +3438,552 @@ fn conversation_header(
                     |this, window, cx| this.start_chat(window, cx),
                     cx,
                 )),
+        )
+}
+
+// -------------------------------------------------------------- session map
+
+const MAP_W: f32 = 860.0;
+const MAP_H: f32 = 420.0;
+const MAP_NODE_W: f32 = 140.0;
+const MAP_NODE_H: f32 = 46.0;
+
+#[derive(Clone, Copy)]
+enum MapTone {
+    Brand,
+    Neutral,
+    Success,
+    Warning,
+}
+
+#[derive(Clone, Copy)]
+enum MapTarget {
+    Chat,
+    Section(DrawerSection),
+    Warnings,
+}
+
+struct MapNode {
+    x: f32,
+    y: f32,
+    icon: &'static str,
+    tone: MapTone,
+    title: &'static str,
+    meta: String,
+    target: MapTarget,
+}
+
+fn session_map_nodes(chat: &ChatThread, _turns: usize) -> (Vec<MapNode>, Vec<(usize, usize)>) {
+    let files = chat.files;
+    let live = matches!(chat.kind, ChatKind::Workbench);
+    let node = |x: f32,
+                y: f32,
+                icon: &'static str,
+                tone: MapTone,
+                title: &'static str,
+                meta: String,
+                target: MapTarget| MapNode {
+        x,
+        y,
+        icon,
+        tone,
+        title,
+        meta,
+        target,
+    };
+    if !live {
+        if matches!(chat.kind, ChatKind::New) {
+            return (
+                vec![
+                    node(
+                        240.0,
+                        187.0,
+                        "message-circle",
+                        MapTone::Brand,
+                        "Prompt",
+                        ellipsize(&chat.title, 18),
+                        MapTarget::Chat,
+                    ),
+                    node(
+                        480.0,
+                        187.0,
+                        "sparkles",
+                        MapTone::Neutral,
+                        "Waiting",
+                        "no run yet".to_string(),
+                        MapTarget::Chat,
+                    ),
+                ],
+                vec![(0, 1)],
+            );
+        }
+        return (
+            vec![
+                node(
+                    16.0,
+                    187.0,
+                    "message-circle",
+                    MapTone::Brand,
+                    "Prompt",
+                    ellipsize(&chat.title, 18),
+                    MapTarget::Chat,
+                ),
+                node(
+                    236.0,
+                    187.0,
+                    "folder-open",
+                    MapTone::Neutral,
+                    "Read",
+                    format!("{files} files scanned"),
+                    MapTarget::Section(DrawerSection::Session),
+                ),
+                node(
+                    456.0,
+                    187.0,
+                    "code",
+                    MapTone::Brand,
+                    "Edit",
+                    format!("{files} files touched"),
+                    MapTarget::Section(DrawerSection::Changes),
+                ),
+                node(
+                    676.0,
+                    187.0,
+                    "message-circle",
+                    MapTone::Neutral,
+                    "Reply",
+                    "closed earlier".to_string(),
+                    MapTarget::Chat,
+                ),
+            ],
+            vec![(0, 1), (1, 2), (2, 3)],
+        );
+    }
+    (
+        vec![
+            node(
+                16.0,
+                187.0,
+                "message-circle",
+                MapTone::Brand,
+                "Prompt",
+                ellipsize(&chat.title, 18),
+                MapTarget::Chat,
+            ),
+            node(
+                196.0,
+                60.0,
+                "folder-open",
+                MapTone::Neutral,
+                "Read",
+                format!("{files} files scanned"),
+                MapTarget::Section(DrawerSection::Session),
+            ),
+            node(
+                196.0,
+                314.0,
+                "sparkles",
+                MapTone::Neutral,
+                "Plan",
+                "4 steps".to_string(),
+                MapTarget::Section(DrawerSection::Session),
+            ),
+            node(
+                376.0,
+                187.0,
+                "code",
+                MapTone::Brand,
+                "Edit",
+                format!("{files} files touched"),
+                MapTarget::Section(DrawerSection::Changes),
+            ),
+            node(
+                556.0,
+                60.0,
+                "check",
+                MapTone::Success,
+                "Checks",
+                "cargo test passing".to_string(),
+                MapTarget::Section(DrawerSection::History),
+            ),
+            node(
+                556.0,
+                314.0,
+                "triangle-alert",
+                MapTone::Warning,
+                "Warnings",
+                "3 minor warnings".to_string(),
+                MapTarget::Warnings,
+            ),
+            node(
+                704.0,
+                187.0,
+                "message-circle",
+                MapTone::Neutral,
+                "Reply",
+                "run finished".to_string(),
+                MapTarget::Chat,
+            ),
+        ],
+        vec![
+            (0, 1),
+            (0, 2),
+            (1, 3),
+            (2, 3),
+            (3, 4),
+            (3, 5),
+            (4, 6),
+            (5, 6),
+        ],
+    )
+}
+
+fn map_tone(tone: MapTone) -> (Rgba, Rgba, Rgba) {
+    match tone {
+        MapTone::Brand => (brand(), brand_tint(), brand_line()),
+        MapTone::Neutral => (ink_muted(), tint(0x0A), panel_border_soft()),
+        MapTone::Success => (success(), success_tint(), success_line()),
+        MapTone::Warning => (warning(), warning_tint(), rgba(0xF5B30159)),
+    }
+}
+
+fn session_map_view(chat: &ChatThread, turns: usize, cx: &mut Context<GlassPreview>) -> Div {
+    let blank = matches!(chat.kind, ChatKind::New) && turns == 0;
+    div()
+        .size_full()
+        .flex()
+        .flex_col()
+        .bg(panel_fill())
+        .child(
+            div()
+                .h(px(48.0))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .gap(px(9.0))
+                .px(px(16.0))
+                .border_b_1()
+                .border_color(panel_border_soft())
+                .child(
+                    div()
+                        .size(px(26.0))
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(8.0))
+                        .bg(brand_tint())
+                        .border_1()
+                        .border_color(brand_line())
+                        .child(icon("network", 13.0, brand())),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(px(1.0))
+                        .child(
+                            div()
+                                .text_size(px(12.5))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(ink())
+                                .child("Session network"),
+                        )
+                        .child(
+                            div()
+                                .truncate()
+                                .text_size(px(10.0))
+                                .text_color(ink_muted())
+                                .child("Steps this session took and how they connect"),
+                        ),
+                )
+                .child(div().flex_1())
+                .when(!blank, |this| {
+                    let (nodes, links) = session_map_nodes(chat, turns);
+                    let node_word = if nodes.len() == 1 { "node" } else { "nodes" };
+                    let link_word = if links.len() == 1 { "link" } else { "links" };
+                    this.child(soft_chip(format!(
+                        "{} {} · {} {}",
+                        nodes.len(),
+                        node_word,
+                        links.len(),
+                        link_word
+                    )))
+                })
+                .child(
+                    div()
+                        .id("glass-map-back")
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.0))
+                        .h(px(28.0))
+                        .pl(px(7.0))
+                        .pr(px(10.0))
+                        .rounded_full()
+                        .bg(glass_fill())
+                        .border_1()
+                        .border_color(tint(0x2E))
+                        .cursor_pointer()
+                        .hover(|style| style.bg(hover_wash()))
+                        .on_click(cx.listener(|this, _event, _window, cx| {
+                            this.close_session_map(cx);
+                        }))
+                        .child(icon("chevron-left", 13.0, ink_muted()))
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(ink_soft())
+                                .child("Back to chat"),
+                        ),
+                ),
+        )
+        .child(if blank {
+            session_map_empty(cx).into_any_element()
+        } else {
+            let (nodes, links) = session_map_nodes(chat, turns);
+            let links: Vec<(f32, f32, f32, f32)> = links
+                .iter()
+                .map(|&(from, to)| {
+                    let a = &nodes[from];
+                    let b = &nodes[to];
+                    (
+                        a.x + MAP_NODE_W,
+                        a.y + MAP_NODE_H * 0.5,
+                        b.x,
+                        b.y + MAP_NODE_H * 0.5,
+                    )
+                })
+                .collect();
+            div()
+                .id("glass-map-scroll")
+                .flex_1()
+                .min_h_0()
+                .overflow_scroll()
+                .child(
+                    div()
+                        .w_full()
+                        .h_full()
+                        .min_w(px(MAP_W + 48.0))
+                        .min_h(px(MAP_H + 48.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .p(px(24.0))
+                        .child(
+                            div()
+                                .relative()
+                                .flex_shrink_0()
+                                .w(px(MAP_W))
+                                .h(px(MAP_H))
+                                .rounded(px(18.0))
+                                .bg(well())
+                                .border_1()
+                                .border_color(panel_border_soft())
+                                .overflow_hidden()
+                                .child(map_grid())
+                                .child(map_links(links))
+                                .children(nodes.iter().enumerate().map(|(index, node)| {
+                                    map_node(index, node, cx)
+                                })),
+                        ),
+                )
+                .into_any_element()
+        })
+}
+
+fn session_map_empty(cx: &mut Context<GlassPreview>) -> Div {
+    div()
+        .flex_1()
+        .min_h_0()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(px(10.0))
+        .child(
+            div()
+                .size(px(46.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .bg(brand_tint())
+                .border_1()
+                .border_color(brand_line())
+                .child(icon("network", 20.0, brand())),
+        )
+        .child(
+            div()
+                .text_size(px(14.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(ink())
+                .child("No session network yet"),
+        )
+        .child(
+            div()
+                .max_w(px(360.0))
+                .text_center()
+                .text_size(px(12.0))
+                .line_height(px(18.0))
+                .text_color(ink_muted())
+                .child(
+                    "Send a message and the prompt, reads, edits and checks will connect \
+                     into a map here.",
+                ),
+        )
+        .child(
+            div()
+                .id("glass-map-empty-back")
+                .mt(px(2.0))
+                .h(px(30.0))
+                .px(px(12.0))
+                .flex()
+                .items_center()
+                .gap(px(5.0))
+                .rounded_full()
+                .bg(glass_fill())
+                .border_1()
+                .border_color(tint(0x2E))
+                .cursor_pointer()
+                .hover(|style| style.bg(hover_wash()))
+                .on_click(cx.listener(|this, _event, _window, cx| {
+                    this.close_session_map(cx);
+                }))
+                .child(icon("chevron-left", 13.0, ink_muted()))
+                .child(
+                    div()
+                        .text_size(px(11.5))
+                        .text_color(ink_soft())
+                        .child("Back to chat"),
+                ),
+        )
+}
+
+fn map_grid() -> impl IntoElement {
+    canvas(
+        |_bounds, _window, _cx| (),
+        |bounds, _prepaint, window, _cx| {
+            let step = 32.0;
+            let cols = (bounds.size.width / px(step)).ceil() as usize;
+            let rows = (bounds.size.height / px(step)).ceil() as usize;
+            for i in 0..=cols {
+                let x = bounds.origin.x + px(i as f32 * step);
+                let mut path = PathBuilder::stroke(px(1.0));
+                path.move_to(point(x, bounds.origin.y));
+                path.line_to(point(x, bounds.origin.y + bounds.size.height));
+                if let Ok(path) = path.build() {
+                    window.paint_path(path, tint(0x07));
+                }
+            }
+            for i in 0..=rows {
+                let y = bounds.origin.y + px(i as f32 * step);
+                let mut path = PathBuilder::stroke(px(1.0));
+                path.move_to(point(bounds.origin.x, y));
+                path.line_to(point(bounds.origin.x + bounds.size.width, y));
+                if let Ok(path) = path.build() {
+                    window.paint_path(path, tint(0x07));
+                }
+            }
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
+
+fn map_links(links: Vec<(f32, f32, f32, f32)>) -> impl IntoElement {
+    canvas(
+        |_bounds, _window, _cx| (),
+        move |bounds, _prepaint, window, _cx| {
+            for &(sx, sy, tx, ty) in &links {
+                let start = point(bounds.origin.x + px(sx), bounds.origin.y + px(sy));
+                let end = point(bounds.origin.x + px(tx), bounds.origin.y + px(ty));
+                let mid = point(px((sx + tx) * 0.5) + bounds.origin.x, start.y);
+                let mut path = PathBuilder::stroke(px(1.5));
+                path.move_to(start);
+                path.curve_to(end, mid);
+                if let Ok(path) = path.build() {
+                    window.paint_path(path, tint(0x26));
+                }
+            }
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
+
+fn map_node(index: usize, node: &MapNode, cx: &mut Context<GlassPreview>) -> Stateful<Div> {
+    let (fg, bg, border) = map_tone(node.tone);
+    let target = node.target;
+    div()
+        .id(("glass-map-node", index))
+        .absolute()
+        .left(px(node.x))
+        .top(px(node.y))
+        .w(px(MAP_NODE_W))
+        .h(px(MAP_NODE_H))
+        .flex()
+        .items_center()
+        .gap(px(8.0))
+        .px(px(9.0))
+        .rounded(px(12.0))
+        .bg(card_fill())
+        .border_1()
+        .border_color(border)
+        .shadow(soft_shadow())
+        .cursor_pointer()
+        .hover(|style| style.bg(raised()).border_color(brand_line()))
+        .on_click(cx.listener(move |this, _event, _window, cx| {
+            match target {
+                MapTarget::Chat => this.close_session_map(cx),
+                MapTarget::Section(section) => {
+                    this.close_session_map(cx);
+                    this.reveal_section(section, true, cx);
+                }
+                MapTarget::Warnings => {
+                    this.close_session_map(cx);
+                    this.explain_warnings(cx);
+                }
+            }
+            cx.notify();
+        }))
+        .child(
+            div()
+                .size(px(26.0))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(8.0))
+                .bg(bg)
+                .child(icon(node.icon, 13.0, fg)),
+        )
+        .child(
+            div()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(px(1.0))
+                .child(
+                    div()
+                        .truncate()
+                        .text_size(px(11.5))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(ink())
+                        .child(node.title),
+                )
+                .child(
+                    div()
+                        .truncate()
+                        .text_size(px(9.5))
+                        .text_color(ink_muted())
+                        .child(node.meta.clone()),
+                ),
         )
 }
 
@@ -6757,6 +7360,39 @@ fn bare_icon(
             cx.notify();
         }))
         .child(icon(name, 14.0, ink_muted()))
+}
+
+fn map_toggle(active: bool, cx: &mut Context<GlassPreview>) -> Stateful<Div> {
+    div()
+        .id("glass-map-toggle")
+        .flex()
+        .items_center()
+        .justify_center()
+        .size(px(30.0))
+        .rounded(px(R_SM))
+        .cursor_pointer()
+        .tooltip(hint(if active {
+            "Back to chat"
+        } else {
+            "Session network"
+        }))
+        .when(active, |this| {
+            this.bg(brand_tint())
+                .border_1()
+                .border_color(brand_line())
+        })
+        .when(!active, |this| {
+            this.hover(|style| style.bg(hover_wash()))
+                .active(|style| style.bg(press_wash()))
+        })
+        .on_click(cx.listener(|this, _event, _window, cx| {
+            this.toggle_session_map(cx);
+        }))
+        .child(icon(
+            "network",
+            14.0,
+            if active { brand() } else { ink_muted() },
+        ))
 }
 
 fn window_control(
