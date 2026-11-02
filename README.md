@@ -137,7 +137,8 @@ the Session, Changes, Editor, and History drawer on hover. Opening a section
 never pins it; only the drawer header's Pin chip (or its keyboard handler)
 keeps it open. The drawer runs to the bottom of the window and card text stops
 clear of the nav capsule, so counts, chevrons, and inline links stay readable
-and clickable. The circular 52px context indicator refills on hover.
+and clickable. The model pill opens a small model menu, and the circular 52px
+context indicator shows the used window at a glance.
 
 The titlebar sun/moon toggle rewrites the palette across the canvas, panes,
 drawer, composer, nav, and shadows. The choice is stored in

@@ -14,12 +14,12 @@ use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::{
-    canvas, div, ease_out_quint, linear_color_stop, linear_gradient, point, pulsating_between, px,
-    rgb, rgba, Animation, AnimationExt, AnyElement, AnyView, App, Background, BoxShadow,
-    ClipboardItem, Context, Div, ElementId, ElementInputHandler, Entity, EntityInputHandler,
-    FocusHandle, FontWeight, HighlightStyle, IntoElement, KeyDownEvent, Keystroke,
-    PathPromptOptions, Point, Rgba, ScrollHandle, Stateful, StyleRefinement, StyledText,
-    UTF16Selection, Window, WindowControlArea,
+    canvas, deferred, div, ease_out_quint, linear_color_stop, linear_gradient, point,
+    pulsating_between, px, rgb, rgba, Animation, AnimationExt, AnyElement, AnyView, App,
+    Background, BoxShadow, ClipboardItem, Context, Div, ElementId, ElementInputHandler, Entity,
+    EntityInputHandler, FocusHandle, FontWeight, HighlightStyle, IntoElement, KeyDownEvent,
+    Keystroke, PathBuilder, PathPromptOptions, Point, Rgba, ScrollHandle, Stateful,
+    StyleRefinement, StyledText, UTF16Selection, Window, WindowControlArea,
 };
 use va_core::modes::ExecutionMode;
 
@@ -425,7 +425,6 @@ const DRAWER_W: f32 = 408.0;
 // (or click-blocked) by the 52px nav capsule.
 const DRAWER_CARD_RIGHT: f32 = 62.0;
 const CHAT_ROW: f32 = 44.0;
-const CONTEXT_TICKS: usize = 48;
 const CONTEXT_SIZE: f32 = 52.0;
 const CONTEXT_RING: f32 = 42.0;
 
@@ -1152,6 +1151,11 @@ fn attachment_for_path(path: &std::path::Path) -> Attachment {
 }
 
 const MODELS: [&str; 3] = ["Opus 4.6", "Sonnet 4.6", "Haiku 4.5"];
+const MODEL_BLURBS: [&str; 3] = [
+    "Deepest reasoning",
+    "Balanced everyday coding",
+    "Fastest answers",
+];
 
 pub struct GlassPreview {
     mode: ExecutionMode,
@@ -1162,7 +1166,6 @@ pub struct GlassPreview {
     nav_hovered: bool,
     section: DrawerSection,
     section_epoch: usize,
-    context_epoch: usize,
     search_open: bool,
     search_epoch: usize,
     search_query: String,
@@ -1180,6 +1183,7 @@ pub struct GlassPreview {
     next_chat: u64,
     chat_epoch: usize,
     model: usize,
+    model_menu: bool,
     web_search: bool,
     attachments: Vec<Attachment>,
     draft: String,
@@ -1229,7 +1233,6 @@ impl GlassPreview {
             nav_hovered: false,
             section: DrawerSection::Session,
             section_epoch: 0,
-            context_epoch: 0,
             search_open: false,
             search_epoch: 0,
             search_query: String::new(),
@@ -1247,6 +1250,7 @@ impl GlassPreview {
             next_chat,
             chat_epoch: 0,
             model: 0,
+            model_menu: false,
             web_search: false,
             attachments: seeded_attachments(),
             draft: String::new(),
@@ -1288,6 +1292,7 @@ impl GlassPreview {
             self.section = section;
             self.section_epoch += 1;
         }
+        self.model_menu = false;
         self.set_nav_open(true, cx);
         self.nav_hovered = true;
     }
@@ -1305,6 +1310,7 @@ impl GlassPreview {
         self.search_open = true;
         self.search_epoch += 1;
         self.search_index = 0;
+        self.model_menu = false;
         window.focus(&self.search_focus);
     }
 
@@ -1542,6 +1548,7 @@ impl GlassPreview {
 
     fn toggle_theme(&mut self, cx: &mut Context<Self>) {
         self.day = !self.day;
+        self.model_menu = false;
         DAY_MODE.store(self.day, Ordering::Relaxed);
         store_theme(self.day);
         cx.notify();
@@ -1559,7 +1566,9 @@ impl GlassPreview {
             return;
         }
         window.focus(&self.composer_focus);
+        self.model_menu = false;
         if self.active_chat == id {
+            cx.notify();
             return;
         }
         self.active_chat = id;
@@ -1598,13 +1607,20 @@ impl GlassPreview {
             self.active_chat = id;
             self.chat_epoch += 1;
         }
+        self.model_menu = false;
         self.thread_settled = false;
         window.focus(&self.composer_focus);
         cx.notify();
     }
 
-    fn cycle_model(&mut self, cx: &mut Context<Self>) {
-        self.model = (self.model + 1) % MODELS.len();
+    fn toggle_model_menu(&mut self, cx: &mut Context<Self>) {
+        self.model_menu = !self.model_menu;
+        cx.notify();
+    }
+
+    fn set_model(&mut self, model: usize, cx: &mut Context<Self>) {
+        self.model = model.min(MODELS.len() - 1);
+        self.model_menu = false;
         cx.notify();
     }
 
@@ -1751,7 +1767,6 @@ impl Render for GlassPreview {
         let nav_pinned = self.nav_pinned;
         let section = self.section;
         let section_epoch = self.section_epoch;
-        let context_epoch = self.context_epoch;
         let search_open = self.search_open;
         let search_epoch = self.search_epoch;
         let search_query = self.search_query.clone();
@@ -1768,6 +1783,7 @@ impl Render for GlassPreview {
         let active_chat = self.active_chat;
         let chat_epoch = self.chat_epoch;
         let model = self.model;
+        let model_menu = self.model_menu;
         let web_search = self.web_search;
         let attachments = self.attachments.clone();
         let chat = self.active_thread().clone();
@@ -1823,6 +1839,9 @@ impl Render for GlassPreview {
                         this.open_search(window);
                     }
                     cx.notify();
+                } else if event.keystroke.key == "escape" && this.model_menu {
+                    this.model_menu = false;
+                    cx.notify();
                 }
             }))
             .child(backdrop())
@@ -1862,6 +1881,7 @@ impl Render for GlassPreview {
                                             composer_focus,
                                             entity: entity.clone(),
                                             model,
+                                            model_menu,
                                             web_search,
                                             attachments: attachments.clone(),
                                         },
@@ -1888,7 +1908,6 @@ impl Render for GlassPreview {
                             section_epoch,
                             show_tokens,
                             show_warnings,
-                            context_epoch,
                             editor_file,
                             selected_change,
                             selected_run,
@@ -2005,11 +2024,9 @@ fn theme_toggle(day: bool, cx: &mut Context<GlassPreview>) -> Stateful<Div> {
         .size(px(30.0))
         .rounded(px(R_SM))
         .cursor_pointer()
-        .tooltip(hint(if day {
-            "Switch to night mode"
-        } else {
-            "Switch to day mode"
-        }))
+        // The label stays theme-neutral: flipping the theme under an open
+        // tooltip would otherwise leave the old wording on screen.
+        .tooltip(hint("Toggle day / night theme"))
         .hover(|style| style.bg(hover_wash()))
         .active(|style| style.bg(press_wash()))
         .on_click(cx.listener(|this, _event, _window, cx| this.toggle_theme(cx)))
@@ -2663,6 +2680,7 @@ struct ConversationState {
     composer_focus: FocusHandle,
     entity: Entity<GlassPreview>,
     model: usize,
+    model_menu: bool,
     web_search: bool,
     attachments: Vec<Attachment>,
 }
@@ -2687,6 +2705,7 @@ fn conversation(
         composer_focus,
         entity,
         model,
+        model_menu,
         web_search,
         attachments,
     } = state;
@@ -2695,6 +2714,7 @@ fn conversation(
         .flex_1()
         .min_w_0()
         .h_full()
+        .relative()
         .flex()
         .flex_col()
         .overflow_hidden()
@@ -2703,7 +2723,7 @@ fn conversation(
         .border_1()
         .border_color(panel_border())
         .shadow(panel_shadow())
-        .child(conversation_header(compact, &chat, model, cx))
+        .child(conversation_header(compact, &chat, model, model_menu, cx))
         .child(
             div()
                 .flex_1()
@@ -2799,12 +2819,96 @@ fn conversation(
                     .child("Vibe can make mistakes — review every change before you apply."),
             ),
         )
+        .when(model_menu, |this| {
+            this.child(
+                div()
+                    .id("glass-model-scrim")
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.model_menu = false;
+                        cx.notify();
+                    })),
+            )
+        })
+}
+
+fn model_menu_panel(model: usize, cx: &mut Context<GlassPreview>) -> Stateful<Div> {
+    div()
+        .id("glass-model-menu")
+        .absolute()
+        .top(px(38.0))
+        .right(px(-60.0))
+        .w(px(248.0))
+        .flex()
+        .flex_col()
+        .p(px(6.0))
+        .rounded(px(14.0))
+        .bg(sheet_fill())
+        .border_1()
+        .border_color(panel_border())
+        .shadow(glass_shadow())
+        .on_click(cx.listener(|_, _event, _window, cx| cx.stop_propagation()))
+        .child(
+            div().h(px(26.0)).px(px(10.0)).flex().items_center().child(
+                div()
+                    .text_size(px(10.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(ink_muted())
+                    .child("MODEL"),
+            ),
+        )
+        .children(MODELS.iter().enumerate().map(|(index, name)| {
+            let selected = index == model;
+            let blurb = MODEL_BLURBS[index];
+            div()
+                .id(("glass-model-option", index))
+                .flex()
+                .items_center()
+                .gap(px(10.0))
+                .h(px(44.0))
+                .px(px(10.0))
+                .rounded(px(10.0))
+                .cursor_pointer()
+                .when(selected, |this| this.bg(brand_tint()))
+                .when(!selected, |this| this.hover(|style| style.bg(hover_wash())))
+                .on_click(cx.listener(move |this, _event, _window, cx| {
+                    this.set_model(index, cx);
+                }))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(px(1.0))
+                        .child(
+                            div()
+                                .text_size(px(12.5))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(if selected { brand_text() } else { ink() })
+                                .child(*name),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(10.5))
+                                .text_color(ink_muted())
+                                .child(blurb),
+                        ),
+                )
+                .when(selected, |this| {
+                    this.child(icon("check", 13.0, brand_text()))
+                })
+        }))
 }
 
 fn conversation_header(
     compact: bool,
     chat: &ChatThread,
     model: usize,
+    model_menu: bool,
     cx: &mut Context<GlassPreview>,
 ) -> Div {
     let status = match chat.kind {
@@ -2885,7 +2989,15 @@ fn conversation_header(
                         ),
                 ),
         )
-        .child(model_pill(compact, model, cx))
+        .child(
+            div()
+                .relative()
+                .flex_shrink_0()
+                .child(model_pill(compact, model, model_menu, cx))
+                .when(model_menu, |this| {
+                    this.child(deferred(model_menu_panel(model, cx)))
+                }),
+        )
         .child(
             div()
                 .flex()
@@ -2914,7 +3026,12 @@ fn conversation_header(
         )
 }
 
-fn model_pill(compact: bool, model: usize, cx: &mut Context<GlassPreview>) -> Stateful<Div> {
+fn model_pill(
+    compact: bool,
+    model: usize,
+    open: bool,
+    cx: &mut Context<GlassPreview>,
+) -> Stateful<Div> {
     div()
         .id("glass-model")
         .flex_shrink_0()
@@ -2926,13 +3043,12 @@ fn model_pill(compact: bool, model: usize, cx: &mut Context<GlassPreview>) -> St
         .rounded_full()
         .bg(glass_fill())
         .border_1()
-        .border_color(tint(0x2E))
+        .border_color(if open { brand_line() } else { tint(0x2E) })
         .shadow(soft_shadow())
         .cursor_pointer()
         .hover(|style| style.bg(glass_fill_strong()))
         .active(|style| style.bg(tint(0x12)))
-        .tooltip(hint("Model · click to switch"))
-        .on_click(cx.listener(|this, _event, _window, cx| this.cycle_model(cx)))
+        .on_click(cx.listener(|this, _event, _window, cx| this.toggle_model_menu(cx)))
         .child(icon("sparkles", 12.0, brand()))
         .child(
             div()
@@ -2941,16 +3057,11 @@ fn model_pill(compact: bool, model: usize, cx: &mut Context<GlassPreview>) -> St
                 .text_color(ink())
                 .child(MODELS[model.min(MODELS.len() - 1)]),
         )
-        .when(!compact, |this| {
-            this.child(div().w(px(1.0)).h(px(12.0)).bg(tint(0x1F)))
-                .child(
-                    div()
-                        .text_size(px(10.5))
-                        .text_color(ink_muted())
-                        .child("Auto"),
-                )
-        })
-        .child(icon("chevron-down", 11.0, ink_muted()))
+        .child(icon(
+            if open { "chevron-up" } else { "chevron-down" },
+            11.0,
+            ink_muted(),
+        ))
 }
 
 fn vibe_avatar(size: f32) -> Div {
@@ -3106,8 +3217,8 @@ fn user_turn() -> Div {
             .line_height(px(20.0))
             .text_color(ink())
             .child(
-                "Move Session and While it works into the auto-hide bar, animate it, and \
-                 give the context window a refilling circle.",
+                "Move Session and Changes into the auto-hide bar, animate it, and \
+                 give the context window a quiet progress ring.",
             ),
     )
 }
@@ -3168,7 +3279,7 @@ fn work_card(compact: bool, applied: bool, cx: &mut Context<GlassPreview>) -> Di
             "Nav opens Session, Changes, Editor and History on hover",
         ))
         .child(check_line("Pin in the panel header keeps it open"))
-        .child(check_line("Refilling ring shows the 62% context window"))
+        .child(check_line("Progress ring shows the 62% context window"))
         .child(check_line(
             "Live chat still steers the run without stopping it",
         ))
@@ -3296,12 +3407,12 @@ fn diff_preview(name: &'static str, dir: &'static str, added: u32, removed: u32)
                 .child(diff_row(
                     "-",
                     Some(danger_tint()),
-                    &[p("    "), fx("context_orb"), p("()")],
+                    &[p("    "), fx("context_ring"), p("("), p("epoch"), p(")")],
                 ))
                 .child(diff_row(
                     "+",
                     Some(success_tint()),
-                    &[p("    "), fx("context_ring"), p("("), nu("0.62"), p(")")],
+                    &[p("    "), fx("context_ring"), p("()")],
                 )),
         )
 }
@@ -5065,7 +5176,6 @@ struct EdgeState {
     section_epoch: usize,
     show_tokens: bool,
     show_warnings: bool,
-    context_epoch: usize,
     editor_file: EditorFile,
     selected_change: &'static str,
     selected_run: &'static str,
@@ -5271,11 +5381,7 @@ fn section_body(state: EdgeState, cx: &mut Context<GlassPreview>) -> Div {
 }
 
 fn nav_column(state: EdgeState, focus: &FocusHandle, cx: &mut Context<GlassPreview>) -> Div {
-    let EdgeState {
-        section,
-        context_epoch,
-        ..
-    } = state;
+    let EdgeState { section, .. } = state;
     div()
         .absolute()
         .top_0()
@@ -5288,10 +5394,10 @@ fn nav_column(state: EdgeState, focus: &FocusHandle, cx: &mut Context<GlassPrevi
         .justify_center()
         .gap(px(14.0))
         .child(nav_capsule(section, focus, cx))
-        .child(context_indicator(context_epoch, cx))
+        .child(context_indicator())
 }
 
-fn context_indicator(epoch: usize, cx: &mut Context<GlassPreview>) -> Stateful<Div> {
+fn context_indicator() -> Stateful<Div> {
     div()
         .id("glass-context")
         .size(px(CONTEXT_SIZE))
@@ -5305,14 +5411,7 @@ fn context_indicator(epoch: usize, cx: &mut Context<GlassPreview>) -> Stateful<D
         .border_color(nav_border())
         .shadow(glass_shadow())
         .tooltip(hint("62% of context used — 75k of 120k tokens"))
-        .on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
-            if !*hovered {
-                return;
-            }
-            this.context_epoch += 1;
-            cx.notify();
-        }))
-        .child(context_ring(epoch))
+        .child(context_ring())
 }
 
 fn nav_capsule(
@@ -5409,7 +5508,7 @@ fn nav_icon(section: DrawerSection, active: bool, cx: &mut Context<GlassPreview>
         .cursor_pointer()
         .tooltip(hint(section.tooltip()))
         .when(active, |this| {
-            this.child(active_halo(id))
+            this.child(active_halo())
                 .bg(rgba(0xFDCC0233))
                 .border_1()
                 .border_color(brand_line())
@@ -5437,76 +5536,71 @@ fn nav_icon(section: DrawerSection, active: bool, cx: &mut Context<GlassPreview>
         .into_any_element()
 }
 
-fn context_ring(epoch: usize) -> impl IntoElement {
+fn context_ring() -> impl IntoElement {
+    const USED: f32 = 0.62;
     div()
         .size(px(CONTEXT_RING))
         .flex_shrink_0()
         .relative()
-        .flex()
-        .items_center()
-        .justify_center()
+        .child(
+            canvas(
+                |_bounds, _window, _cx| (),
+                |bounds, _prepaint, window, _cx| {
+                    let stroke = px(3.0);
+                    let center = bounds.center();
+                    let radius = (bounds.size.width - stroke) / 2.0;
+                    let top = point(center.x, center.y - radius);
+                    let bottom = point(center.x, center.y + radius);
+                    let mut track = PathBuilder::stroke(stroke);
+                    track.move_to(top);
+                    track.arc_to(point(radius, radius), px(0.0), false, true, bottom);
+                    track.arc_to(point(radius, radius), px(0.0), false, true, top);
+                    if let Ok(path) = track.build() {
+                        window.paint_path(path, tint(0x24));
+                    }
+                    let end_angle = -FRAC_PI_2 + TAU * USED;
+                    let end = point(
+                        center.x + radius * end_angle.cos(),
+                        center.y + radius * end_angle.sin(),
+                    );
+                    let mut arc = PathBuilder::stroke(stroke);
+                    arc.move_to(top);
+                    arc.arc_to(point(radius, radius), px(0.0), USED > 0.5, true, end);
+                    if let Ok(path) = arc.build() {
+                        window.paint_path(path, brand());
+                    }
+                },
+            )
+            .size_full(),
+        )
         .child(
             div()
-                .text_size(px(10.0))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(brand_text())
-                .child("62%"),
-        )
-        .with_animation(
-            ("glass-context", epoch),
-            Animation::new(motion(520)).with_easing(ease_out_quint()),
-            move |el, t| {
-                // Refill on every hover; usage itself never drains.
-                let k = if epoch == 0 { 1.0 } else { t };
-                let fill = 0.62 * k;
-                el.children((0..CONTEXT_TICKS).map(move |i| context_tick(i, fill)))
-            },
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .text_size(px(10.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(brand_text())
+                        .child("62%"),
+                ),
         )
 }
 
-fn context_tick(i: usize, fill: f32) -> Div {
-    let span = i as f32 / CONTEXT_TICKS as f32;
-    let angle = -FRAC_PI_2 + span * TAU;
-    let center = CONTEXT_RING / 2.0;
-    let radius = center - 6.0;
-    let dot = 2.0;
-    let x = center + radius * angle.cos() - dot / 2.0;
-    let y = center + radius * angle.sin() - dot / 2.0;
-    let lit = ((fill - span) / 0.03).clamp(0.0, 1.0);
-    let tick = div()
-        .absolute()
-        .left(px(x))
-        .top(px(y))
-        .size(px(dot))
-        .rounded_full()
-        .bg(tint(0x30));
-    if lit <= 0.0 {
-        tick
-    } else {
-        tick.child(div().size_full().rounded_full().bg(brand()).opacity(lit))
-    }
-}
-
-fn active_halo(id: &'static str) -> AnyElement {
-    let halo = div()
+fn active_halo() -> Div {
+    div()
         .absolute()
         .top_0()
         .left_0()
         .size_full()
         .rounded_full()
-        .bg(rgba(0xFDCC022E));
-    if calm() {
-        halo.opacity(0.5).into_any_element()
-    } else {
-        halo.with_animation(
-            (id, 3usize),
-            Animation::new(Duration::from_millis(2600))
-                .repeat()
-                .with_easing(pulsating_between(0.18, 0.85)),
-            |el, t| el.opacity(t),
-        )
-        .into_any_element()
-    }
+        .bg(rgba(0xFDCC022E))
+        .opacity(0.5)
 }
 
 // ------------------------------------------------------------------- pieces
