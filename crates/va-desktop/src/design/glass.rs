@@ -3364,6 +3364,7 @@ fn user_turn() -> Div {
         div()
             .w_full()
             .max_w(px(500.0))
+            .min_w_0()
             .p(px(12.0))
             .rounded(px(14.0))
             .bg(raised())
@@ -3384,6 +3385,7 @@ fn sent_turn(text: &str) -> Div {
     div().w_full().flex().justify_end().child(
         div()
             .max_w(px(500.0))
+            .min_w_0()
             .p(px(12.0))
             .rounded(px(14.0))
             .bg(raised())
