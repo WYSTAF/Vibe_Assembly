@@ -11,7 +11,7 @@ projects without exhausting a single chat context. Roles communicate through a
 regulated `.ai/` contract, and every edit passes through a deterministic,
 hash-anchored execution harness.
 
-**Current status:** 214 tests passing, clippy clean with `-D warnings`, both
+**Current status:** 216 tests passing, clippy clean with `-D warnings`, both
 release binaries build. There is no browser runtime, webview, or Node/npm
 toolchain.
 
@@ -361,7 +361,7 @@ cargo test --workspace
 cargo build --release
 ```
 
-Current workspace: **214 tests passing**, clippy clean, both release binaries
+Current workspace: **216 tests passing**, clippy clean, both release binaries
 built. The live HTTP planner is tested against a local mock OpenAI-compatible
 TCP server; unit tests cover compaction, think-trace eviction, observation
 slicing, repeated anchors, read-only enforcement, stagnation escalation,
