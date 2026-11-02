@@ -2869,7 +2869,7 @@ fn titlebar(day: bool, search_open: bool, cx: &mut Context<GlassPreview>) -> Div
                     div()
                         .text_size(px(11.0))
                         .text_color(ink_muted())
-                        .child("Synced just now"),
+                        .child("Local-first workspace"),
                 ),
         )
         .child(div().flex_1())
