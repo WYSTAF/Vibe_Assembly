@@ -2731,6 +2731,8 @@ impl Render for GlassPreview {
                                             thinking,
                                             model_menu,
                                             session_map,
+                                            map_scale: ((f32::from(thread_w) - 64.0) / MAP_W)
+                                                .clamp(0.82, 1.0),
                                             web_search,
                                             attachments: attachments.clone(),
                                         },
@@ -3591,6 +3593,7 @@ struct ConversationState {
     thinking: ThinkingLevel,
     model_menu: bool,
     session_map: bool,
+    map_scale: f32,
     web_search: bool,
     attachments: Vec<Attachment>,
 }
@@ -3621,6 +3624,7 @@ fn conversation(
         thinking,
         model_menu,
         session_map,
+        map_scale,
         web_search,
         attachments,
     } = state;
@@ -3781,7 +3785,7 @@ fn conversation(
                     .right_0()
                     .bottom_0()
                     .occlude()
-                    .child(session_map_view(&chat, sent.len(), cx)),
+                    .child(session_map_view(&chat, sent.len(), map_scale, cx)),
             )
         })
 }
@@ -4368,7 +4372,12 @@ fn map_tone(tone: MapTone) -> (Rgba, Rgba, Rgba) {
     }
 }
 
-fn session_map_view(chat: &ChatThread, turns: usize, cx: &mut Context<GlassPreview>) -> Div {
+fn session_map_view(
+    chat: &ChatThread,
+    turns: usize,
+    scale: f32,
+    cx: &mut Context<GlassPreview>,
+) -> Div {
     let blank = matches!(chat.kind, ChatKind::New) && turns == 0;
     div()
         .size_full()
@@ -4464,16 +4473,20 @@ fn session_map_view(chat: &ChatThread, turns: usize, cx: &mut Context<GlassPrevi
             session_map_empty(cx).into_any_element()
         } else {
             let (nodes, links) = session_map_nodes(chat, turns);
+            let node_w = MAP_NODE_W * scale;
+            let node_h = MAP_NODE_H * scale;
+            let map_w = MAP_W * scale;
+            let map_h = MAP_H * scale;
             let links: Vec<(f32, f32, f32, f32)> = links
                 .iter()
                 .map(|&(from, to)| {
                     let a = &nodes[from];
                     let b = &nodes[to];
                     (
-                        a.x + MAP_NODE_W,
-                        a.y + MAP_NODE_H * 0.5,
-                        b.x,
-                        b.y + MAP_NODE_H * 0.5,
+                        (a.x + MAP_NODE_W) * scale,
+                        (a.y + MAP_NODE_H * 0.5) * scale,
+                        b.x * scale,
+                        (b.y + MAP_NODE_H * 0.5) * scale,
                     )
                 })
                 .collect();
@@ -4486,8 +4499,8 @@ fn session_map_view(chat: &ChatThread, turns: usize, cx: &mut Context<GlassPrevi
                     div()
                         .w_full()
                         .h_full()
-                        .min_w(px(MAP_W + 48.0))
-                        .min_h(px(MAP_H + 48.0))
+                        .min_w(px(map_w + 48.0))
+                        .min_h(px(map_h + 48.0))
                         .flex()
                         .items_center()
                         .justify_center()
@@ -4496,8 +4509,8 @@ fn session_map_view(chat: &ChatThread, turns: usize, cx: &mut Context<GlassPrevi
                             div()
                                 .relative()
                                 .flex_shrink_0()
-                                .w(px(MAP_W))
-                                .h(px(MAP_H))
+                                .w(px(map_w))
+                                .h(px(map_h))
                                 .rounded(px(18.0))
                                 .bg(well())
                                 .border_1()
@@ -4506,7 +4519,7 @@ fn session_map_view(chat: &ChatThread, turns: usize, cx: &mut Context<GlassPrevi
                                 .child(map_grid())
                                 .child(map_links(links))
                                 .children(nodes.iter().enumerate().map(|(index, node)| {
-                                    map_node(index, node, cx)
+                                    map_node(index, node, scale, node_w, node_h, cx)
                                 })),
                         ),
                 )
@@ -4638,21 +4651,28 @@ fn map_links(links: Vec<(f32, f32, f32, f32)>) -> impl IntoElement {
     .size_full()
 }
 
-fn map_node(index: usize, node: &MapNode, cx: &mut Context<GlassPreview>) -> Stateful<Div> {
+fn map_node(
+    index: usize,
+    node: &MapNode,
+    scale: f32,
+    node_w: f32,
+    node_h: f32,
+    cx: &mut Context<GlassPreview>,
+) -> Stateful<Div> {
     let (fg, bg, border) = map_tone(node.tone);
     let target = node.target;
     div()
         .id(("glass-map-node", index))
         .absolute()
-        .left(px(node.x))
-        .top(px(node.y))
-        .w(px(MAP_NODE_W))
-        .h(px(MAP_NODE_H))
+        .left(px(node.x * scale))
+        .top(px(node.y * scale))
+        .w(px(node_w))
+        .h(px(node_h))
         .flex()
         .items_center()
-        .gap(px(8.0))
-        .px(px(9.0))
-        .rounded(px(12.0))
+        .gap(px(8.0 * scale))
+        .px(px(9.0 * scale))
+        .rounded(px(12.0 * scale))
         .bg(card_fill())
         .border_1()
         .border_color(border)
@@ -4675,14 +4695,14 @@ fn map_node(index: usize, node: &MapNode, cx: &mut Context<GlassPreview>) -> Sta
         }))
         .child(
             div()
-                .size(px(26.0))
+                .size(px(26.0 * scale))
                 .flex_shrink_0()
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(8.0))
+                .rounded(px(8.0 * scale))
                 .bg(bg)
-                .child(icon(node.icon, 13.0, fg)),
+                .child(icon(node.icon, 13.0 * scale, fg)),
         )
         .child(
             div()
@@ -4693,7 +4713,7 @@ fn map_node(index: usize, node: &MapNode, cx: &mut Context<GlassPreview>) -> Sta
                 .child(
                     div()
                         .truncate()
-                        .text_size(px(11.5))
+                        .text_size(px(11.5 * scale))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(ink())
                         .child(node.title),
@@ -4701,7 +4721,7 @@ fn map_node(index: usize, node: &MapNode, cx: &mut Context<GlassPreview>) -> Sta
                 .child(
                     div()
                         .truncate()
-                        .text_size(px(9.5))
+                        .text_size(px(9.5 * scale))
                         .text_color(ink_muted())
                         .child(node.meta.clone()),
                 ),
