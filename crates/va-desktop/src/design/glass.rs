@@ -1525,8 +1525,8 @@ enum ModelCatalog {
     Builtin,
 }
 
-/// A Codex-style effort ladder: Auto keeps the model default, the rest map to
-/// the provider's reasoning effort. Effort trades latency and cost for depth.
+/// A Codex-style depth ladder: Auto keeps the model default, the rest trade
+/// latency and cost for more reasoning depth.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ThinkingLevel {
     Auto,
@@ -1556,16 +1556,6 @@ impl ThinkingLevel {
             Self::Balanced => "Everyday coding",
             Self::Deep => "Hard reasoning and debugging",
             Self::Max => "Long agent runs, highest cost",
-        }
-    }
-
-    fn effort(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::Fast => "low",
-            Self::Balanced => "medium",
-            Self::Deep => "high",
-            Self::Max => "xhigh",
         }
     }
 }
@@ -3869,7 +3859,7 @@ fn model_menu_panel(
                 .gap(px(4.0))
                 .border_t_1()
                 .border_color(panel_border_soft())
-                .child(model_group_label("THINKING", thinking.effort()))
+                .child(model_group_label("THINKING", thinking.label()))
                 .child(
                     div()
                         .h(px(26.0))
