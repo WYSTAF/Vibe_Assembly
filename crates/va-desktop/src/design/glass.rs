@@ -1094,6 +1094,13 @@ struct Attachment {
     icon: &'static str,
 }
 
+#[derive(Clone)]
+struct SentMessage {
+    chat: u64,
+    text: String,
+    attachments: Vec<Attachment>,
+}
+
 #[derive(Default)]
 struct ComposerDraft {
     text: String,
@@ -1198,7 +1205,7 @@ pub struct GlassPreview {
     parked_drafts: HashMap<u64, ComposerDraft>,
     typo_notice: Option<usize>,
     typo_notice_epoch: usize,
-    sent: Vec<(u64, String)>,
+    sent: Vec<SentMessage>,
     nav_focus: FocusHandle,
     search_focus: FocusHandle,
     composer_focus: FocusHandle,
@@ -1553,11 +1560,15 @@ impl GlassPreview {
                 chat.meta = "now · just started".to_string();
             }
         }
-        self.sent.push((self.active_chat, text));
+        // Files travel with the message they were attached to.
+        let files = std::mem::take(&mut self.attachments);
+        self.sent.push(SentMessage {
+            chat: self.active_chat,
+            text,
+            attachments: files,
+        });
         self.draft.clear();
         self.draft_selection = InputSelection::default();
-        // Files travel with the message they were attached to.
-        self.attachments.clear();
         self.thread_settled = false;
         if fixed > 0 {
             self.typo_notice = Some(fixed);
@@ -1950,11 +1961,11 @@ impl Render for GlassPreview {
         let draft = self.draft.clone();
         let draft_selection = self.draft_selection.clone();
         let typo_notice = self.typo_notice;
-        let sent: Vec<String> = self
+        let sent: Vec<SentMessage> = self
             .sent
             .iter()
-            .filter(|(chat_id, _)| *chat_id == active_chat)
-            .map(|(_, text)| text.clone())
+            .filter(|message| message.chat == active_chat)
+            .cloned()
             .collect();
         let nav_focus = self.nav_focus.clone();
         let search_focus = self.search_focus.clone();
@@ -2880,7 +2891,7 @@ struct ConversationState {
     applied: bool,
     chat: ChatThread,
     chat_epoch: usize,
-    sent: Vec<String>,
+    sent: Vec<SentMessage>,
     draft: String,
     draft_selection: InputSelection,
     typo_notice: Option<usize>,
@@ -2970,12 +2981,16 @@ fn conversation(
                                         .when_some(
                                             archive_parts(chat.kind),
                                             |this, (prompt, reply)| {
-                                                this.child(sent_turn(prompt))
+                                                this.child(sent_turn(prompt, &[]))
                                                     .child(reply_turn(reply))
                                             },
                                         )
                                         .when(blank, |this| this.child(empty_thread()))
-                                        .children(sent.iter().map(|text| sent_turn(text)))
+                                        .children(
+                                            sent.iter().map(|message| {
+                                                sent_turn(&message.text, &message.attachments)
+                                            }),
+                                        )
                                         .with_animation(
                                             ("glass-chat", chat_epoch),
                                             Animation::new(motion(180))
@@ -3454,7 +3469,7 @@ fn user_turn() -> Div {
     )
 }
 
-fn sent_turn(text: &str) -> Div {
+fn sent_turn(text: &str, attachments: &[Attachment]) -> Div {
     div().w_full().flex().justify_end().child(
         div()
             .max_w(px(500.0))
@@ -3465,10 +3480,47 @@ fn sent_turn(text: &str) -> Div {
             .border_1()
             .border_color(panel_border())
             .shadow(soft_shadow())
-            .text_size(px(13.0))
-            .line_height(px(20.0))
-            .text_color(ink())
-            .child(text.to_string()),
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            .when(!attachments.is_empty(), |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.0))
+                        .children(attachments.iter().map(|attachment| {
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(6.0))
+                                .h(px(24.0))
+                                .pl(px(7.0))
+                                .pr(px(9.0))
+                                .rounded(px(7.0))
+                                .bg(well())
+                                .border_1()
+                                .border_color(panel_border_soft())
+                                .child(icon(attachment.icon, 11.0, ink_muted()))
+                                .child(
+                                    div()
+                                        .max_w(px(220.0))
+                                        .min_w_0()
+                                        .truncate()
+                                        .text_size(px(10.5))
+                                        .text_color(ink_soft())
+                                        .child(attachment.name.clone()),
+                                )
+                        })),
+                )
+            })
+            .child(
+                div()
+                    .text_size(px(13.0))
+                    .line_height(px(20.0))
+                    .text_color(ink())
+                    .child(text.to_string()),
+            ),
     )
 }
 
