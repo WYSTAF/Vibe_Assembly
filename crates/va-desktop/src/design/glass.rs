@@ -844,14 +844,12 @@ fn push_repo_blocking(root: &Path, has_upstream: bool) -> Result<bool, String> {
                 let message = stderr
                     .lines()
                     .map(str::trim)
-                    .filter(|line| !line.is_empty())
-                    .next_back()
+                    .rfind(|line| !line.is_empty())
                     .or_else(|| {
                         stdout
                             .lines()
                             .map(str::trim)
-                            .filter(|line| !line.is_empty())
-                            .next_back()
+                            .rfind(|line| !line.is_empty())
                     })
                     .unwrap_or("git push failed");
                 return Err(message.to_string());
@@ -4016,6 +4014,7 @@ fn model_option(
         })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn conversation_header(
     compact: bool,
     chat: &ChatThread,
