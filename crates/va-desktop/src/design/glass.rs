@@ -1375,6 +1375,9 @@ impl GlassPreview {
         if self.section != section {
             self.section = section;
             self.section_epoch += 1;
+            // Each panel starts at its own top, not at the offset the previous
+            // panel was scrolled to.
+            self.drawer_scroll.set_offset(point(px(0.0), px(0.0)));
         }
         self.model_menu = false;
         self.set_nav_open(true, cx);
@@ -1382,6 +1385,8 @@ impl GlassPreview {
     }
 
     fn reveal_section(&mut self, section: DrawerSection, pin: bool, cx: &mut Context<Self>) {
+        // A command asked for a panel by name; land on the content it names.
+        self.drawer_scroll.set_offset(point(px(0.0), px(0.0)));
         self.open_section(section, cx);
         if pin && !self.nav_pinned {
             // A command asked for this panel by name, so keep it on screen.
@@ -4738,6 +4743,9 @@ fn file_change_row(
         })
         .on_click(cx.listener(move |this, _event, _window, cx| {
             this.selected_change = name;
+            // The matching hunk sits at the top of Changes; bring it into view
+            // even when the file list itself is scrolled down.
+            this.drawer_scroll.set_offset(point(px(0.0), px(0.0)));
             if this.section != DrawerSection::Changes {
                 this.open_section(DrawerSection::Changes, cx);
             }
