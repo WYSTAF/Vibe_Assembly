@@ -6284,9 +6284,6 @@ fn nav_column(state: EdgeState, focus: &FocusHandle, cx: &mut Context<GlassPrevi
         .bottom_0()
         .right(px(NAV_INSET))
         .w(px(NAV_W))
-        // Icons float over the drawer; clicks on the rail must not also hit the
-        // rows underneath it, while the wheel still scrolls the panel.
-        .block_mouse_except_scroll()
         .flex()
         .flex_col()
         .items_center()
@@ -6300,6 +6297,7 @@ fn context_indicator(files: usize) -> Stateful<Div> {
     let used = context_usage(files);
     div()
         .id("glass-context")
+        .block_mouse_except_scroll()
         .size(px(CONTEXT_SIZE))
         .flex_shrink_0()
         .flex()
@@ -6325,6 +6323,11 @@ fn nav_capsule(
 ) -> Stateful<Div> {
     div()
         .id("glass-nav")
+        // The capsule floats over the drawer; clicks on an icon must not also
+        // hit rows underneath, while the wheel still scrolls the panel. The
+        // full-height column stays transparent so header controls showing
+        // through its margins remain clickable.
+        .block_mouse_except_scroll()
         .w(px(52.0))
         .flex_shrink_0()
         .flex()
