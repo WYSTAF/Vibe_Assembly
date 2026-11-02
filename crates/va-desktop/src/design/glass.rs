@@ -6125,7 +6125,7 @@ fn section_body(state: EdgeState, cx: &mut Context<GlassPreview>) -> Div {
                 cx,
             ))
             .child(checks_card(
-                state.changes.len() > 0,
+                !state.changes.is_empty(),
                 state.show_warnings,
                 cx,
             )),
