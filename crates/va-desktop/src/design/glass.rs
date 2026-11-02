@@ -1204,6 +1204,7 @@ pub struct GlassPreview {
     composer_focus: FocusHandle,
     composer_scroll: ScrollHandle,
     thread_scroll: ScrollHandle,
+    drawer_scroll: ScrollHandle,
     thread_settled: bool,
     focus_settled: bool,
 }
@@ -1283,6 +1284,7 @@ impl GlassPreview {
             composer_focus: cx.focus_handle(),
             composer_scroll: ScrollHandle::new(),
             thread_scroll,
+            drawer_scroll: ScrollHandle::new(),
             thread_settled: false,
             focus_settled: false,
         }
@@ -1609,6 +1611,36 @@ impl GlassPreview {
 
     fn toggle_warnings(&mut self) {
         self.show_warnings = !self.show_warnings;
+    }
+
+    fn explain_warnings(&mut self, cx: &mut Context<Self>) {
+        if self.show_warnings {
+            self.show_warnings = false;
+            cx.notify();
+            return;
+        }
+        // The explanation lives in the Session panel, so reveal it instead of
+        // flipping a flag the user cannot see.
+        self.show_warnings = true;
+        self.reveal_section(DrawerSection::Session, true, cx);
+        self.scroll_to_warnings(cx);
+        cx.notify();
+    }
+
+    fn scroll_to_warnings(&mut self, cx: &mut Context<Self>) {
+        // The detail renders a frame after the section switches, and the
+        // drawer is taller than its viewport once the warnings expand.
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(80))
+                .await;
+            this.update(cx, |this, cx| {
+                this.drawer_scroll.scroll_to_bottom();
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn toggle_theme(&mut self, cx: &mut Context<Self>) {
@@ -2044,6 +2076,7 @@ impl Render for GlassPreview {
                             all_runs,
                         },
                         &nav_focus,
+                        &self.drawer_scroll,
                         cx,
                     ));
                 if search_open {
@@ -3682,7 +3715,7 @@ fn suggestions(
                         "Explain warnings"
                     },
                     show_warnings,
-                    |this, _cx| this.toggle_warnings(),
+                    |this, cx| this.explain_warnings(cx),
                     cx,
                 )),
         )
@@ -4493,6 +4526,9 @@ fn check_warning_row(show_warnings: bool, cx: &mut Context<GlassPreview>) -> Div
             )
             .on_click(cx.listener(|this, _event, _window, cx| {
                 this.toggle_warnings();
+                if this.show_warnings {
+                    this.scroll_to_warnings(cx);
+                }
                 cx.notify();
             }))
             .tooltip(hint(if show_warnings {
@@ -5511,6 +5547,7 @@ struct EdgeState {
 fn edge_overlay(
     state: EdgeState,
     focus: &FocusHandle,
+    scroll: &ScrollHandle,
     cx: &mut Context<GlassPreview>,
 ) -> impl IntoElement {
     let EdgeState { open, epoch, .. } = state;
@@ -5532,7 +5569,7 @@ fn edge_overlay(
                 }
             }
         }))
-        .child(edge_drawer(state, focus, cx))
+        .child(edge_drawer(state, focus, scroll, cx))
         .child(nav_column(state, focus, cx))
         .with_animation(
             ("glass-edge", epoch),
@@ -5557,6 +5594,7 @@ fn edge_reveal(open: bool, epoch: usize, t: f32) -> f32 {
 fn edge_drawer(
     state: EdgeState,
     focus: &FocusHandle,
+    scroll: &ScrollHandle,
     cx: &mut Context<GlassPreview>,
 ) -> impl IntoElement {
     let EdgeState {
@@ -5607,6 +5645,7 @@ fn edge_drawer(
                                 .id(section.body_id())
                                 .size_full()
                                 .overflow_y_scroll()
+                                .track_scroll(scroll)
                                 .flex()
                                 .flex_col()
                                 .child(
