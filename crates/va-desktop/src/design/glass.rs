@@ -1243,7 +1243,7 @@ pub struct GlassPreview {
     selected_change: &'static str,
     selected_run: &'static str,
     all_runs: bool,
-    applied: bool,
+    applied_chats: Vec<u64>,
     chats: Vec<ChatThread>,
     active_chat: u64,
     next_chat: u64,
@@ -1323,7 +1323,7 @@ impl GlassPreview {
             selected_change: "theme.rs",
             selected_run: "Restyle the workbench",
             all_runs: false,
-            applied: false,
+            applied_chats: Vec::new(),
             chats,
             active_chat: 0,
             next_chat,
@@ -2016,7 +2016,7 @@ impl Render for GlassPreview {
         let selected_change = self.selected_change;
         let selected_run = self.selected_run;
         let all_runs = self.all_runs;
-        let applied = self.applied;
+        let applied = self.applied_chats.contains(&self.active_chat);
         let chats = self.chats.clone();
         let active_chat = self.active_chat;
         let chat_epoch = self.chat_epoch;
@@ -6567,8 +6567,8 @@ fn apply_button(applied: bool, cx: &mut Context<GlassPreview>) -> Stateful<Div> 
                 .hover(|style| style.bg(brand_hover()))
                 .active(|style| style.bg(brand_press()))
                 .on_click(cx.listener(|this, _event, _window, cx| {
-                    if !this.applied {
-                        this.applied = true;
+                    if !this.applied_chats.contains(&this.active_chat) {
+                        this.applied_chats.push(this.active_chat);
                         cx.notify();
                     }
                 }))
@@ -6602,7 +6602,8 @@ fn undo_button(cx: &mut Context<GlassPreview>) -> Stateful<Div> {
         .active(|style| style.bg(press_wash()))
         .tooltip(hint("Undo the applied changes"))
         .on_click(cx.listener(|this, _event, _window, cx| {
-            this.applied = false;
+            let active = this.active_chat;
+            this.applied_chats.retain(|chat| *chat != active);
             cx.notify();
         }))
         .child(icon("undo-2", 12.0, ink_soft()))
