@@ -1197,6 +1197,7 @@ pub struct GlassPreview {
     nav_focus: FocusHandle,
     search_focus: FocusHandle,
     composer_focus: FocusHandle,
+    composer_scroll: ScrollHandle,
     thread_scroll: ScrollHandle,
     thread_settled: bool,
     focus_settled: bool,
@@ -1206,6 +1207,14 @@ const SEARCH_LIMIT: usize = 6;
 
 fn single_line(text: &str) -> String {
     text.replace(['\n', '\r'], " ")
+}
+
+fn normalize_input(text: &str, search: bool) -> String {
+    if search {
+        single_line(text)
+    } else {
+        text.replace("\r\n", "\n").replace('\r', "\n")
+    }
 }
 
 fn draft_title(text: &str) -> String {
@@ -1267,6 +1276,7 @@ impl GlassPreview {
             nav_focus: cx.focus_handle(),
             search_focus: cx.focus_handle(),
             composer_focus: cx.focus_handle(),
+            composer_scroll: ScrollHandle::new(),
             thread_scroll,
             thread_settled: false,
             focus_settled: false,
@@ -1357,9 +1367,15 @@ impl GlassPreview {
                 self.search_index = 0;
             }
         } else {
+            let before = self.draft.len();
             edit(&mut self.draft, &mut self.draft_selection);
             self.typo_notice = None;
             self.thread_settled = false;
+            // The composer caps its height; typing past the last visible line
+            // must keep the caret in view.
+            if self.draft.len() > before && self.draft_selection.head == self.draft.len() {
+                self.composer_scroll.scroll_to_bottom();
+            }
         }
     }
 
@@ -1372,7 +1388,7 @@ impl GlassPreview {
                 }),
                 "v" => {
                     if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                        let text = single_line(&text);
+                        let text = normalize_input(&text, self.search_open);
                         self.edit_input(|value, selection| {
                             selection.replace(value, None, &text);
                         });
@@ -1467,6 +1483,13 @@ impl GlassPreview {
             return;
         }
         if event.keystroke.key == "enter" {
+            if event.keystroke.modifiers.shift {
+                self.edit_input(|text, selection| {
+                    selection.replace(text, None, "\n");
+                });
+                cx.notify();
+                return;
+            }
             self.send_draft(window, cx);
         }
     }
@@ -1804,7 +1827,7 @@ impl EntityInputHandler for GlassPreview {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let text = single_line(text);
+        let text = normalize_input(text, self.search_open);
         self.edit_input(|value, selection| {
             selection.replace(value, range, &text);
         });
@@ -1819,7 +1842,7 @@ impl EntityInputHandler for GlassPreview {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let text = single_line(text);
+        let text = normalize_input(text, self.search_open);
         self.edit_input(|value, selection| {
             let start = range
                 .as_ref()
@@ -1980,6 +2003,7 @@ impl Render for GlassPreview {
                                             typo_notice,
                                             focused: composer_focused,
                                             composer_focus,
+                                            composer_scroll: self.composer_scroll.clone(),
                                             entity: entity.clone(),
                                             model,
                                             model_menu,
@@ -2806,6 +2830,7 @@ struct ConversationState {
     typo_notice: Option<usize>,
     focused: bool,
     composer_focus: FocusHandle,
+    composer_scroll: ScrollHandle,
     entity: Entity<GlassPreview>,
     model: usize,
     model_menu: bool,
@@ -2832,6 +2857,7 @@ fn conversation(
         typo_notice,
         focused,
         composer_focus,
+        composer_scroll,
         entity,
         model,
         model_menu,
@@ -2935,6 +2961,7 @@ fn conversation(
             draft_selection,
             focused,
             composer_focus,
+            composer_scroll,
             entity,
             &attachments,
             web_search,
@@ -3673,6 +3700,7 @@ fn composer(
     selection: InputSelection,
     focused: bool,
     focus: FocusHandle,
+    scroll: ScrollHandle,
     entity: Entity<GlassPreview>,
     attachments: &[Attachment],
     web_search: bool,
@@ -3728,6 +3756,9 @@ fn composer(
                         .relative()
                         .w_full()
                         .min_h(px(22.0))
+                        .max_h(px(110.0))
+                        .overflow_y_scroll()
+                        .track_scroll(&scroll)
                         .flex()
                         .items_start()
                         .px(px(2.0))
