@@ -3663,46 +3663,235 @@ fn diff_preview(name: &'static str, dir: &'static str, added: u32, removed: u32)
                         .child(format!("−{removed}")),
                 ),
         )
-        .child(
-            div()
-                .w_full()
-                .flex()
-                .flex_col()
-                .py(px(5.0))
-                .child(diff_row(" ", None, &[cm("@@ edge bar @@")]))
-                .child(diff_row(
-                    " ",
-                    None,
-                    &[
-                        kw("pub fn "),
-                        fx("edge_bar"),
-                        p("() -> "),
-                        ty("Div"),
-                        p(" {"),
-                    ],
-                ))
-                .child(diff_row(
-                    "-",
-                    Some(danger_tint()),
-                    &[p("    "), fx("right_column"), p("()")],
-                ))
-                .child(diff_row(
-                    "+",
-                    Some(success_tint()),
-                    &[p("    "), fx("edge_drawer"), p("()")],
-                ))
-                .child(diff_row(" ", None, &[cm("@@ context ring @@")]))
-                .child(diff_row(
-                    "-",
-                    Some(danger_tint()),
-                    &[p("    "), fx("context_ring"), p("("), p("epoch"), p(")")],
-                ))
-                .child(diff_row(
-                    "+",
-                    Some(success_tint()),
-                    &[p("    "), fx("context_ring"), p("()")],
-                )),
-        )
+        .child(diff_body(name))
+}
+
+// The preview follows the file selected in the Changed files card, so each
+// file needs a hunk that could plausibly belong to it.
+fn diff_body(name: &'static str) -> Div {
+    let body = div().w_full().flex().flex_col().py(px(5.0));
+    match name {
+        "theme.rs" => body
+            .child(diff_row(" ", None, &[cm("@@ warm canvas @@")]))
+            .child(diff_row(
+                "-",
+                Some(danger_tint()),
+                &[
+                    kw("pub const "),
+                    ty("CANVAS"),
+                    p(": "),
+                    ty("Rgba"),
+                    p(" = "),
+                    fx("rgb"),
+                    p("("),
+                    nu("0x050505"),
+                    p(");"),
+                ],
+            ))
+            .child(diff_row(
+                "+",
+                Some(success_tint()),
+                &[
+                    kw("pub const "),
+                    ty("CANVAS"),
+                    p(": "),
+                    ty("Rgba"),
+                    p(" = "),
+                    fx("rgb"),
+                    p("("),
+                    nu("0x0A0A0B"),
+                    p(");"),
+                ],
+            ))
+            .child(diff_row(" ", None, &[cm("@@ brand accent @@")]))
+            .child(diff_row(
+                "-",
+                Some(danger_tint()),
+                &[
+                    kw("pub const "),
+                    ty("BRAND"),
+                    p(": "),
+                    ty("Rgba"),
+                    p(" = "),
+                    fx("rgb"),
+                    p("("),
+                    nu("0xF5C400"),
+                    p(");"),
+                ],
+            ))
+            .child(diff_row(
+                "+",
+                Some(success_tint()),
+                &[
+                    kw("pub const "),
+                    ty("BRAND"),
+                    p(": "),
+                    ty("Rgba"),
+                    p(" = "),
+                    fx("rgb"),
+                    p("("),
+                    nu("0xFDCC02"),
+                    p(");"),
+                ],
+            )),
+        "widgets.rs" => body
+            .child(diff_row(" ", None, &[cm("@@ quiet button @@")]))
+            .child(diff_row(
+                "-",
+                Some(danger_tint()),
+                &[p("    .h("), fx("px"), p("("), nu("26.0"), p("))")],
+            ))
+            .child(diff_row(
+                "+",
+                Some(success_tint()),
+                &[p("    .h("), fx("px"), p("("), nu("28.0"), p("))")],
+            ))
+            .child(diff_row(" ", None, &[cm("@@ primary fill @@")]))
+            .child(diff_row(
+                "-",
+                Some(danger_tint()),
+                &[p("    .bg("), fx("rgb"), p("("), nu("0xF5C400"), p("))")],
+            ))
+            .child(diff_row(
+                "+",
+                Some(success_tint()),
+                &[p("    .bg("), fx("rgb"), p("("), nu("0xFDCC02"), p("))")],
+            )),
+        "left_dock.rs" => body
+            .child(diff_row(" ", None, &[cm("@@ chat rows @@")]))
+            .child(diff_row(
+                "-",
+                Some(danger_tint()),
+                &[
+                    p("    .px("),
+                    fx("px"),
+                    p("("),
+                    nu("10.0"),
+                    p(")).gap("),
+                    fx("px"),
+                    p("("),
+                    nu("8.0"),
+                    p("))"),
+                ],
+            ))
+            .child(diff_row(
+                "+",
+                Some(success_tint()),
+                &[
+                    p("    .px("),
+                    fx("px"),
+                    p("("),
+                    nu("12.0"),
+                    p(")).gap("),
+                    fx("px"),
+                    p("("),
+                    nu("10.0"),
+                    p("))"),
+                ],
+            )),
+        "assistant_panel.rs" => body
+            .child(diff_row(" ", None, &[cm("@@ attachment chips @@")]))
+            .child(diff_row(
+                "-",
+                Some(danger_tint()),
+                &[
+                    p("    .h("),
+                    fx("px"),
+                    p("("),
+                    nu("22.0"),
+                    p(")).rounded("),
+                    fx("px"),
+                    p("("),
+                    nu("6.0"),
+                    p("))"),
+                ],
+            ))
+            .child(diff_row(
+                "+",
+                Some(success_tint()),
+                &[
+                    p("    .h("),
+                    fx("px"),
+                    p("("),
+                    nu("24.0"),
+                    p(")).rounded("),
+                    fx("px"),
+                    p("("),
+                    nu("7.0"),
+                    p("))"),
+                ],
+            )),
+        "editor_pane.rs" => body
+            .child(diff_row(" ", None, &[cm("@@ preview footer @@")]))
+            .child(diff_row(
+                "-",
+                Some(danger_tint()),
+                &[
+                    p("    .h("),
+                    fx("px"),
+                    p("("),
+                    nu("26.0"),
+                    p("))"),
+                ],
+            ))
+            .child(diff_row(
+                "+",
+                Some(success_tint()),
+                &[
+                    p("    .h("),
+                    fx("px"),
+                    p("("),
+                    nu("28.0"),
+                    p("))"),
+                ],
+            )),
+        "icon.rs" => body
+            .child(diff_row(" ", None, &[cm("@@ icon set @@")]))
+            .child(diff_row(
+                " ",
+                None,
+                &[p("    "), p("\"dock\" => "), fx("svg"), p("("), p("\"dock\""), p("),")],
+            ))
+            .child(diff_row(
+                "+",
+                Some(success_tint()),
+                &[p("    "), p("\"edge\" => "), fx("svg"), p("("), p("\"edge\""), p("),")],
+            )),
+        _ => body
+            .child(diff_row(" ", None, &[cm("@@ edge bar @@")]))
+            .child(diff_row(
+                " ",
+                None,
+                &[
+                    kw("pub fn "),
+                    fx("edge_bar"),
+                    p("() -> "),
+                    ty("Div"),
+                    p(" {"),
+                ],
+            ))
+            .child(diff_row(
+                "-",
+                Some(danger_tint()),
+                &[p("    "), fx("right_column"), p("()")],
+            ))
+            .child(diff_row(
+                "+",
+                Some(success_tint()),
+                &[p("    "), fx("edge_drawer"), p("()")],
+            ))
+            .child(diff_row(" ", None, &[cm("@@ context ring @@")]))
+            .child(diff_row(
+                "-",
+                Some(danger_tint()),
+                &[p("    "), fx("context_ring"), p("("), p("epoch"), p(")")],
+            ))
+            .child(diff_row(
+                "+",
+                Some(success_tint()),
+                &[p("    "), fx("context_ring"), p("()")],
+            )),
+    }
 }
 
 fn diff_row(sign: &'static str, wash: Option<Rgba>, spans: &[(&'static str, Rgba)]) -> Div {
