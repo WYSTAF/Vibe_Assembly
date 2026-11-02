@@ -19,12 +19,13 @@ use gpui::{
     Background, BoxShadow, ClipboardItem, Context, Div, ElementId, ElementInputHandler, Entity,
     EntityInputHandler, FocusHandle, FontWeight, HighlightStyle, IntoElement, KeyDownEvent,
     Keystroke, PathBuilder, PathPromptOptions, Point, Rgba, ScrollHandle, Stateful,
-    StyleRefinement, StyledText, UTF16Selection, Window, WindowControlArea,
+    StyleRefinement, StyledText, UTF16Selection, UnderlineStyle, Window, WindowControlArea,
 };
 use va_core::modes::ExecutionMode;
 
 use crate::branding;
 use crate::design::icon::icon;
+use crate::spell;
 use crate::theme;
 use crate::ui_kit::InputSelection;
 
@@ -1188,6 +1189,8 @@ pub struct GlassPreview {
     attachments: Vec<Attachment>,
     draft: String,
     draft_selection: InputSelection,
+    typo_notice: Option<usize>,
+    typo_notice_epoch: usize,
     sent: Vec<(u64, String)>,
     nav_focus: FocusHandle,
     search_focus: FocusHandle,
@@ -1255,6 +1258,8 @@ impl GlassPreview {
             attachments: seeded_attachments(),
             draft: String::new(),
             draft_selection: InputSelection::default(),
+            typo_notice: None,
+            typo_notice_epoch: 0,
             sent: Vec::new(),
             nav_focus: cx.focus_handle(),
             search_focus: cx.focus_handle(),
@@ -1350,6 +1355,7 @@ impl GlassPreview {
             }
         } else {
             edit(&mut self.draft, &mut self.draft_selection);
+            self.typo_notice = None;
             self.thread_settled = false;
         }
     }
@@ -1449,6 +1455,14 @@ impl GlassPreview {
             cx.notify();
             return;
         }
+        let plain_tab = event.keystroke.key == "tab"
+            && !event.keystroke.modifiers.shift
+            && !event.keystroke.modifiers.control
+            && !event.keystroke.modifiers.alt
+            && !event.keystroke.modifiers.platform;
+        if plain_tab && self.fix_typo(cx) {
+            return;
+        }
         if event.keystroke.key == "enter" {
             self.send_draft(window, cx);
         }
@@ -1491,7 +1505,7 @@ impl GlassPreview {
     }
 
     fn send_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let text = self.draft.trim().to_string();
+        let (text, fixed) = spell::correct(self.draft.trim());
         if text.is_empty() {
             return;
         }
@@ -1509,6 +1523,24 @@ impl GlassPreview {
         self.draft.clear();
         self.draft_selection = InputSelection::default();
         self.thread_settled = false;
+        if fixed > 0 {
+            self.typo_notice = Some(fixed);
+            self.typo_notice_epoch += 1;
+            let epoch = self.typo_notice_epoch;
+            cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(4200))
+                    .await;
+                this.update(cx, |this, cx| {
+                    if this.typo_notice_epoch == epoch {
+                        this.typo_notice = None;
+                        cx.notify();
+                    }
+                })
+                .ok();
+            })
+            .detach();
+        }
         window.focus(&self.composer_focus);
         cx.spawn(async move |this, cx| {
             cx.background_executor()
@@ -1622,6 +1654,36 @@ impl GlassPreview {
         self.model = model.min(MODELS.len() - 1);
         self.model_menu = false;
         cx.notify();
+    }
+
+    fn fix_typo(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.draft_selection.range(&self.draft).is_empty() {
+            return false;
+        }
+        let Some(fix) = spell::nearest(&self.draft, self.draft_selection.head) else {
+            return false;
+        };
+        let caret = self.draft_selection.head;
+        let start = fix.range.start;
+        let end = fix.range.end;
+        let new_len = fix.replacement.len();
+        self.draft.replace_range(fix.range, &fix.replacement);
+        // Distant fixes must not yank the caret away from where the user is
+        // typing; only the word under the caret takes the caret with it.
+        let head = if caret >= end {
+            caret - (end - start) + new_len
+        } else if caret <= start {
+            caret
+        } else {
+            start + new_len
+        };
+        self.draft_selection.anchor = head;
+        self.draft_selection.head = head;
+        self.draft_selection.set_marked(None);
+        self.typo_notice = None;
+        self.thread_settled = false;
+        cx.notify();
+        true
     }
 
     fn toggle_web_search(&mut self, cx: &mut Context<Self>) {
@@ -1789,6 +1851,7 @@ impl Render for GlassPreview {
         let chat = self.active_thread().clone();
         let draft = self.draft.clone();
         let draft_selection = self.draft_selection.clone();
+        let typo_notice = self.typo_notice;
         let sent: Vec<String> = self
             .sent
             .iter()
@@ -1877,6 +1940,7 @@ impl Render for GlassPreview {
                                             sent,
                                             draft,
                                             draft_selection,
+                                            typo_notice,
                                             focused: composer_focused,
                                             composer_focus,
                                             entity: entity.clone(),
@@ -2119,31 +2183,61 @@ fn input_text(
     placeholder: &str,
     size: f32,
     single_line: bool,
+    typos: &[Range<usize>],
 ) -> Div {
     let range = selection.range(value);
     let empty = value.is_empty();
+    let marker = focused && !empty && range.is_empty();
     let shown = if empty {
         if focused {
             format!("{placeholder}▏")
         } else {
             placeholder.to_string()
         }
-    } else if focused && range.is_empty() {
+    } else if marker {
         format!("{}▏{}", &value[..range.start], &value[range.end..])
     } else {
         value.to_string()
     };
-    let highlights = if !empty && focused && !range.is_empty() {
-        vec![(
+    // The caret glyph is inserted before highlighting, so ranges at or past
+    // it shift by its byte length.
+    const MARKER: usize = "▏".len();
+    let mut highlights = Vec::new();
+    for typo in typos {
+        if !range.is_empty() && typo.start < range.end && range.start < typo.end {
+            continue;
+        }
+        let start = if marker && typo.start >= range.start {
+            typo.start + MARKER
+        } else {
+            typo.start
+        };
+        let end = if marker && typo.end > range.start {
+            typo.end + MARKER
+        } else {
+            typo.end
+        };
+        highlights.push((
+            start..end,
+            HighlightStyle {
+                underline: Some(UnderlineStyle {
+                    thickness: px(1.0),
+                    color: Some(danger().into()),
+                    wavy: true,
+                }),
+                ..Default::default()
+            },
+        ));
+    }
+    if !empty && focused && !range.is_empty() {
+        highlights.push((
             range,
             HighlightStyle {
                 background_color: Some(rgba(0xFDCC0240).into()),
                 ..Default::default()
             },
-        )]
-    } else {
-        Vec::new()
-    };
+        ));
+    }
     div()
         .w_full()
         .min_w_0()
@@ -2244,6 +2338,7 @@ fn search_overlay(state: SearchState, cx: &mut Context<GlassPreview>) -> impl In
                                     "Search files, panels and commands…",
                                     13.0,
                                     true,
+                                    &[],
                                 ))
                                 .child(input_bridge(entity.clone(), focus.clone())),
                         )
@@ -2676,6 +2771,7 @@ struct ConversationState {
     sent: Vec<String>,
     draft: String,
     draft_selection: InputSelection,
+    typo_notice: Option<usize>,
     focused: bool,
     composer_focus: FocusHandle,
     entity: Entity<GlassPreview>,
@@ -2701,6 +2797,7 @@ fn conversation(
         sent,
         draft,
         draft_selection,
+        typo_notice,
         focused,
         composer_focus,
         entity,
@@ -2809,6 +2906,7 @@ fn conversation(
             entity,
             &attachments,
             web_search,
+            typo_notice,
             cx,
         ))
         .child(
@@ -3543,9 +3641,24 @@ fn composer(
     entity: Entity<GlassPreview>,
     attachments: &[Attachment],
     web_search: bool,
+    typo_notice: Option<usize>,
     cx: &mut Context<GlassPreview>,
 ) -> Div {
     let ready = !draft.trim().is_empty();
+    let typos: Vec<Range<usize>> = spell::suggestions(&draft)
+        .into_iter()
+        .map(|fix| fix.range)
+        .collect();
+    let active = if focused && selection.range(&draft).is_empty() {
+        spell::nearest(&draft, selection.head)
+    } else {
+        None
+    };
+    let footer_status: Option<AnyElement> = if let Some(fix) = active {
+        Some(typo_fix_chip(fix, cx).into_any_element())
+    } else {
+        typo_notice.map(|count| typo_fixed_chip(count).into_any_element())
+    };
     div()
         .w_full()
         .flex()
@@ -3596,6 +3709,7 @@ fn composer(
                             "Ask me anything…",
                             15.0,
                             false,
+                            &typos,
                         ))
                         .child(input_bridge(entity, focus)),
                 )
@@ -3624,6 +3738,7 @@ fn composer(
                             |this, cx| this.toggle_web_search(cx),
                             cx,
                         ))
+                        .when_some(footer_status, |this, status| this.child(status))
                         .child(div().flex_1())
                         .child(
                             div()
@@ -3636,6 +3751,68 @@ fn composer(
                         .child(send_button(ready, cx)),
                 ),
         )
+}
+
+fn typo_fix_chip(fix: spell::Suggestion, cx: &mut Context<GlassPreview>) -> Stateful<Div> {
+    div()
+        .id("glass-typo-fix")
+        .flex()
+        .flex_shrink_0()
+        .items_center()
+        .gap(px(6.0))
+        .h(px(26.0))
+        .px(px(9.0))
+        .max_w(px(280.0))
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .rounded_full()
+        .bg(tint(0x0C))
+        .border_1()
+        .border_color(panel_border())
+        .cursor_pointer()
+        .tooltip(hint("Fix this typo · Tab"))
+        .hover(|style| style.bg(hover_wash()))
+        .active(|style| style.bg(press_wash()))
+        .on_click(cx.listener(|this, _event, _window, cx| {
+            this.fix_typo(cx);
+        }))
+        .child(icon("sparkles", 11.0, brand_text()))
+        .child(
+            div()
+                .text_size(px(11.0))
+                .text_color(ink_muted())
+                .child(fix.original),
+        )
+        .child(div().text_size(px(11.0)).text_color(ink_muted()).child("→"))
+        .child(
+            div()
+                .text_size(px(11.0))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(ink())
+                .child(fix.replacement),
+        )
+        .child(keycap("Tab"))
+}
+
+fn typo_fixed_chip(count: usize) -> Div {
+    let label = if count == 1 {
+        "1 typo fixed".to_string()
+    } else {
+        format!("{count} typos fixed")
+    };
+    div()
+        .flex()
+        .flex_shrink_0()
+        .items_center()
+        .gap(px(6.0))
+        .h(px(26.0))
+        .px(px(9.0))
+        .rounded_full()
+        .bg(success_tint())
+        .border_1()
+        .border_color(success_line())
+        .child(icon("check", 11.0, success()))
+        .child(div().text_size(px(11.0)).text_color(success()).child(label))
 }
 
 fn attachment_row(

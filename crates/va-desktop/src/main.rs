@@ -11,6 +11,7 @@ mod command_palette;
 mod design;
 mod editor_pane;
 mod left_dock;
+mod spell;
 mod state;
 mod theme;
 mod ui_kit;

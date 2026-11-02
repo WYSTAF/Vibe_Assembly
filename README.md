@@ -11,7 +11,7 @@ projects without exhausting a single chat context. Roles communicate through a
 regulated `.ai/` contract, and every edit passes through a deterministic,
 hash-anchored execution harness.
 
-**Current status:** 204 tests passing, clippy clean with `-D warnings`, both
+**Current status:** 209 tests passing, clippy clean with `-D warnings`, both
 release binaries build. There is no browser runtime, webview, or Node/npm
 toolchain.
 
@@ -146,6 +146,13 @@ drawer, composer, nav, and shadows. The choice is stored in
 `Ctrl+K` or the titlebar field opens instant search across chats, files,
 panels, and commands: arrow keys navigate, Enter opens, Esc clears then closes,
 and clicking outside dismisses the sheet.
+
+The ask bar proofreads the prompt like a spellchecker. Known typos get a wavy
+underline, and a quiet footer chip offers the nearest fix (`teh → the` plus a
+`Tab` keycap); `Tab` or a click applies it, then the chip moves to the next
+typo. Sending corrects the whole prompt first and shows a transient "N typos
+fixed" note. Code spans, paths, URLs, handles, identifiers, and non-ASCII text
+are left alone.
 
 ### Paper & Ink editor workbench
 
@@ -351,14 +358,14 @@ cargo test --workspace
 cargo build --release
 ```
 
-Current workspace: **204 tests passing**, clippy clean, both release binaries
+Current workspace: **209 tests passing**, clippy clean, both release binaries
 built. The live HTTP planner is tested against a local mock OpenAI-compatible
 TCP server; unit tests cover compaction, think-trace eviction, observation
 slicing, repeated anchors, read-only enforcement, stagnation escalation,
 language detection, `EXPERIENCE.md` round-tripping, and the desktop workbench
 (real block hashes, mode/language/model cycling, read-only Chat, dock toggles,
-composer submission, persisted theme preferences, search filtering/ranking, and
-drawer reveal math).
+composer submission, prompt typo correction, persisted theme preferences,
+search filtering/ranking, and drawer reveal math).
 
 ## Troubleshooting
 
