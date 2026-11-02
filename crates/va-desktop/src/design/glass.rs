@@ -1393,7 +1393,6 @@ impl GlassPreview {
         }
         self.model_menu = false;
         self.set_nav_open(true, cx);
-        self.nav_hovered = true;
     }
 
     fn reveal_section(&mut self, section: DrawerSection, pin: bool, cx: &mut Context<Self>) {
