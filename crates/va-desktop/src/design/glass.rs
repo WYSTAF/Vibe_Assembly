@@ -2934,9 +2934,7 @@ fn conversation(
         .border_1()
         .border_color(panel_border())
         .shadow(panel_shadow())
-        .child(conversation_header(
-            compact, &chat, model, model_menu, show_tokens, cx,
-        ))
+        .child(conversation_header(compact, &chat, model, model_menu, cx))
         .child(
             div()
                 .flex_1()
@@ -3038,6 +3036,7 @@ fn conversation(
             entity,
             &attachments,
             web_search,
+            show_tokens,
             typo_notice,
             cx,
         ))
@@ -3139,7 +3138,6 @@ fn conversation_header(
     chat: &ChatThread,
     model: usize,
     model_menu: bool,
-    show_tokens: bool,
     cx: &mut Context<GlassPreview>,
 ) -> Div {
     let status = match chat.kind {
@@ -3184,6 +3182,7 @@ fn conversation_header(
                 )
                 .child(
                     div()
+                        .flex_1()
                         .min_w_0()
                         .flex()
                         .flex_col()
@@ -3235,9 +3234,6 @@ fn conversation_header(
                 .items_center()
                 .justify_end()
                 .gap(px(4.0))
-                // The count lives on the conversation itself, so the toggle
-                // has visible feedback whether or not the drawer is open.
-                .when(show_tokens, |this| this.child(soft_chip("75k / 120k")))
                 // At full width both sides grow so the pill stays centred; in
                 // compact the title needs the whole remainder instead.
                 .when(!compact, |this| this.flex_1().child(soft_chip(chip)))
@@ -3783,6 +3779,7 @@ fn composer(
     entity: Entity<GlassPreview>,
     attachments: &[Attachment],
     web_search: bool,
+    show_tokens: bool,
     typo_notice: Option<usize>,
     cx: &mut Context<GlassPreview>,
 ) -> Div {
@@ -3885,6 +3882,20 @@ fn composer(
                         ))
                         .when_some(footer_status, |this, status| this.child(status))
                         .child(div().flex_1())
+                        // Usage sits next to the composer controls, so the
+                        // toggle gives feedback even when the drawer is shut.
+                        .when(show_tokens, |this| {
+                            this.child(
+                                div()
+                                    .id("glass-token-count")
+                                    .pr(px(6.0))
+                                    .font_family(theme::code_font())
+                                    .text_size(px(10.5))
+                                    .text_color(ink_muted())
+                                    .tooltip(hint("75k of 120k context tokens used"))
+                                    .child(if compact { "75k" } else { "75k / 120k" }),
+                            )
+                        })
                         .child(
                             div()
                                 .pr(px(4.0))
