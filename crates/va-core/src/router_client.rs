@@ -848,6 +848,28 @@ pub fn router_endpoint() -> (String, u16, String) {
     (host, port, path)
 }
 
+/// Fetch the model catalogue from the configured gateway (`GET /v1/models`).
+///
+/// Router combos are exposed by the gateway with a `va_` name prefix; the
+/// caller decides how to present them. A short timeout keeps a cold launch
+/// responsive when no gateway is running.
+pub fn fetch_v1_models_default(timeout_ms: u64) -> Result<Vec<String>, String> {
+    let (host, port, _) = router_endpoint();
+    let timeout = Duration::from_millis(timeout_ms);
+    let (status, _headers, body) = http_get(
+        &host,
+        port,
+        "/v1/models",
+        &RouterAuth::discover(None),
+        &RequestContext::default(),
+        timeout,
+    )?;
+    if !(200..300).contains(&status) {
+        return Err(format!("/v1/models returned HTTP {status}"));
+    }
+    parse_v1_models(&body)
+}
+
 /// Chat completion against the configured default gateway.
 pub fn chat_completion_default(
     ctx: &RequestContext,

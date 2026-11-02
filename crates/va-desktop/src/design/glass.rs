@@ -1243,12 +1243,135 @@ fn attachment_for_path(path: &std::path::Path) -> Attachment {
     }
 }
 
-const MODELS: [&str; 3] = ["Opus 4.6", "Sonnet 4.6", "Haiku 4.5"];
-const MODEL_BLURBS: [&str; 3] = [
-    "Deepest reasoning",
-    "Balanced everyday coding",
-    "Fastest answers",
-];
+#[derive(Clone)]
+struct ModelChoice {
+    id: String,
+    label: String,
+    blurb: String,
+    combo: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ModelCatalog {
+    Loading,
+    Live,
+    Builtin,
+}
+
+/// A Codex-style effort ladder: Auto keeps the model default, the rest map to
+/// the provider's reasoning effort. Effort trades latency and cost for depth.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ThinkingLevel {
+    Auto,
+    Fast,
+    Balanced,
+    Deep,
+    Max,
+}
+
+impl ThinkingLevel {
+    const ALL: [Self; 5] = [Self::Auto, Self::Fast, Self::Balanced, Self::Deep, Self::Max];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::Fast => "Fast",
+            Self::Balanced => "Balanced",
+            Self::Deep => "Deep",
+            Self::Max => "Max",
+        }
+    }
+
+    fn hint(self) -> &'static str {
+        match self {
+            Self::Auto => "Model default",
+            Self::Fast => "Minimal reasoning, quickest replies",
+            Self::Balanced => "Everyday coding",
+            Self::Deep => "Hard reasoning and debugging",
+            Self::Max => "Long agent runs, highest cost",
+        }
+    }
+
+    fn effort(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Fast => "low",
+            Self::Balanced => "medium",
+            Self::Deep => "high",
+            Self::Max => "xhigh",
+        }
+    }
+}
+
+/// Offline catalogue, replaced by the gateway list when one answers.
+fn fallback_models() -> Vec<ModelChoice> {
+    [
+        ("claude-opus-4.6", "Opus 4.6", "Deepest reasoning"),
+        ("claude-sonnet-4.6", "Sonnet 4.6", "Balanced everyday coding"),
+        ("claude-haiku-4.5", "Haiku 4.5", "Fastest answers"),
+    ]
+    .into_iter()
+    .map(|(id, label, blurb)| ModelChoice {
+        id: id.to_string(),
+        label: label.to_string(),
+        blurb: blurb.to_string(),
+        combo: false,
+    })
+    .collect()
+}
+
+fn model_blurb(id: &str) -> &'static str {
+    let id = id.to_ascii_lowercase();
+    if id.contains("opus") {
+        "Deepest reasoning"
+    } else if id.contains("sonnet") {
+        "Balanced everyday coding"
+    } else if id.contains("haiku") {
+        "Fastest answers"
+    } else if id.contains("codex") {
+        "OpenAI coding model"
+    } else if id.contains("gpt") {
+        "OpenAI general model"
+    } else if id.contains("gemini") {
+        "Google model"
+    } else if id.contains("qwen") {
+        "Qwen model"
+    } else if id.contains("deepseek") {
+        "DeepSeek model"
+    } else if id.contains("llama") {
+        "Meta model"
+    } else {
+        "Direct model"
+    }
+}
+
+/// Combos sit first, their `va_` routing prefix stripped for display; direct
+/// models follow, sorted by id.
+fn catalog_from_ids(ids: Vec<String>) -> Vec<ModelChoice> {
+    let mut combos = Vec::new();
+    let mut direct = Vec::new();
+    for id in ids {
+        if let Some(label) = id.strip_prefix("va_") {
+            combos.push(ModelChoice {
+                id: id.clone(),
+                label: label.to_string(),
+                blurb: "Router combo".to_string(),
+                combo: true,
+            });
+        } else {
+            direct.push(ModelChoice {
+                id: id.clone(),
+                label: id.clone(),
+                blurb: model_blurb(&id).to_string(),
+                combo: false,
+            });
+        }
+    }
+    combos.sort_by(|a, b| a.label.cmp(&b.label));
+    direct.sort_by(|a, b| a.label.cmp(&b.label));
+    combos.extend(direct);
+    combos
+}
 
 pub struct GlassPreview {
     mode: ExecutionMode,
@@ -1277,6 +1400,9 @@ pub struct GlassPreview {
     next_chat: u64,
     chat_epoch: usize,
     model: usize,
+    models: Vec<ModelChoice>,
+    model_catalog: ModelCatalog,
+    thinking: ThinkingLevel,
     model_menu: bool,
     session_map: bool,
     web_search: bool,
@@ -1336,7 +1462,7 @@ impl GlassPreview {
         let thread_scroll = ScrollHandle::new();
         let chats = seeded_chats();
         let next_chat = chats.len() as u64;
-        Self {
+        let mut preview = Self {
             mode,
             day,
             nav_open: false,
@@ -1363,6 +1489,9 @@ impl GlassPreview {
             next_chat,
             chat_epoch: 0,
             model: 0,
+            models: fallback_models(),
+            model_catalog: ModelCatalog::Builtin,
+            thinking: ThinkingLevel::Auto,
             model_menu: false,
             session_map: false,
             web_search: false,
@@ -1381,7 +1510,51 @@ impl GlassPreview {
             drawer_scroll: ScrollHandle::new(),
             thread_settled: false,
             focus_settled: false,
+        };
+        preview.refresh_models(cx);
+        preview
+    }
+
+    fn refresh_models(&mut self, cx: &mut Context<Self>) {
+        if self.model_catalog == ModelCatalog::Loading {
+            return;
         }
+        self.model_catalog = ModelCatalog::Loading;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let fetched = cx
+                .background_executor()
+                .spawn(async { va_core::router_client::fetch_v1_models_default(900) })
+                .await;
+            this.update(cx, |this, cx| this.apply_discovered_models(fetched, cx))
+                .ok();
+        })
+        .detach();
+    }
+
+    fn apply_discovered_models(
+        &mut self,
+        fetched: Result<Vec<String>, String>,
+        cx: &mut Context<Self>,
+    ) {
+        let Ok(ids) = fetched else {
+            self.model_catalog = ModelCatalog::Builtin;
+            cx.notify();
+            return;
+        };
+        let models = catalog_from_ids(ids);
+        if models.is_empty() {
+            self.model_catalog = ModelCatalog::Builtin;
+            cx.notify();
+            return;
+        }
+        let active_id = self.models.get(self.model).map(|choice| choice.id.clone());
+        self.model = active_id
+            .and_then(|id| models.iter().position(|choice| choice.id == id))
+            .unwrap_or(0);
+        self.models = models;
+        self.model_catalog = ModelCatalog::Live;
+        cx.notify();
     }
 
     fn set_nav_open(&mut self, open: bool, cx: &mut Context<Self>) {
@@ -1906,8 +2079,13 @@ impl GlassPreview {
     }
 
     fn set_model(&mut self, model: usize, cx: &mut Context<Self>) {
-        self.model = model.min(MODELS.len() - 1);
+        self.model = model.min(self.models.len().saturating_sub(1));
         self.model_menu = false;
+        cx.notify();
+    }
+
+    fn set_thinking(&mut self, level: ThinkingLevel, cx: &mut Context<Self>) {
+        self.thinking = level;
         cx.notify();
     }
 
@@ -2100,6 +2278,9 @@ impl Render for GlassPreview {
         let active_chat = self.active_chat;
         let chat_epoch = self.chat_epoch;
         let model = self.model;
+        let models = self.models.clone();
+        let model_catalog = self.model_catalog;
+        let thinking = self.thinking;
         let model_menu = self.model_menu;
         let session_map = self.session_map;
         let web_search = self.web_search;
@@ -2207,6 +2388,9 @@ impl Render for GlassPreview {
                                             composer_scroll: self.composer_scroll.clone(),
                                             entity: entity.clone(),
                                             model,
+                                            models: models.clone(),
+                                            model_catalog,
+                                            thinking,
                                             model_menu,
                                             session_map,
                                             web_search,
@@ -3056,6 +3240,9 @@ struct ConversationState {
     composer_scroll: ScrollHandle,
     entity: Entity<GlassPreview>,
     model: usize,
+    models: Vec<ModelChoice>,
+    model_catalog: ModelCatalog,
+    thinking: ThinkingLevel,
     model_menu: bool,
     session_map: bool,
     web_search: bool,
@@ -3083,6 +3270,9 @@ fn conversation(
         composer_scroll,
         entity,
         model,
+        models,
+        model_catalog,
+        thinking,
         model_menu,
         session_map,
         web_search,
@@ -3106,6 +3296,9 @@ fn conversation(
             compact,
             &chat,
             model,
+            &models,
+            model_catalog,
+            thinking,
             model_menu,
             session_map,
             cx,
@@ -3247,13 +3440,26 @@ fn conversation(
         })
 }
 
-fn model_menu_panel(model: usize, cx: &mut Context<GlassPreview>) -> Stateful<Div> {
+fn model_menu_panel(
+    models: &[ModelChoice],
+    selected: usize,
+    catalog: ModelCatalog,
+    thinking: ThinkingLevel,
+    cx: &mut Context<GlassPreview>,
+) -> Stateful<Div> {
+    let combo_count = models.iter().take_while(|choice| choice.combo).count();
+    let (host, port, _) = va_core::router_client::router_endpoint();
+    let (status, status_color) = match catalog {
+        ModelCatalog::Loading => ("Checking gateway".to_string(), ink_muted()),
+        ModelCatalog::Live => (format!("{} models · {host}:{port}", models.len()), success()),
+        ModelCatalog::Builtin => ("Gateway offline · built-in list".to_string(), ink_muted()),
+    };
     div()
         .id("glass-model-menu")
         .absolute()
         .top(px(38.0))
-        .right(px(-60.0))
-        .w(px(248.0))
+        .right(px(-72.0))
+        .w(px(272.0))
         .flex()
         .flex_col()
         .p(px(6.0))
@@ -3272,54 +3478,203 @@ fn model_menu_panel(model: usize, cx: &mut Context<GlassPreview>) -> Stateful<Di
                     .child("MODEL"),
             ),
         )
-        .children(MODELS.iter().enumerate().map(|(index, name)| {
-            let selected = index == model;
-            let blurb = MODEL_BLURBS[index];
+        .child(
             div()
-                .id(("glass-model-option", index))
+                .id("glass-model-list")
+                .max_h(px(340.0))
+                .flex()
+                .flex_col()
+                .gap(px(1.0))
+                .overflow_y_scroll()
+                .when(combo_count > 0, |this| {
+                    this.child(model_group_label("ROUTER COMBOS", "priority"))
+                })
+                .children(
+                    (0..combo_count).map(|index| model_option(index, &models[index], selected, cx)),
+                )
+                .when(combo_count < models.len(), |this| {
+                    this.when(combo_count > 0, |this| {
+                        this.child(model_group_label("MODELS", "direct"))
+                    })
+                })
+                .children(
+                    (combo_count..models.len())
+                        .map(|index| model_option(index, &models[index], selected, cx)),
+                ),
+        )
+        .child(
+            div()
+                .mt(px(6.0))
+                .pt(px(6.0))
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .border_t_1()
+                .border_color(panel_border_soft())
+                .child(model_group_label("THINKING", thinking.effort()))
+                .child(
+                    div()
+                        .h(px(26.0))
+                        .px(px(3.0))
+                        .flex()
+                        .items_center()
+                        .gap(px(2.0))
+                        .rounded(px(8.0))
+                        .bg(tint(0x0A))
+                        .children(ThinkingLevel::ALL.into_iter().enumerate().map(
+                            |(index, level)| {
+                                let active = level == thinking;
+                                div()
+                                    .id(("glass-thinking-option", index))
+                                    .flex_1()
+                                    .h(px(20.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded(px(6.0))
+                                    .cursor_pointer()
+                                    .tooltip(hint(level.hint()))
+                                    .when(active, |this| {
+                                        this.bg(brand_tint()).border_1().border_color(brand_line())
+                                    })
+                                    .when(!active, |this| {
+                                        this.hover(|style| style.bg(hover_wash()))
+                                    })
+                                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                                        this.set_thinking(level, cx);
+                                    }))
+                                    .child(
+                                        div()
+                                            .text_size(px(9.5))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(if active { brand_text() } else { ink_muted() })
+                                            .child(level.label()),
+                                    )
+                            },
+                        )),
+                ),
+        )
+        .child(
+            div()
+                .mt(px(4.0))
+                .h(px(30.0))
+                .px(px(8.0))
                 .flex()
                 .items_center()
-                .gap(px(10.0))
-                .h(px(44.0))
-                .px(px(10.0))
-                .rounded(px(10.0))
-                .cursor_pointer()
-                .when(selected, |this| this.bg(brand_tint()))
-                .when(!selected, |this| this.hover(|style| style.bg(hover_wash())))
-                .on_click(cx.listener(move |this, _event, _window, cx| {
-                    this.set_model(index, cx);
-                }))
+                .gap(px(6.0))
+                .border_t_1()
+                .border_color(panel_border_soft())
+                .child(div().size(px(5.0)).flex_shrink_0().rounded_full().bg(status_color))
                 .child(
                     div()
                         .flex_1()
                         .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .gap(px(1.0))
-                        .child(
-                            div()
-                                .text_size(px(12.5))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(if selected { brand_text() } else { ink() })
-                                .child(*name),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(10.5))
-                                .text_color(ink_muted())
-                                .child(blurb),
-                        ),
+                        .truncate()
+                        .text_size(px(9.5))
+                        .text_color(ink_muted())
+                        .child(status),
                 )
-                .when(selected, |this| {
-                    this.child(icon("check", 13.0, brand_text()))
-                })
+                .child(
+                    div()
+                        .id("glass-model-refresh")
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .size(px(20.0))
+                        .rounded(px(6.0))
+                        .cursor_pointer()
+                        .tooltip(hint("Refresh models"))
+                        .hover(|style| style.bg(hover_wash()))
+                        .active(|style| style.bg(press_wash()))
+                        .on_click(cx.listener(|this, _event, _window, cx| this.refresh_models(cx)))
+                        .child(icon("refresh-cw", 11.0, ink_muted())),
+                ),
+        )
+}
+
+fn model_group_label(label: &'static str, hint_text: &'static str) -> Div {
+    div()
+        .h(px(24.0))
+        .px(px(10.0))
+        .flex()
+        .items_center()
+        .justify_between()
+        .child(
+            div()
+                .text_size(px(9.5))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(ink_muted())
+                .child(label),
+        )
+        .child(
+            div()
+                .text_size(px(9.0))
+                .text_color(ink_muted())
+                .child(hint_text),
+        )
+}
+
+fn model_option(
+    index: usize,
+    choice: &ModelChoice,
+    selected: usize,
+    cx: &mut Context<GlassPreview>,
+) -> Stateful<Div> {
+    let active = index == selected;
+    div()
+        .id(("glass-model-option", index))
+        .flex()
+        .items_center()
+        .gap(px(8.0))
+        .h(px(40.0))
+        .px(px(10.0))
+        .rounded(px(10.0))
+        .cursor_pointer()
+        .when(active, |this| this.bg(brand_tint()))
+        .when(!active, |this| this.hover(|style| style.bg(hover_wash())))
+        .on_click(cx.listener(move |this, _event, _window, cx| {
+            this.set_model(index, cx);
         }))
+        .child(icon(
+            if choice.combo { "git-branch" } else { "sparkles" },
+            12.0,
+            if choice.combo { brand() } else { ink_muted() },
+        ))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(px(1.0))
+                .child(
+                    div()
+                        .truncate()
+                        .text_size(px(12.5))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(if active { brand_text() } else { ink() })
+                        .child(choice.label.clone()),
+                )
+                .child(
+                    div()
+                        .truncate()
+                        .text_size(px(10.5))
+                        .text_color(ink_muted())
+                        .child(choice.blurb.clone()),
+                ),
+        )
+        .when(active, |this| {
+            this.child(icon("check", 13.0, brand_text()))
+        })
 }
 
 fn conversation_header(
     compact: bool,
     chat: &ChatThread,
     model: usize,
+    models: &[ModelChoice],
+    model_catalog: ModelCatalog,
+    thinking: ThinkingLevel,
     model_menu: bool,
     session_map: bool,
     cx: &mut Context<GlassPreview>,
@@ -3334,6 +3689,15 @@ fn conversation_header(
         format!("{} files changed", chat.files)
     } else {
         "No files yet".to_string()
+    };
+    let model_label = models
+        .get(model)
+        .map(|choice| choice.label.as_str())
+        .unwrap_or("Model");
+    let pill_label = if compact || thinking == ThinkingLevel::Auto {
+        model_label.to_string()
+    } else {
+        format!("{model_label} · {}", thinking.label())
     };
     div()
         .h(px(56.0))
@@ -3407,9 +3771,15 @@ fn conversation_header(
             div()
                 .relative()
                 .flex_shrink_0()
-                .child(model_pill(compact, model, model_menu, cx))
+                .child(model_pill(compact, &pill_label, model_menu, cx))
                 .when(model_menu, |this| {
-                    this.child(deferred(model_menu_panel(model, cx)))
+                    this.child(deferred(model_menu_panel(
+                        models,
+                        model,
+                        model_catalog,
+                        thinking,
+                        cx,
+                    )))
                 }),
         )
         .child(
@@ -3989,7 +4359,7 @@ fn map_node(index: usize, node: &MapNode, cx: &mut Context<GlassPreview>) -> Sta
 
 fn model_pill(
     compact: bool,
-    model: usize,
+    label: &str,
     open: bool,
     cx: &mut Context<GlassPreview>,
 ) -> Stateful<Div> {
@@ -4016,7 +4386,7 @@ fn model_pill(
                 .text_size(px(12.0))
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(ink())
-                .child(MODELS[model.min(MODELS.len() - 1)]),
+                .child(label.to_string()),
         )
         .child(icon(
             if open { "chevron-up" } else { "chevron-down" },
@@ -7573,6 +7943,26 @@ fn review_button(cx: &mut Context<GlassPreview>) -> Stateful<Div> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn catalog_prioritizes_combos_and_strips_prefix() {
+        let catalog = catalog_from_ids(vec![
+            "claude-sonnet-4.6".to_string(),
+            "va_auto-combo".to_string(),
+            "gpt-5.1-codex".to_string(),
+            "va_fast-lane".to_string(),
+        ]);
+        assert_eq!(catalog.len(), 4);
+        assert!(catalog[0].combo && catalog[1].combo);
+        assert_eq!(catalog[0].label, "auto-combo");
+        assert_eq!(catalog[1].label, "fast-lane");
+        assert_eq!(catalog[0].id, "va_auto-combo");
+        assert!(!catalog[2].combo);
+        assert_eq!(catalog[2].label, "claude-sonnet-4.6");
+        assert_eq!(catalog[3].label, "gpt-5.1-codex");
+        assert_eq!(model_blurb("gpt-5.1-codex"), "OpenAI coding model");
+        assert!(catalog_from_ids(Vec::new()).is_empty());
+    }
 
     #[test]
     fn theme_preferences_round_trip_and_tolerate_noise() {
