@@ -898,33 +898,33 @@ const SEARCH_ENTRIES: &[SearchEntry] = &[
     },
     SearchEntry {
         id: "glass-search-dock-file",
-        icon: "file-code",
+        icon: "files",
         title: "left_dock.rs",
-        meta: "File · va-desktop/src",
+        meta: "Change · va-desktop/src",
         action: SearchAction::Change("left_dock.rs"),
         recent: true,
     },
     SearchEntry {
         id: "glass-search-assistant-file",
-        icon: "file-code",
+        icon: "files",
         title: "assistant_panel.rs",
-        meta: "File · va-desktop/src",
+        meta: "Change · va-desktop/src",
         action: SearchAction::Change("assistant_panel.rs"),
         recent: false,
     },
     SearchEntry {
         id: "glass-search-editor-file",
-        icon: "file-code",
+        icon: "files",
         title: "editor_pane.rs",
-        meta: "File · va-desktop/src",
+        meta: "Change · va-desktop/src",
         action: SearchAction::Change("editor_pane.rs"),
         recent: false,
     },
     SearchEntry {
         id: "glass-search-icon-file",
-        icon: "file-code",
+        icon: "files",
         title: "icon.rs",
-        meta: "File · va-desktop/src",
+        meta: "Change · va-desktop/src",
         action: SearchAction::Change("icon.rs"),
         recent: false,
     },
@@ -1014,6 +1014,23 @@ fn filter_entries(entries: &'static [SearchEntry], query: &str) -> Vec<&'static 
     // Grouped display: this session, then files, panels, commands.
     hits.sort_by_key(|entry| entry.action.rank());
     hits
+}
+
+/// Diff rows only exist for files the active chat produced; offering them
+/// elsewhere would open an empty Changes panel.
+fn search_results(
+    entries: &'static [SearchEntry],
+    query: &str,
+    files: usize,
+) -> Vec<&'static SearchEntry> {
+    let changes = changes_for(files);
+    filter_entries(entries, query)
+        .into_iter()
+        .filter(|entry| match entry.action {
+            SearchAction::Change(name) => changes.iter().any(|file| file.name == name),
+            _ => true,
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1496,7 +1513,11 @@ impl GlassPreview {
             cx.notify();
             return;
         }
-        let results = filter_entries(SEARCH_ENTRIES, &self.search_query);
+        let results = search_results(
+            SEARCH_ENTRIES,
+            &self.search_query,
+            self.active_thread().files,
+        );
         let shown = results.len().min(SEARCH_LIMIT);
         match event.keystroke.key.as_str() {
             "escape" => {
@@ -2171,6 +2192,7 @@ impl Render for GlassPreview {
                             focused: search_focused,
                             focus: search_focus,
                             entity,
+                            files: chat.files,
                         },
                         cx,
                     ))
@@ -2337,6 +2359,7 @@ struct SearchState {
     focused: bool,
     focus: FocusHandle,
     entity: Entity<GlassPreview>,
+    files: usize,
 }
 
 fn input_bridge(entity: Entity<GlassPreview>, focus: FocusHandle) -> impl IntoElement {
@@ -2435,8 +2458,9 @@ fn search_overlay(state: SearchState, cx: &mut Context<GlassPreview>) -> impl In
         focused,
         focus,
         entity,
+        files,
     } = state;
-    let results = filter_entries(SEARCH_ENTRIES, &query);
+    let results = search_results(SEARCH_ENTRIES, &query, files);
     let total = results.len();
     let shown = total.min(SEARCH_LIMIT);
     let selected = if shown == 0 { 0 } else { index.min(shown - 1) };
@@ -6718,11 +6742,11 @@ mod tests {
 
     #[test]
     fn search_matches_title_or_meta_and_groups_by_rank() {
-        // Six file rows, then the three panels whose blurbs mention files.
+        // Two editor-file rows, then the three panels whose blurbs mention files.
         let files = filter_entries(SEARCH_ENTRIES, "FILE");
-        assert_eq!(files.len(), 9);
-        assert!(files[..6].iter().all(|entry| entry.action.rank() == 1));
-        assert!(files[6..].iter().all(|entry| entry.action.rank() == 2));
+        assert_eq!(files.len(), 5);
+        assert!(files[..2].iter().all(|entry| entry.action.rank() == 1));
+        assert!(files[2..].iter().all(|entry| entry.action.rank() == 2));
 
         let appearance = filter_entries(SEARCH_ENTRIES, "appearance");
         assert_eq!(appearance.len(), 2);
@@ -6760,6 +6784,22 @@ mod tests {
         assert!(matches!(pin[0].action, SearchAction::Pin));
 
         assert!(filter_entries(SEARCH_ENTRIES, "day zzz").is_empty());
+    }
+
+    #[test]
+    fn search_hides_diffs_the_chat_never_produced() {
+        assert!(search_results(SEARCH_ENTRIES, "left_dock", 0).is_empty());
+        let hits = search_results(SEARCH_ENTRIES, "left_dock", 6);
+        assert_eq!(hits.len(), 1);
+        assert!(matches!(
+            hits[0].action,
+            SearchAction::Change("left_dock.rs")
+        ));
+
+        // The recent list must not offer a diff row to a chat without diffs.
+        assert!(search_results(SEARCH_ENTRIES, "", 0)
+            .iter()
+            .all(|entry| !matches!(entry.action, SearchAction::Change(_))));
     }
 
     #[test]
