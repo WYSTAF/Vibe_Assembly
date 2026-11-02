@@ -1,4 +1,4 @@
-//! Midnight Paper — the chat-first workbench after dark.
+//! Midnight Paper - the chat-first workbench after dark.
 //!
 //! Same conversation-first architecture as Paper & Ink, rebuilt on warm charcoal
 //! instead of cream. The yellow stays reserved for chrome and the one primary
@@ -469,7 +469,7 @@ fn conversation() -> Div {
                 div()
                     .text_size(px(10.0))
                     .text_color(ink_muted())
-                    .child("Vibe can make mistakes — review every change before you apply."),
+                    .child("Vibe can make mistakes - review every change before you apply."),
             ),
         )
 }
@@ -594,7 +594,7 @@ fn welcome_turn() -> Div {
             .line_height(px(19.0))
             .text_color(ink_soft())
             .child(
-                "Hi — I read through the workbench and restyled it around your brand. \
+                "Hi - I read through the workbench and restyled it around your brand. \
                  Six files, 86 lines, and nothing changes until you apply it.",
             ),
     )
@@ -649,7 +649,7 @@ fn work_card() -> Div {
                         .child("6 files · 86 lines"),
                 ),
         )
-        .child(check_line("Warmed every surface — 12 colors"))
+        .child(check_line("Warmed every surface - 12 colors"))
         .child(check_line("Kept brand yellow for the main action"))
         .child(check_line("Rewrote the comments in plain English"))
         .child(diff_preview())

@@ -78,7 +78,7 @@ fn multi_chunk_replacement_is_sequential() {
 
 #[test]
 fn fuzzy_recovery_from_uniform_line_shift() {
-    // A header comment is prepended — every block moves down by 2 lines.
+    // A header comment is prepended - every block moves down by 2 lines.
     record_signatures(SAMPLE);
     let beta = block_with_sig(SAMPLE, "pub fn beta(y: i32) -> i32 {");
     let drifted = format!("// SPDX-License-Identifier: MIT\n// generated\n\n{SAMPLE}");
@@ -104,7 +104,7 @@ fn recovery_refuses_when_context_changed() {
     let op = PatchOp::new(beta.hash, "pub fn beta(y: i32) -> i32 {\n    y * 7\n}")
         .with_signature("pub fn beta(y: i32) -> i32 {");
 
-    // The signature still exists once, so this legitimately succeeds — the
+    // The signature still exists once, so this legitimately succeeds - the
     // guarantee is that ambiguity, not drift alone, is refused.
     let out = apply_patch(&mangled, &op).unwrap();
     assert!(out.contains("y * 7"));

@@ -653,7 +653,7 @@ fn editor(accent: Rgba) -> Div {
             ],
         ),
         (5, false, &[]),
-        (6, false, &[cm("// Obsidian Gold — warm black surfaces,")]),
+        (6, false, &[cm("// Obsidian Gold - warm black surfaces,")]),
         (
             7,
             false,
@@ -889,7 +889,7 @@ fn drawer(accent: Rgba) -> Div {
                 .text_size(px(10.0))
                 .text_color(t::text_muted())
                 .child(dot(t::success()))
-                .child("cargo clippy — finished in 1.24s"),
+                .child("cargo clippy - finished in 1.24s"),
         )
 }
 

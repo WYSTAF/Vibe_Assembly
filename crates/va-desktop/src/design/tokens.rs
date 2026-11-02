@@ -1,4 +1,4 @@
-//! Obsidian Gold — the brand token set for the Vibe Assembly workbench.
+//! Obsidian Gold - the brand token set for the Vibe Assembly workbench.
 //!
 //! Warm black surfaces (a trace of yellow in every grey) so the brand yellow
 //! reads as light rather than as a sticker. Nothing here is consumed by the
@@ -10,7 +10,7 @@ use va_core::modes::ExecutionMode;
 
 // ------------------------------------------------------------------ surfaces
 
-/// Titlebar, docks, drawer, status bar — the frame around the canvas.
+/// Titlebar, docks, drawer, status bar - the frame around the canvas.
 pub fn sunken() -> Rgba {
     rgb(0x0B0B0A)
 }

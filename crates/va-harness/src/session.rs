@@ -1,14 +1,14 @@
 //! Append-only transactional session trajectory (DAG).
 //!
-//! # Design note — relationship to the upstream reference
+//! # Design note - relationship to the upstream reference
 //!
 //! The reference implementation (`deepseek-harness`, TypeScript) is a **flat,
 //! seq-addressed append-only event log**: it has no DAG, no state hashing, no
 //! rollback, and no re-execution replay. Its fork is a slice of the event array
 //! plus synthetic closers.
 //!
-//! This module implements the *behaviors* the Vibe Assembly wave requires —
-//! branching trajectories, verifiable state, rollback and replay — rather than
+//! This module implements the *behaviors* the Vibe Assembly wave requires -
+//! branching trajectories, verifiable state, rollback and replay - rather than
 //! claiming to port code that does not exist upstream. Concretely it adds:
 //!
 //! * a real DAG: nodes carry `parents: Vec<NodeId>`, so a node may join several
@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 
 /// FNV-1a 64-bit. Deterministic, dependency-free, and adequate for integrity
-/// checks over content we control. Not a cryptographic hash — collision
+/// checks over content we control. Not a cryptographic hash - collision
 /// resistance against a *hostile* editor is out of scope; this detects
 /// accidental drift.
 pub fn fnv1a64(bytes: &[u8]) -> u64 {
@@ -93,7 +93,7 @@ pub struct Node {
     /// Zero or more parents. More than one makes this a merge point.
     pub parents: Vec<NodeId>,
     pub kind: NodeKind,
-    /// Hash over this node's own content — detects tampering with a stored log.
+    /// Hash over this node's own content - detects tampering with a stored log.
     pub content_hash: u64,
     /// Hash over the full ancestry state, so a reordered or dropped ancestor
     /// changes every descendant's hash.
@@ -117,7 +117,7 @@ pub enum SessionError {
     MissingParent(NodeId),
     /// `rollback`/`replay` to a node that is not on the current branch.
     NotOnCurrentPath(NodeId),
-    /// The recorded ancestry hash does not match a recomputation — the log was
+    /// The recorded ancestry hash does not match a recomputation - the log was
     /// modified out of band.
     IntegrityViolation {
         node: NodeId,
@@ -405,7 +405,7 @@ impl Session {
         Ok(())
     }
 
-    /// The last node on the current path whose verification passed — the
+    /// The last node on the current path whose verification passed - the
     /// safe place to resume from after a dead end.
     pub fn last_verified(&self) -> Result<Option<NodeId>, SessionError> {
         let path = self.current_path()?;
@@ -425,7 +425,7 @@ impl Session {
                 Ok(Some(id))
             }
             None => {
-                // No verification on this path — rewind to the first node.
+                // No verification on this path - rewind to the first node.
                 let path = self.current_path()?;
                 if let Some(root) = path.first().copied() {
                     self.rollback(root)?;
@@ -438,7 +438,7 @@ impl Session {
     }
 
     /// Fold the stored trajectory forward from `from` to the head, returning
-    /// the ordered labels. No tool is re-executed — results are reused, which
+    /// the ordered labels. No tool is re-executed - results are reused, which
     /// is the upstream's defining property.
     pub fn replay(&self, from: Option<NodeId>) -> Result<Vec<String>, SessionError> {
         let path = self.current_path()?;
@@ -515,7 +515,7 @@ impl Session {
     }
 
     /// Return the active branch already compacted to the configured budget.
-    /// The DAG itself is never mutated — only the returned view is collapsed.
+    /// The DAG itself is never mutated - only the returned view is collapsed.
     pub fn context_surface_with_budget(
         &self,
         config: &ContextWindowConfig,
@@ -642,7 +642,7 @@ impl Session {
         Ok(session)
     }
 
-    /// Labels of every node, in id order — the human-readable trajectory.
+    /// Labels of every node, in id order - the human-readable trajectory.
     pub fn kind_labels(&self) -> Vec<String> {
         self.nodes
             .values()

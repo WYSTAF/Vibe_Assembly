@@ -11,7 +11,7 @@ use va_core::modes::ExecutionMode;
 
 // ------------------------------------------------------------------ surfaces
 
-/// Titlebar, left dock, status bar — the warm canvas behind every pane.
+/// Titlebar, left dock, status bar - the warm canvas behind every pane.
 pub fn sunken() -> Rgba {
     rgb(0xF1EADC)
 }
@@ -109,7 +109,7 @@ pub fn accent_rgb(mode: ExecutionMode) -> u32 {
     }
 }
 
-/// Solid accents stay identical — brand is chrome, not a gradient.
+/// Solid accents stay identical - brand is chrome, not a gradient.
 pub fn accent_strong_rgb(mode: ExecutionMode) -> u32 {
     accent_rgb(mode)
 }

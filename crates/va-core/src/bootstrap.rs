@@ -12,7 +12,7 @@ pub const DEFAULT_ACTIVE_TASK: &str = r#"# Active Task Assignment Blueprint
 - **Name:** First Feature
 - **Objective:** Define and deliver the first feature of this project. Replace this blueprint with your real task via 👑 Boss Mode.
 - **Status:** awaiting_boss
-- **User paste:** n/a — Boss has not scoped any tickets yet.
+- **User paste:** n/a - Boss has not scoped any tickets yet.
 
 ## Status Snapshot
 - **current_ticket:** none
@@ -32,18 +32,18 @@ pub const DEFAULT_ACTIVE_TASK: &str = r#"# Active Task Assignment Blueprint
 
 pub const DEFAULT_CURRENT_STATE: &str = r#"# Current Operational State
 - **Active Milestone:** Project Initialization
-- **Current Assignment:** none — awaiting first Boss blueprint.
+- **Current Assignment:** none - awaiting first Boss blueprint.
 - **Planning Status:** No tickets defined yet.
 - **Implementation Status:** Not started.
 - **Verification Status:** Nothing to verify yet.
-- **Resume Anchor:** n/a — no active tickets.
+- **Resume Anchor:** n/a - no active tickets.
 - **Blockers:** None.
 "#;
 
 pub const DEFAULT_PROGRESS: &str = r#"# Project Progress
 
 ## Active Wave
-- (none yet — 👑 Boss records the first wave here)
+- (none yet - 👑 Boss records the first wave here)
 
 ## Scope Guard
 - (👑 Boss narrows this when the first wave is scoped)
@@ -53,7 +53,7 @@ pub const DEFAULT_PROGRESS: &str = r#"# Project Progress
 "#;
 
 pub const DEFAULT_SESSION_CONTEXT: &str = r#"# ⏳ Active Session Context Handoff
-Last Session Status: Fresh template — no sessions yet.
+Last Session Status: Fresh template - no sessions yet.
 Active Blockers: None
 Next Immediate Action Step: Switch to 💬 Chat to shape your idea, or 👑 Boss to scope the first feature.
 "#;
@@ -75,7 +75,7 @@ Runtime Environment Specs:
 Engine Host: Standalone Rust Engine
 Persistence: None
 
-Last Date Proven Working: never — nothing executed yet.
+Last Date Proven Working: never - nothing executed yet.
 "#;
 
 pub fn pristine_template_files() -> Vec<(&'static str, &'static str)> {

@@ -69,7 +69,7 @@ pub fn queue_lines(at: &ActiveTask, p: &Palette) -> Vec<String> {
                 " ".to_string()
             };
             let status = if r.status.is_empty() {
-                "—".to_string()
+                "-".to_string()
             } else {
                 r.status.clone()
             };

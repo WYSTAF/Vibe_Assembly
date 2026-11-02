@@ -1,4 +1,4 @@
-//! Incremental git diff review — checkpoint, isolate, stream.
+//! Incremental git diff review - checkpoint, isolate, stream.
 //!
 //! Design note: the upstream (`pi`) ships a `git-checkpoint` extension and a
 //! `durable` reviewer loop that re-prompts a model until it emits a `DONE`
@@ -182,7 +182,7 @@ pub fn parse_unified_diff(raw: &str) -> (Vec<DiffLine>, Vec<usize>) {
 }
 
 impl Reviewer {
-    /// Everything changed since the checkpoint — the exact delta of this step.
+    /// Everything changed since the checkpoint - the exact delta of this step.
     pub fn since_checkpoint(&self) -> Result<Vec<DiffLine>, ReviewError> {
         let raw = match &self.checkpoint {
             Some(cp) => git(&self.repo, &["diff", &cp.id])?,

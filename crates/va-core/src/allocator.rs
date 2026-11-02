@@ -1,4 +1,4 @@
-//! Model-combo allocator — assigns user-available models to the five modes
+//! Model-combo allocator - assigns user-available models to the five modes
 //! using the curated knowledge base (.ai/model_knowledge.json).
 //!
 //! Pure native Rust implementation mirroring `bin/allocate-models.js`.
@@ -193,7 +193,7 @@ pub fn allocate(
                 used.insert(found.raw.clone());
             } else {
                 warnings.push(format!(
-                    "lock for {} references \"{}\", which is not in the combo — allocating automatically instead.",
+                    "lock for {} references \"{}\", which is not in the combo - allocating automatically instead.",
                     mode, lock_target
                 ));
             }
@@ -242,7 +242,7 @@ pub fn allocate(
             // Global fallback: any unused model in classified
             if let Some(unused) = classified.iter().find(|c| !used.contains(&c.raw)) {
                 warnings.push(format!(
-                    "{}: no {}-class model in your combo — using {} as a fallback.",
+                    "{}: no {}-class model in your combo - using {} as a fallback.",
                     mode, req.primary_class, unused.raw
                 ));
                 unused.clone()

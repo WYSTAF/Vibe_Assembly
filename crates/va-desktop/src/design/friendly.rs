@@ -1,8 +1,8 @@
-//! Paper & Ink — a warmer, human-first take on the workbench.
+//! Paper & Ink - a warmer, human-first take on the workbench.
 //!
 //! Same product, different temperament: light warm paper, floating cards,
 //! sentence-case labels, verbs on buttons, and an assistant that talks like a
-//! colleague instead of a machine. The conversation is the workspace here —
+//! colleague instead of a machine. The conversation is the workspace here -
 //! code shows up as diffs inside the thread, never as the main surface.
 
 use gpui::prelude::*;
@@ -470,7 +470,7 @@ fn conversation() -> Div {
                 div()
                     .text_size(px(10.0))
                     .text_color(ink_muted())
-                    .child("Vibe can make mistakes — review every change before you apply."),
+                    .child("Vibe can make mistakes - review every change before you apply."),
             ),
         )
 }
@@ -595,7 +595,7 @@ fn welcome_turn() -> Div {
             .line_height(px(19.0))
             .text_color(ink_soft())
             .child(
-                "Hi — I read through the workbench and restyled it around your brand. \
+                "Hi - I read through the workbench and restyled it around your brand. \
                  Six files, 86 lines, and nothing changes until you apply it.",
             ),
     )
@@ -650,7 +650,7 @@ fn work_card() -> Div {
                         .child("6 files · 86 lines"),
                 ),
         )
-        .child(check_line("Warmed every surface — 12 colors"))
+        .child(check_line("Warmed every surface - 12 colors"))
         .child(check_line("Kept brand yellow for the main action"))
         .child(check_line("Rewrote the comments in plain English"))
         .child(diff_preview())

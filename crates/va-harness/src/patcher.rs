@@ -1,6 +1,6 @@
 //! Deterministic hash-anchored source patching.
 //!
-//! # Design note — relationship to the upstream reference
+//! # Design note - relationship to the upstream reference
 //!
 //! In the upstream (`oh-my-pi`, Rust, crate `pi-edit` "hashline" mode) the
 //! 4-hex tag is a **whole-file staleness assertion** produced by XXH32, and
@@ -8,7 +8,7 @@
 //! Block lowering parses against the tagged snapshot, never the live file.
 //!
 //! This module implements the anchoring behaviour the Vibe Assembly wave
-//! requires — patches target **per-block hashes**, never raw line numbers —
+//! requires - patches target **per-block hashes**, never raw line numbers -
 //! using two deliberate substitutions, both forced by the local environment:
 //!
 //! * **FNV-1a instead of XXH32.** `xxhash-rust` is not in the local cargo
@@ -40,7 +40,7 @@ pub struct Block {
     pub end_line: usize,
     /// Deterministic hash of the block's normalized text.
     pub hash: u64,
-    /// First line's trimmed text — used to re-identify a block after drift.
+    /// First line's trimmed text - used to re-identify a block after drift.
     pub signature: String,
 }
 
@@ -237,7 +237,7 @@ pub fn short_hash(hash: u64) -> String {
 pub enum PatchError {
     /// No block in the file carries this hash.
     NotFound { hash: u64 },
-    /// More than one block carries this hash — refuse rather than guess.
+    /// More than one block carries this hash - refuse rather than guess.
     Ambiguous { hash: u64, count: usize },
     /// The file drifted since hashing and no single-hop rebase applies.
     Stale {
@@ -254,7 +254,7 @@ pub enum PatchError {
     },
     /// A 1-hop rebase was attempted but the enclosing context changed.
     ContextMismatch { expected: String, actual: String },
-    /// Whole file drifted since discovery — external modification detected (oh-my-pi).
+    /// Whole file drifted since discovery - external modification detected (oh-my-pi).
     FileDrifted { expected: u64, actual: u64 },
     /// Structural recovery found more than one block with the same normalized
     /// body. Even a correctly shifted anchor is rejected on repeated content.
@@ -266,13 +266,13 @@ impl std::fmt::Display for PatchError {
         match self {
             PatchError::NotFound { hash } => write!(
                 f,
-                "no block with hash {} ({}) in the file — it may have been edited",
+                "no block with hash {} ({}) in the file - it may have been edited",
                 short_hash(*hash),
                 hash
             ),
             PatchError::Ambiguous { hash, count } => write!(
                 f,
-                "hash {} matches {count} blocks — refusing to guess; add context to disambiguate",
+                "hash {} matches {count} blocks - refusing to guess; add context to disambiguate",
                 short_hash(*hash)
             ),
             PatchError::Stale {
@@ -289,7 +289,7 @@ impl std::fmt::Display for PatchError {
             ),
             PatchError::ContextMismatch { expected, actual } => write!(
                 f,
-                "enclosing context changed: expected `{expected}`, found `{actual}` — refusing to rebase"
+                "enclosing context changed: expected `{expected}`, found `{actual}` - refusing to rebase"
             ),
             PatchError::FileDrifted { expected, actual } => write!(
                 f,
@@ -297,7 +297,7 @@ impl std::fmt::Display for PatchError {
             ),
             PatchError::AmbiguousRepeatedAnchor { signature, count } => write!(
                 f,
-                "repeated anchor `{signature}` appears {count} times — structurally shifted anchor rejected"
+                "repeated anchor `{signature}` appears {count} times - structurally shifted anchor rejected"
             ),
         }
     }
@@ -336,7 +336,7 @@ pub enum RecoveryKind {
 ///
 /// Resolution order:
 /// 1. Whole-file staleness check (if `expected_file_hash` supplied).
-/// 2. Exact hash match — unambiguous, applied directly.
+/// 2. Exact hash match - unambiguous, applied directly.
 /// 3. Single-hop recovery when the hash is gone but the block's opening
 ///    signature appears exactly once at a different position.
 /// 4. Hard failure. Ambiguity at any step is an error, never a guess.
@@ -370,7 +370,7 @@ pub fn apply_patch(source: &str, op: &PatchOp) -> Result<String, PatchError> {
 
 fn recover_or_fail(source: &str, op: &PatchOp) -> Result<String, PatchError> {
     // 1-hop recovery: the block's opening signature may still exist at a
-    // shifted position. We need the original signature — recover it by
+    // shifted position. We need the original signature - recover it by
     // looking for a block whose *content* is a prefix-match of the
     // replacement's neighbourhood is unreliable, so instead require the
     // caller to have supplied a signature-bearing op.
@@ -511,7 +511,7 @@ pub fn apply_patches(source: &str, ops: &[PatchOp]) -> Result<(String, Vec<u64>)
     Ok((current, applied))
 }
 
-/// Hash a single line-range as a standalone block — the discovery helper an
+/// Hash a single line-range as a standalone block - the discovery helper an
 /// agent uses to learn what to patch.
 pub fn probe_hash(source: &str, start_line: usize, end_line: usize) -> Result<u64, PatchError> {
     let lines: Vec<&str> = source.lines().collect();

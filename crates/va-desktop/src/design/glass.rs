@@ -1,4 +1,4 @@
-//! Liquid Glass — black and yellow, with the glass kept for the ask bar and
+//! Liquid Glass - black and yellow, with the glass kept for the ask bar and
 //! the auto-hiding edge drawer.
 //!
 //! Solid graphite panes sit on a near-black canvas lit by one warm yellow
@@ -226,7 +226,7 @@ fn glass_fill_strong() -> Background {
 }
 
 fn nav_fill() -> Background {
-    // The nav floats over open drawer cards, so it frosts them almost solid —
+    // The nav floats over open drawer cards, so it frosts them almost solid -
     // no diff numbers bleeding through the capsule.
     if day() {
         linear_gradient(
@@ -258,7 +258,7 @@ fn nav_border() -> Rgba {
 }
 
 // The drawer floats over chat content, and GPUI 0.2.2 cannot blur what is
-// behind it — so it stays effectively opaque, glass only at its edges.
+// behind it - so it stays effectively opaque, glass only at its edges.
 fn drawer_fill() -> Background {
     if day() {
         linear_gradient(
@@ -662,10 +662,10 @@ impl DrawerSection {
 
     fn tooltip(self) -> &'static str {
         match self {
-            Self::Session => "Session — Pin keeps it open",
-            Self::Changes => "Changes — Pin keeps it open",
-            Self::Editor => "Editor — Pin keeps it open",
-            Self::History => "History — Pin keeps it open",
+            Self::Session => "Session - Pin keeps it open",
+            Self::Changes => "Changes - Pin keeps it open",
+            Self::Editor => "Editor - Pin keeps it open",
+            Self::History => "History - Pin keeps it open",
         }
     }
 
@@ -1114,7 +1114,7 @@ fn seeded_chats() -> Vec<ChatThread> {
             2,
             ChatGroup::Yesterday,
             ChatKind::Archive {
-                prompt: "Show me a calmer studio direction — more space, fewer borders, one \
+                prompt: "Show me a calmer studio direction - more space, fewer borders, one \
                          accent.",
                 reply: "Pulled two borders out of every card, opened the gutters to 14, and kept \
                         the single yellow accent. The hierarchy is quieter and the thread reads \
@@ -1367,7 +1367,7 @@ impl GlassPreview {
         }
         self.nav_open = open;
         self.nav_epoch += 1;
-        // The drawer pushes the thread, so re-anchor it to the latest turn —
+        // The drawer pushes the thread, so re-anchor it to the latest turn -
         // once now, and once when the 320ms reveal finishes reflowing.
         self.thread_settled = false;
         cx.spawn(async move |this, cx| {
@@ -3152,7 +3152,7 @@ fn conversation(
                 div()
                     .text_size(px(10.5))
                     .text_color(ink_muted())
-                    .child("Vibe can make mistakes — review every change before you apply."),
+                    .child("Vibe can make mistakes - review every change before you apply."),
             ),
         )
         .when(model_menu, |this| {
@@ -3467,7 +3467,7 @@ fn intro_turn() -> Div {
             .text_color(ink_soft())
             .child(
                 "Took the sketch: chats on the left, the model pill up top, and a nav at the \
-                 right edge. Hover a nav icon to open its panel — Session, Changes, Editor, \
+                 right edge. Hover a nav icon to open its panel - Session, Changes, Editor, \
                  History. Pin keeps it open; the context ring sits beneath the nav.",
             ),
     )
@@ -4991,9 +4991,9 @@ fn warning_detail() -> Div {
         .flex()
         .flex_col()
         .gap(px(3.0))
-        .child(warning_line("unused import — theme.rs"))
-        .child(warning_line("dead_code allow — widgets.rs"))
-        .child(warning_line("deprecated field — icon.rs"))
+        .child(warning_line("unused import - theme.rs"))
+        .child(warning_line("dead_code allow - widgets.rs"))
+        .child(warning_line("deprecated field - icon.rs"))
 }
 
 fn warning_line(label: &'static str) -> Div {
@@ -5486,7 +5486,7 @@ fn history_card(active_chat: u64, all_runs: bool, cx: &mut Context<GlassPreview>
         ))
         .when(all_runs, |this| {
             // Archived runs have no chat left in the rail, so they are
-            // informational only — no pointer, no click, no chevron.
+            // informational only - no pointer, no click, no chevron.
             this.child(chat_section_label("LAST WEEK"))
                 .child(history_row(
                     "glass-hist-7",
@@ -5862,7 +5862,7 @@ fn live_chat_panel() -> Div {
                                 .line_height(px(17.0))
                                 .text_color(ink_soft())
                                 .child(
-                                    "On it — hover the nav to switch panels; this chat rides \
+                                    "On it - hover the nav to switch panels; this chat rides \
                                      in Session. Use Pin to keep the panel open.",
                                 ),
                         ),
@@ -5878,7 +5878,7 @@ fn live_chat_panel() -> Div {
                     div()
                         .text_size(px(10.5))
                         .text_color(ink_muted())
-                        .child("Live chat rides along — open Session to follow the run."),
+                        .child("Live chat rides along - open Session to follow the run."),
                 ),
         )
 }
@@ -6089,7 +6089,7 @@ fn edge_drawer(
         .child(
             // Content keeps its width while the panel's left edge sweeps out,
             // so labels never reflow mid-animation. It runs full-bleed under
-            // the nav — the nav is the top layer, not a reserved gutter.
+            // the nav - the nav is the top layer, not a reserved gutter.
             div()
                 .absolute()
                 .top_0()

@@ -121,7 +121,7 @@ fn normalize(raw: &str) -> String {
     raw.replace("\r\n", "\n").replace('\r', "\n")
 }
 
-/// A ticket id is `PREFIX-NNN` — an uppercase alphanumeric/hyphen prefix ending
+/// A ticket id is `PREFIX-NNN` - an uppercase alphanumeric/hyphen prefix ending
 /// in a numeric segment. Accepts both the legacy `T-401` form and namespaced
 /// ids like `VA-RUST-001`, so a new wave does not require a parser change.
 /// Rejects bare numbers, lowercase junk, and the literal `none`.
@@ -250,7 +250,7 @@ pub fn parse_active_task(raw: &str) -> ActiveTask {
     let queue = parse_queue_rows(queue_section);
 
     // The Active Ticket pointer is the sole execution pointer. The literal
-    // value "none" is meaningful (no work assigned) and must survive here —
+    // value "none" is meaningful (no work assigned) and must survive here -
     // dropping it would turn a quiescent workspace into a false violation.
     let active_id = text
         .split_once("## Active Ticket")
@@ -398,7 +398,7 @@ pub fn parse_state_file(raw: &str) -> StateFile {
     StateFile { title, fields }
 }
 
-/// Split a `## KB-NNN — title` log into discrete entries. The old Electron
+/// Split a `## KB-NNN - title` log into discrete entries. The old Electron
 /// UI rendered one entry's field labels as if they were separate bugs, so the
 /// native app parses entries properly.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -414,17 +414,14 @@ pub fn parse_log_entries(raw: &str) -> Vec<LogEntry> {
     for line in text.lines() {
         if let Some(heading) = line.strip_prefix("## ") {
             let heading = heading.trim();
-            // Expected shape: `KB-001 — title` or `[ADR-008] title`.
+            // Expected shape: `KB-001 - title` or `[ADR-008] title`.
             let (id, title) = if let Some(rest) = heading.strip_prefix('[') {
                 match rest.split_once(']') {
                     Some((id, title)) => (id.trim().to_string(), title.trim().to_string()),
                     None => (String::new(), heading.to_string()),
                 }
             } else {
-                match heading
-                    .split_once("—")
-                    .or_else(|| heading.split_once(" - "))
-                {
+                match heading.split_once(" - ") {
                     Some((id, title)) => (id.trim().to_string(), title.trim().to_string()),
                     None => (String::new(), heading.to_string()),
                 }
@@ -487,7 +484,7 @@ pub fn validate_contract(parsed: &ActiveTask) -> Option<String> {
     let row = pointed[0];
     if row.status != "pending" && row.status != "in_progress" {
         return Some(format!(
-            "Active Ticket {id} has Queue status \"{}\" — expected pending/in_progress.",
+            "Active Ticket {id} has Queue status \"{}\" - expected pending/in_progress.",
             row.status
         ));
     }
@@ -513,7 +510,7 @@ pub fn validate_contract(parsed: &ActiveTask) -> Option<String> {
             None => return Some(format!("{id} depends_on {dep}, which is not in the Queue.")),
             Some(dep_row) if dep_row.status != "done" => {
                 return Some(format!(
-                    "{id} depends_on {dep}, whose status is \"{}\" — must be done.",
+                    "{id} depends_on {dep}, whose status is \"{}\" - must be done.",
                     dep_row.status
                 ))
             }
@@ -551,7 +548,7 @@ fn mentions_step(note: &str, n: i64) -> bool {
         if hay[start..start + nd.len()] != nd[..] {
             continue;
         }
-        // \b — a non-word char before, and a non-digit after, so the prefix
+        // \b - a non-word char before, and a non-digit after, so the prefix
         // trap ("step 1" matching inside "step 12") cannot fire.
         let before_ok = start == 0 || !is_word_char(hay[start - 1]);
         let after_idx = start + nd.len();

@@ -4,7 +4,7 @@
 //!
 //! 1. **Curated benchmarks** for frontier models, so a known model gets a
 //!    grounded score rather than a guess.
-//! 2. **Heuristic inference for unknown models** — when Vibe Router surfaces a
+//! 2. **Heuristic inference for unknown models** - when Vibe Router surfaces a
 //!    model this build has never seen (`gemini-3.8-flash`, `glm-5.3`,
 //!    `deepseek-v3.2`), parse its name for family, version, and behavioural
 //!    tags, then score it from those.
@@ -70,7 +70,7 @@ pub struct Benchmark {
     pub swe_bench: Option<f32>,
     /// Arena Elo.
     pub arena_elo: Option<u32>,
-    /// Aider polyglot score — a coding metric.
+    /// Aider polyglot score - a coding metric.
     pub aider: Option<f32>,
     /// Tokens per second, for the speed axis. Curated models only.
     pub tps: Option<u32>,
@@ -158,7 +158,7 @@ pub fn benchmarks() -> Vec<Benchmark> {
 
 /// Look up a curated benchmark by name, cloning the match.
 ///
-/// The benchmark table is rebuilt on each call so the result can be owned —
+/// The benchmark table is rebuilt on each call so the result can be owned -
 /// a `'static` reference would require leaking a temporary `Vec`.
 pub fn find_benchmark(name: &str) -> Option<Benchmark> {
     let norm = normalize(name);
@@ -182,7 +182,7 @@ pub fn normalize(name: &str) -> String {
         .collect()
 }
 
-/// Why a score was assigned — surfaced so allocations are explainable.
+/// Why a score was assigned - surfaced so allocations are explainable.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Factor {
     pub name: String,

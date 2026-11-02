@@ -5,14 +5,14 @@
 //! pinpointer, the immutable session DAG, and `.ai/EXPERIENCE.md`.
 //!
 //! Flow:
-//! 1. **Observe** — scan the workspace into a token-budgeted `RepoMap`.
-//! 2. **Think (Boss)** — ask the router which files/blocks the ticket touches
+//! 1. **Observe** - scan the workspace into a token-budgeted `RepoMap`.
+//! 2. **Think (Boss)** - ask the router which files/blocks the ticket touches
 //!    and what verification command proves it.
-//! 3. **Patch (Code)** — send the exact hashed block bodies and receive
+//! 3. **Patch (Code)** - send the exact hashed block bodies and receive
 //!    model-authored replacements, applied through `va-harness::patcher`.
-//! 4. **Verify (Debug)** — when a verification fails, feed pinned diagnostics
+//! 4. **Verify (Debug)** - when a verification fails, feed pinned diagnostics
 //!    back to the Debug role and apply the recovery patch.
-//! 5. **Judge** — deterministic anti-slop gate; the Judge always runs
+//! 5. **Judge** - deterministic anti-slop gate; the Judge always runs
 //!    independently of the model that authored the patch.
 //!
 //! Offline synthesis exists only behind `offline_mock` (unit tests and the
@@ -294,10 +294,10 @@ impl LiveRouterPlanner {
         ));
         out.push_str("Language guardrails (a patch that violates one will be rejected):\n");
         for (token, message) in language.guardrails() {
-            out.push_str(&format!("- `{token}` — {message}\n"));
+            out.push_str(&format!("- `{token}` - {message}\n"));
         }
         for (token, message) in self.config.mode.mode_guardrails() {
-            out.push_str(&format!("- `{token}` — {message}\n"));
+            out.push_str(&format!("- `{token}` - {message}\n"));
         }
         out.push_str("\nJudge note: ");
         out.push_str(language.judge_note());
@@ -566,7 +566,7 @@ impl LiveRouterPlanner {
                 }
             }
             if emitted == 0 {
-                block_sections.push_str("[no matching block — re-read the file map]\n");
+                block_sections.push_str("[no matching block - re-read the file map]\n");
             }
         }
         let (surface, _) = session

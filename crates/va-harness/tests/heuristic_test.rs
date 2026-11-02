@@ -1,7 +1,7 @@
 //! Heuristic scoring for novel model names Vibe Router may surface.
 //!
-//! These exercise models this build has never seen — the whole point of the
-//! heuristic path — plus the curated/heuristic boundary.
+//! These exercise models this build has never seen - the whole point of the
+//! heuristic path - plus the curated/heuristic boundary.
 
 use va_core::knowledge::{
     auto_combo, find_benchmark, infer_class, normalize, parse_version, score_model,

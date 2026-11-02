@@ -7,7 +7,7 @@
 //! Design note: the upstream (`pi`) implements its reviewer as an LLM loop that
 //! re-prompts until a `DONE` sentinel appears. That mechanism is reproduced in
 //! `review.rs` at the orchestration level. This module is the *deterministic*
-//! gate that runs before any model is consulted — cheap, exhaustive, and
+//! gate that runs before any model is consulted - cheap, exhaustive, and
 //! impossible to talk past.
 
 use std::collections::BTreeMap;
@@ -82,7 +82,7 @@ impl std::fmt::Display for Finding {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{}:{}: {} — {}",
+            "{}:{}: {} - {}",
             self.path,
             self.line,
             self.kind.as_str(),
@@ -205,7 +205,7 @@ impl Judge {
                 path: "*".to_string(),
                 line: 0,
                 detail: format!(
-                    "{changed} changed lines exceeds the {} limit — split the change",
+                    "{changed} changed lines exceeds the {} limit - split the change",
                     self.config.max_changed_lines
                 ),
             });
@@ -241,7 +241,7 @@ impl Judge {
                     kind: FindingKind::ImportChurn,
                     path: (*path).to_string(),
                     line: 0,
-                    detail: "every changed line in this file is an import — imports must change for a reason".to_string(),
+                    detail: "every changed line in this file is an import - imports must change for a reason".to_string(),
                 });
             }
         }
@@ -287,7 +287,7 @@ impl Judge {
                         kind: FindingKind::UnsafeInProduction,
                         path: line.path.clone(),
                         line: lineno,
-                        detail: format!("`{token}` in a production path — use Result/Option"),
+                        detail: format!("`{token}` in a production path - use Result/Option"),
                     });
                 }
             }
@@ -298,7 +298,7 @@ impl Judge {
                         kind: FindingKind::LanguageGuardrail,
                         path: line.path.clone(),
                         line: lineno,
-                        detail: format!("`{token}` — {message}"),
+                        detail: format!("`{token}` - {message}"),
                     });
                 }
             }
@@ -347,7 +347,7 @@ impl Judge {
         self.retries_used < 1
     }
 
-    /// Format findings as targeted, actionable feedback — not a wall of text.
+    /// Format findings as targeted, actionable feedback - not a wall of text.
     pub fn feedback(findings: &[Finding]) -> String {
         findings
             .iter()

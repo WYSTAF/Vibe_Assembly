@@ -3,7 +3,7 @@
 //! Four independent pieces, all dependency-free:
 //!
 //! 1. **Eight modular harness surfaces** (`c1`..`c8`). Every task starts from
-//!    the pristine base definitions — overlays are never allowed to leak from
+//!    the pristine base definitions - overlays are never allowed to leak from
 //!    a previous task (strict reset-to-base).
 //! 2. **Contrastive recovery.** When a step fails, compare the invariant
 //!    candidate (what must always hold) with the domain candidate (what this
@@ -283,7 +283,7 @@ impl ExperienceEntry {
     pub fn render_markdown(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!(
-            "### {} — {} / {}\n",
+            "### {} - {} / {}\n",
             self.date, self.language, self.domain
         ));
         out.push_str(&format!("- **Signature:** `{}`\n", self.signature));
@@ -297,7 +297,7 @@ impl ExperienceEntry {
     }
 }
 
-const EXPERIENCE_HEADER: &str = "# EXPERIENCE\n\nDurable, evidence-backed recovery lessons recorded by the\ncontrastive reflector. Newest entries first. This file is an input to future\ntasks in the same language/domain — it never overrides the ticket contract.\n\n";
+const EXPERIENCE_HEADER: &str = "# EXPERIENCE\n\nDurable, evidence-backed recovery lessons recorded by the\ncontrastive reflector. Newest entries first. This file is an input to future\ntasks in the same language/domain - it never overrides the ticket contract.\n\n";
 
 /// Persistent `.ai/EXPERIENCE.md` store.
 #[derive(Debug, Clone)]
@@ -329,7 +329,7 @@ impl ExperienceStore {
                 if let Some(entry) = current.take() {
                     entries.push(entry);
                 }
-                let (date, scope) = rest.split_once(" — ").unwrap_or((rest, ""));
+                let (date, scope) = rest.split_once(" - ").unwrap_or((rest, ""));
                 let (language, domain) = scope.split_once(" / ").unwrap_or((scope, ""));
                 current = Some(ExperienceEntry {
                     date: date.trim().to_string(),

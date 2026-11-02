@@ -284,7 +284,7 @@ impl SpeculativeTournament {
                 candidate_branch_ids,
                 NodeKind::Thought {
                     text: format!(
-                        "Tournament winner: candidate `{}` ({}) — churn: {} lines, warnings: {}, cost: {} micros",
+                        "Tournament winner: candidate `{}` ({}) - churn: {} lines, warnings: {}, cost: {} micros",
                         winner.candidate_id,
                         winning_candidate.description,
                         winner.lines_churn,

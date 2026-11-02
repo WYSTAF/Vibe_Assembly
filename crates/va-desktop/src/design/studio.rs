@@ -1,8 +1,8 @@
-//! Studio — an editorial take on the chat-first workbench.
+//! Studio - an editorial take on the chat-first workbench.
 //!
 //! Warm ivory paper, a serif voice for headings, and a session-history rail
 //! instead of a file tree. The conversation stays the workspace; craft shows up
-//! in the details — generous margins, hairlines, and numbered next steps.
+//! in the details - generous margins, hairlines, and numbered next steps.
 
 use gpui::prelude::*;
 use gpui::{
@@ -507,7 +507,7 @@ fn conversation() -> Div {
         .child(composer())
         .child(div().w_full().flex().justify_center().pb(px(12.0)).child(
             div().text_size(px(10.0)).text_color(ink_muted()).child(
-                "Vibe can make mistakes — review every change before you apply. · 62% context used",
+                "Vibe can make mistakes - review every change before you apply. · 62% context used",
             ),
         ))
 }
@@ -601,7 +601,7 @@ fn intro_turn() -> Div {
             .line_height(px(21.0))
             .text_color(ink_soft())
             .child(
-                "I read through the workbench and kept its bones — same panels, same habits. \
+                "I read through the workbench and kept its bones - same panels, same habits. \
                  What changed is the voice: warmer paper, a serif for headings, and fewer boxes \
                  competing for your attention.",
             ),
@@ -669,7 +669,7 @@ fn work_card() -> Div {
                 .child("Warmer surfaces, quieter rules, and a serif voice for the headings."),
         )
         .child(check_line("Warmed the paper, kept the contrast"))
-        .child(check_line("Set headings in a serif — UI copy stays sans"))
+        .child(check_line("Set headings in a serif - UI copy stays sans"))
         .child(check_line("Left the brand yellow on one action only"))
         .child(diff_preview())
         .child(
@@ -845,7 +845,7 @@ fn closing_turn() -> Div {
             .line_height(px(20.0))
             .text_color(ink_soft())
             .child(
-                "The layout is untouched — you can move between the session rail, the thread, \
+                "The layout is untouched - you can move between the session rail, the thread, \
                  and the inspector exactly as before. Want a darker paper or a denser rhythm?",
             ),
     )

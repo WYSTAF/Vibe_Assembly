@@ -69,7 +69,7 @@ pub enum EngineError {
     ReadOnlyMode {
         mode: String,
     },
-    /// The same (file, block, failure) repeated — the loop is spinning.
+    /// The same (file, block, failure) repeated - the loop is spinning.
     StagnationDetected {
         signature: String,
         attempts: u32,
@@ -94,7 +94,7 @@ impl std::fmt::Display for EngineError {
             EngineError::Aborted(r) => write!(f, "aborted: {r}"),
             EngineError::ReadOnlyMode { mode } => write!(
                 f,
-                "mode `{mode}` is read-only — patches are forbidden; switch to code, web or debug"
+                "mode `{mode}` is read-only - patches are forbidden; switch to code, web or debug"
             ),
             EngineError::StagnationDetected {
                 signature,
@@ -635,7 +635,7 @@ fn describe(action: &Action) -> String {
 mod tests {
     use super::*;
 
-    /// A planner that replays a fixed script — no network, fully deterministic.
+    /// A planner that replays a fixed script - no network, fully deterministic.
     struct ScriptedPlanner {
         script: Vec<Action>,
         index: usize,
@@ -667,7 +667,7 @@ mod tests {
         }
     }
 
-    /// A unique temp repo per call — cargo runs tests in parallel threads, so
+    /// A unique temp repo per call - cargo runs tests in parallel threads, so
     /// a shared fixed name would let one test delete another's directory.
     fn temp_repo(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("va-engine-test-{tag}"));
@@ -822,7 +822,7 @@ mod tests {
         let repo = temp_repo("cap");
         let mut engine = Engine::new(&repo).with_max_steps(3);
         let mut session = Session::new();
-        // A planner that never says Done — verify commands that pass, forever.
+        // A planner that never says Done - verify commands that pass, forever.
         let mut planner = ScriptedPlanner {
             script: (0..100)
                 .map(|_| Action::Verify {

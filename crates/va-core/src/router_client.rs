@@ -467,7 +467,7 @@ pub fn chat_completion(
 
     if status == 401 || status == 403 {
         return Err(format!(
-            "gateway returned {status} — set VIBE_ROUTER_TOKEN, VIBE_ROUTER_API_KEY, or place .vibe_router_token in the workspace"
+            "gateway returned {status} - set VIBE_ROUTER_TOKEN, VIBE_ROUTER_API_KEY, or place .vibe_router_token in the workspace"
         ));
     }
     if !(200..300).contains(&status) {
@@ -765,7 +765,7 @@ pub fn fetch_assignment_with_context(
 
     if status == 401 || status == 403 {
         return RouterAssignment::offline(format!(
-            "gateway returned {status} — set VIBE_ROUTER_TOKEN, VIBE_ROUTER_API_KEY, or place .vibe_router_token in workspace"
+            "gateway returned {status} - set VIBE_ROUTER_TOKEN, VIBE_ROUTER_API_KEY, or place .vibe_router_token in workspace"
         ));
     }
 

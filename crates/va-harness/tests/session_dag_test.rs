@@ -65,7 +65,7 @@ fn fork_starts_a_new_branch_sharing_history() {
     assert_eq!(path[0], 1, "the shared root is still node 1");
     assert!(path.contains(&branch_point));
     assert!(s.children_of(branch_point).len() >= 2, "the fork diverges");
-    // The pre-fork failure is still on record — history is not discarded.
+    // The pre-fork failure is still on record - history is not discarded.
     assert!(s
         .nodes()
         .any(|n| matches!(&n.kind, NodeKind::Verification { passed: false, .. })));

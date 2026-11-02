@@ -210,7 +210,7 @@ fn crlf_checkouts_do_not_break_parsing() {
 
 #[test]
 fn log_entries_split_on_headings() {
-    let bugs = "# Log\n\n## KB-001 — Electron crash\n- **Symptom:** boom\n\n## KB-002 — Second\n- **Symptom:** bang\n";
+    let bugs = "# Log\n\n## KB-001 - Electron crash\n- **Symptom:** boom\n\n## KB-002 - Second\n- **Symptom:** bang\n";
     let entries = parse_log_entries(bugs);
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].id, "KB-001");

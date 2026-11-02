@@ -1,5 +1,5 @@
 //! Center conversation: the agent thread, the prompt composer, and the quiet
-//! session chrome around them. This is the primary surface of the workbench —
+//! session chrome around them. This is the primary surface of the workbench -
 //! code only appears as inline diffs until you open a file on the right.
 use crate::design::icon::icon;
 use crate::state::{LeftView, PaletteScope, ThreadItem, Workbench};
@@ -504,7 +504,7 @@ pub fn render(
                 .child(format!("{}% context", state.context_pct)),
         )
         .child(div().flex_1())
-        .child("Vibe can make mistakes — review every change before you apply it.");
+        .child("Vibe can make mistakes - review every change before you apply it.");
 
     div()
         .flex_1()
@@ -583,7 +583,7 @@ fn welcome(cx: &mut Context<Workbench>) -> Div {
                 .text_size(px(13.0))
                 .line_height(px(22.0))
                 .text_color(theme::text_secondary())
-                .child("Tell Vibe what to change. It reads the workspace, proposes a patch, and waits for you to apply it — nothing changes on its own."),
+                .child("Tell Vibe what to change. It reads the workspace, proposes a patch, and waits for you to apply it - nothing changes on its own."),
         )
         .child(
             div()

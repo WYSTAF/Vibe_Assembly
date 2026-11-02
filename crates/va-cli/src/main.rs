@@ -1,4 +1,4 @@
-//! Vibe Assembly CLI — the terminal operations room.
+//! Vibe Assembly CLI - the terminal operations room.
 //!
 //! Pure Rust. Surface: status, models, doctor, init, reset, --json, --summary,
 //! tui/top, profile, session, mcp, patch, blocks, run.
@@ -30,7 +30,7 @@ use render::{queue_lines, role_icon, Palette};
 #[command(
     name = "vibe-assembly",
     version,
-    about = "Vibe Assembly — terminal operations room for the .ai/ workspace contract"
+    about = "Vibe Assembly - terminal operations room for the .ai/ workspace contract"
 )]
 struct Cli {
     /// Workspace root (defaults to searching upward from the current directory)
@@ -598,7 +598,7 @@ fn run_status(root: &Path, p: &Palette, json: bool) -> ExitCode {
 
     if let Some(violation) = &ws.violation {
         println!();
-        println!(" {}⛔ CONTRACT VIOLATION{} — {}", p.red, p.reset, violation);
+        println!(" {}⛔ CONTRACT VIOLATION{} - {}", p.red, p.reset, violation);
         println!(
             " {}Return to 👑 Boss and fix .ai/active_task.md.{}",
             p.dim, p.reset
@@ -617,7 +617,7 @@ fn run_status(root: &Path, p: &Palette, json: bool) -> ExitCode {
     if let Some(a) = &ws.active_task.active {
         let verified = verified_steps(&a.steps, &a.relay_notes);
         println!();
-        println!(" {}▶ {}{} — {}", p.bold, a.id, p.reset, a.title);
+        println!(" {}▶ {}{} - {}", p.bold, a.id, p.reset, a.title);
         if !a.files_allowed.is_empty() {
             println!(
                 "   {}files:{} {}",
@@ -674,7 +674,7 @@ fn run_status(root: &Path, p: &Palette, json: bool) -> ExitCode {
             }
         }
         None => println!(
-            " {}○ All tickets done or none scoped — switch to 👑 Boss to plan the next wave.{}",
+            " {}○ All tickets done or none scoped - switch to 👑 Boss to plan the next wave.{}",
             p.yellow, p.reset
         ),
     }
@@ -838,7 +838,7 @@ fn run_doctor(root: &Path, p: &Palette) -> ExitCode {
             if exists {
                 String::new()
             } else {
-                "missing — core contract file".to_string()
+                "missing - core contract file".to_string()
             },
         ));
     }
@@ -899,7 +899,7 @@ fn run_doctor(root: &Path, p: &Palette) -> ExitCode {
                 !fresh,
                 "project configured".to_string(),
                 if fresh {
-                    "CHANGE_ME_* placeholders remain — finish 👑 Boss first setup".to_string()
+                    "CHANGE_ME_* placeholders remain - finish 👑 Boss first setup".to_string()
                 } else {
                     String::new()
                 },
@@ -934,7 +934,7 @@ fn run_doctor(root: &Path, p: &Palette) -> ExitCode {
         let suffix = if detail.is_empty() {
             String::new()
         } else {
-            format!("{} — {}{}", p.dim, detail, p.reset)
+            format!("{} - {}{}", p.dim, detail, p.reset)
         };
         println!(" {} {}{}", mark, label, suffix);
     }
@@ -966,7 +966,7 @@ fn run_summary(root: &Path) -> ExitCode {
     let done = at.queue.iter().filter(|r| r.is_done()).count();
 
     println!(
-        "# Wave Report — {}",
+        "# Wave Report - {}",
         at.wave_name
             .clone()
             .unwrap_or_else(|| "(unnamed wave)".into())
@@ -985,7 +985,7 @@ fn run_summary(root: &Path) -> ExitCode {
 
 // ---- harness-backed commands ------------------------------------------------
 
-/// Print every block in a file with its hash and line range — the discovery
+/// Print every block in a file with its hash and line range - the discovery
 /// step an agent performs before patching.
 fn run_blocks(file: &Path) -> ExitCode {
     let source = match std::fs::read_to_string(file) {
@@ -997,7 +997,7 @@ fn run_blocks(file: &Path) -> ExitCode {
     };
     let blocks = va_harness::patcher::segment_blocks(&source);
     if blocks.is_empty() {
-        println!("(no blocks — file is empty)");
+        println!("(no blocks - file is empty)");
         return ExitCode::SUCCESS;
     }
     for b in &blocks {
@@ -1074,7 +1074,7 @@ fn run_patch(file: &Path, target: &str, replacement: Option<&str>, list: bool) -
                 1 => Some(matches[0].clone()),
                 _ => {
                     eprintln!(
-                        "❌ Short hash {target} is ambiguous — it matches {} blocks. Use the full 64-bit hash.",
+                        "❌ Short hash {target} is ambiguous - it matches {} blocks. Use the full 64-bit hash.",
                         matches.len()
                     );
                     return ExitCode::from(2);
@@ -1206,12 +1206,12 @@ fn run_execute(root: &Path, opts: ExecutionOptions<'_>) -> ExitCode {
                 "{}",
                 serde_json::json!({
                     "event": "error",
-                    "message": "No models available — Vibe Router is offline and .ai/model_combo.txt is missing"
+                    "message": "No models available - Vibe Router is offline and .ai/model_combo.txt is missing"
                 })
             );
         } else {
             eprintln!(
-                "❌ No models available — Vibe Router is offline and .ai/model_combo.txt is missing."
+                "❌ No models available - Vibe Router is offline and .ai/model_combo.txt is missing."
             );
         }
         return ExitCode::from(1);
@@ -1907,7 +1907,7 @@ fn run_up(root: &Path, profile: Option<&str>, json: bool) -> ExitCode {
             p.dim, p.reset, p.green, p.reset
         );
     } else {
-        println!("   {}Router:{}     {}⚠ Standalone mode (router offline — local knowledge auto-combo ready){}", p.dim, p.reset, p.yellow, p.reset);
+        println!("   {}Router:{}     {}⚠ Standalone mode (router offline - local knowledge auto-combo ready){}", p.dim, p.reset, p.yellow, p.reset);
     }
     println!();
     ExitCode::SUCCESS
@@ -1993,7 +1993,7 @@ fn run_diagnose(root: &Path, command: Option<&str>, json: bool) -> ExitCode {
         if pinned.is_empty() {
             if output.status.success() {
                 println!(
-                    "   {}✔ Workspace compiles cleanly — 0 block errors found.{}",
+                    "   {}✔ Workspace compiles cleanly - 0 block errors found.{}",
                     p.green, p.reset
                 );
             } else {

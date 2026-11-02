@@ -1,12 +1,12 @@
 //! Execution harness for Vibe Assembly.
 //!
-//! * [`session`] — append-only transactional trajectory DAG with fork, rollback,
+//! * [`session`] - append-only transactional trajectory DAG with fork, rollback,
 //!   replay, and per-node state hashing.
-//! * [`patcher`] — deterministic hash-anchored source patching with 1-hop
+//! * [`patcher`] - deterministic hash-anchored source patching with 1-hop
 //!   structural recovery and hard rejection of ambiguous targets.
-//! * [`review`] — git checkpointing and per-step delta isolation.
-//! * [`judge`] — deterministic anti-slop and minimalism gatekeeper.
-//! * [`engine`] — the Observe → Think → Patch → Verify → Judge loop.
+//! * [`review`] - git checkpointing and per-step delta isolation.
+//! * [`judge`] - deterministic anti-slop and minimalism gatekeeper.
+//! * [`engine`] - the Observe → Think → Patch → Verify → Judge loop.
 
 pub mod diagnostics;
 pub mod engine;

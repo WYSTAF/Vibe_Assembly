@@ -60,7 +60,7 @@ fn detect(text: &str, general: bool) -> Vec<Suggestion> {
         .collect()
 }
 
-/// The typo closest to the caret — the one it is in, or the nearest across
+/// The typo closest to the caret - the one it is in, or the nearest across
 /// the sentence, so Tab can work through a prompt one fix at a time.
 pub fn nearest(text: &str, caret: usize) -> Option<Suggestion> {
     let caret = caret.min(text.len());

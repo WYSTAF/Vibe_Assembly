@@ -1,4 +1,4 @@
-//! Vibe Assembly desktop — a native Zed-style workbench.
+//! Vibe Assembly desktop - a native Zed-style workbench.
 //!
 //! The workbench reads the real `.ai/` workspace, the RepoMap, the immutable
 //! session DAG, compiler diagnostics, and the eight harness surfaces. It uses
@@ -158,11 +158,11 @@ fn run_preview_shipped(mode: ExecutionMode) {
 
 fn run_preview(mode: ExecutionMode, sample: Sample) {
     let title = match sample {
-        Sample::Obsidian => "Vibe Assembly — Design Preview",
-        Sample::Paper => "Vibe Assembly — Paper & Ink",
-        Sample::Midnight => "Vibe Assembly — Midnight Paper",
-        Sample::Studio => "Vibe Assembly — Studio",
-        Sample::Glass => "Vibe Assembly — Liquid Glass",
+        Sample::Obsidian => "Vibe Assembly - Design Preview",
+        Sample::Paper => "Vibe Assembly - Paper & Ink",
+        Sample::Midnight => "Vibe Assembly - Midnight Paper",
+        Sample::Studio => "Vibe Assembly - Studio",
+        Sample::Glass => "Vibe Assembly - Liquid Glass",
     };
     run_preview_window(mode, sample, title);
 }
