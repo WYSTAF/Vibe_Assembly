@@ -7998,6 +7998,29 @@ fn display_origin(origin: &str) -> String {
 }
 
 fn settings_card(state: EdgeState, cx: &mut Context<GlassPreview>) -> Div {
+    let checks_ready = !state.changes.is_empty();
+    let checks_detail = if checks_ready {
+        "Three minor warnings in this chat"
+    } else {
+        "No checks run in this chat"
+    };
+    let checks_action: AnyElement = if checks_ready {
+        link_button("settings-warnings", "Explain")
+            .on_click(cx.listener(|this, _event, _window, cx| {
+                this.explain_warnings(cx);
+            }))
+            .into_any_element()
+    } else {
+        div()
+            .flex()
+            .items_center()
+            .h(px(24.0))
+            .px(px(6.0))
+            .text_size(px(11.0))
+            .text_color(ink_muted())
+            .child("Run a task first")
+            .into_any_element()
+    };
     panel_card()
         .flex_shrink_0()
         .p(px(12.0))
@@ -8045,12 +8068,8 @@ fn settings_card(state: EdgeState, cx: &mut Context<GlassPreview>) -> Div {
         .child(setting_row(
             "triangle-alert",
             "Checks",
-            "Three minor warnings in this chat",
-            link_button("settings-warnings", "Explain").on_click(cx.listener(
-                |this, _event, _window, cx| {
-                    this.explain_warnings(cx);
-                },
-            )),
+            checks_detail,
+            checks_action,
         ))
 }
 
