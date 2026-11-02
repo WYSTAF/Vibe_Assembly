@@ -1274,15 +1274,19 @@ fn normalize_input(text: &str, search: bool) -> String {
     }
 }
 
-fn draft_title(text: &str) -> String {
-    let line = text.lines().next().unwrap_or(text).trim();
-    let mut chars = line.chars();
-    let title: String = chars.by_ref().take(32).collect();
+/// GPUI clips text without painting an ellipsis, so trim long labels ourselves.
+fn ellipsize(text: &str, max: usize) -> String {
+    let mut chars = text.chars();
+    let head: String = chars.by_ref().take(max).collect();
     if chars.next().is_some() {
-        format!("{title}…")
+        format!("{head}…")
     } else {
-        title
+        head
     }
+}
+
+fn draft_title(text: &str) -> String {
+    ellipsize(text.lines().next().unwrap_or(text).trim(), 32)
 }
 
 impl GlassPreview {
@@ -2825,15 +2829,7 @@ fn chat_row(chat: &ChatThread, active: bool, cx: &mut Context<GlassPreview>) -> 
     let id = chat.id;
     // GPUI clips this row's text without painting an ellipsis, so trim the
     // rail label ourselves; the header still carries the longer title.
-    let title = {
-        let mut chars = chat.title.chars();
-        let head: String = chars.by_ref().take(24).collect();
-        if chars.next().is_some() {
-            format!("{head}…")
-        } else {
-            head
-        }
-    };
+    let title = ellipsize(&chat.title, 24);
     let meta = chat.meta.clone();
     div()
         .id(ElementId::named_usize("glass-chat-row", id as usize))
@@ -4346,6 +4342,7 @@ fn attachment_chip(
     index: usize,
     cx: &mut Context<GlassPreview>,
 ) -> Stateful<Div> {
+    let name = ellipsize(&attachment.name, 14);
     div()
         .id(ElementId::named_usize("glass-attach", index))
         .w(px(140.0))
@@ -4368,7 +4365,7 @@ fn attachment_chip(
                 .truncate()
                 .text_size(px(11.0))
                 .text_color(ink_soft())
-                .child(attachment.name.clone()),
+                .child(name),
         )
         .child(
             div()
@@ -4395,6 +4392,7 @@ fn attachment_card(
     index: usize,
     cx: &mut Context<GlassPreview>,
 ) -> Stateful<Div> {
+    let name = ellipsize(&attachment.name, 24);
     div()
         .id(ElementId::named_usize("glass-attach", index))
         .w(px(222.0))
@@ -4436,7 +4434,7 @@ fn attachment_card(
                         .text_size(px(11.5))
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(ink())
-                        .child(attachment.name.clone()),
+                        .child(name),
                 )
                 .child(
                     div()
@@ -6774,6 +6772,14 @@ mod tests {
         assert_eq!(edge_reveal(false, 1, 0.0), 1.0);
         assert!((edge_reveal(true, 2, 0.25) - 0.25).abs() < f32::EPSILON);
         assert!((edge_reveal(false, 2, 0.25) - 0.75).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn ellipsize_marks_only_trimmed_labels() {
+        assert_eq!(ellipsize("short.rs", 12), "short.rs");
+        assert_eq!(ellipsize("exact-fit", 9), "exact-fit");
+        assert_eq!(ellipsize("design-preview-glass.png", 14), "design-preview…");
+        assert_eq!(ellipsize("éééé", 2), "éé…");
     }
 
     #[test]
