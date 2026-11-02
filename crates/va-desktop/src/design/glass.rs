@@ -703,13 +703,6 @@ impl EditorFile {
         }
     }
 
-    fn lines(self) -> &'static str {
-        match self {
-            Self::Theme => "128 lines",
-            Self::Widgets => "96 lines",
-        }
-    }
-
     fn outline(self) -> &'static [(&'static str, &'static str, &'static str)] {
         match self {
             Self::Theme => &[
@@ -722,11 +715,11 @@ impl EditorFile {
                 ("fn", "code_font()", "15"),
             ],
             Self::Widgets => &[
-                ("const", "BUTTON_H", "4"),
-                ("const", "BUTTON_R", "5"),
-                ("fn", "primary_fill()", "7"),
-                ("fn", "primary_ink()", "8"),
-                ("fn", "quiet_fill()", "9"),
+                ("const", "BUTTON_H", "5"),
+                ("const", "BUTTON_R", "6"),
+                ("fn", "primary_fill()", "8"),
+                ("fn", "primary_ink()", "12"),
+                ("fn", "quiet_fill()", "16"),
             ],
         }
     }
@@ -5025,7 +5018,9 @@ fn editor_card(file: EditorFile, cx: &mut Context<GlassPreview>) -> Div {
                     div()
                         .text_size(px(10.5))
                         .text_color(ink_muted())
-                        .child(format!("{} · read-only preview", file.lines())),
+                        // The pane shows a short excerpt, not the whole file,
+                        // so it must not claim a total line count.
+                        .child("Read-only excerpt"),
                 ),
         )
 }
