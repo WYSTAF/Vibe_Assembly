@@ -651,15 +651,6 @@ impl DrawerSection {
         }
     }
 
-    fn chip(self) -> &'static str {
-        match self {
-            Self::Session => "6 files",
-            Self::Changes => "+66 −20",
-            Self::Editor => "Rust",
-            Self::History => "24 runs",
-        }
-    }
-
     fn icon(self) -> &'static str {
         match self {
             Self::Session => "message-circle",
@@ -785,13 +776,74 @@ const CHANGE_FILES: &[ChangeFile] = &[
         added: 2,
         removed: 1,
     },
+    ChangeFile {
+        name: "composer.rs",
+        dir: "va-desktop/src",
+        added: 18,
+        removed: 6,
+    },
+    ChangeFile {
+        name: "search.rs",
+        dir: "va-desktop/src",
+        added: 9,
+        removed: 4,
+    },
+    ChangeFile {
+        name: "history.rs",
+        dir: "va-desktop/src",
+        added: 7,
+        removed: 2,
+    },
+    ChangeFile {
+        name: "nav.rs",
+        dir: "va-desktop/src",
+        added: 6,
+        removed: 3,
+    },
+    ChangeFile {
+        name: "tokens.rs",
+        dir: "ui_kit/src",
+        added: 11,
+        removed: 5,
+    },
+    ChangeFile {
+        name: "motion.rs",
+        dir: "ui_kit/src",
+        added: 5,
+        removed: 2,
+    },
 ];
 
-fn change_file(name: &str) -> &'static ChangeFile {
-    CHANGE_FILES
-        .iter()
-        .find(|file| file.name == name)
-        .unwrap_or(&CHANGE_FILES[0])
+// Each chat owns the files it produced; the drawer shows that chat's slice
+// instead of the workbench run's list.
+fn changes_for(count: usize) -> &'static [ChangeFile] {
+    &CHANGE_FILES[..count.min(CHANGE_FILES.len())]
+}
+
+fn change_totals(files: &[ChangeFile]) -> (u32, u32) {
+    files.iter().fold((0, 0), |(added, removed), file| {
+        (added + file.added, removed + file.removed)
+    })
+}
+
+fn section_chip(section: DrawerSection, changes: &[ChangeFile]) -> String {
+    match section {
+        DrawerSection::Session => match changes.len() {
+            0 => "No files".to_string(),
+            1 => "1 file".to_string(),
+            count => format!("{count} files"),
+        },
+        DrawerSection::Changes => {
+            if changes.is_empty() {
+                "No diff".to_string()
+            } else {
+                let (added, removed) = change_totals(changes);
+                format!("+{added} −{removed}")
+            }
+        }
+        DrawerSection::Editor => "Rust".to_string(),
+        DrawerSection::History => "24 runs".to_string(),
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1711,9 +1763,23 @@ impl GlassPreview {
         self.park_draft();
         self.active_chat = id;
         self.restore_draft(id);
+        self.ensure_selected_change();
         self.chat_epoch += 1;
         self.thread_settled = false;
         cx.notify();
+    }
+
+    fn ensure_selected_change(&mut self) {
+        let count = self
+            .chats
+            .iter()
+            .find(|chat| chat.id == self.active_chat)
+            .map(|chat| chat.files)
+            .unwrap_or(0);
+        let files = changes_for(count);
+        if !files.iter().any(|file| file.name == self.selected_change) {
+            self.selected_change = files.first().map(|file| file.name).unwrap_or("");
+        }
     }
 
     fn start_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1746,6 +1812,7 @@ impl GlassPreview {
             self.park_draft();
             self.active_chat = id;
             self.restore_draft(id);
+            self.ensure_selected_change();
             self.chat_epoch += 1;
         }
         self.model_menu = false;
@@ -1958,6 +2025,8 @@ impl Render for GlassPreview {
         let web_search = self.web_search;
         let attachments = self.attachments.clone();
         let chat = self.active_thread().clone();
+        let changes = changes_for(chat.files);
+        let live_run = matches!(chat.kind, ChatKind::Workbench);
         let draft = self.draft.clone();
         let draft_selection = self.draft_selection.clone();
         let typo_notice = self.typo_notice;
@@ -2085,6 +2154,9 @@ impl Render for GlassPreview {
                             selected_change,
                             selected_run,
                             all_runs,
+                            changes,
+                            applied,
+                            live: live_run,
                         },
                         &nav_focus,
                         &self.drawer_scroll,
@@ -2986,11 +3058,9 @@ fn conversation(
                                             },
                                         )
                                         .when(blank, |this| this.child(empty_thread()))
-                                        .children(
-                                            sent.iter().map(|message| {
-                                                sent_turn(&message.text, &message.attachments)
-                                            }),
-                                        )
+                                        .children(sent.iter().map(|message| {
+                                            sent_turn(&message.text, &message.attachments)
+                                        }))
                                         .with_animation(
                                             ("glass-chat", chat_epoch),
                                             Animation::new(motion(180))
@@ -3826,36 +3896,38 @@ fn diff_body(name: &'static str) -> Div {
             .child(diff_row(
                 "-",
                 Some(danger_tint()),
-                &[
-                    p("    .h("),
-                    fx("px"),
-                    p("("),
-                    nu("26.0"),
-                    p("))"),
-                ],
+                &[p("    .h("), fx("px"), p("("), nu("26.0"), p("))")],
             ))
             .child(diff_row(
                 "+",
                 Some(success_tint()),
-                &[
-                    p("    .h("),
-                    fx("px"),
-                    p("("),
-                    nu("28.0"),
-                    p("))"),
-                ],
+                &[p("    .h("), fx("px"), p("("), nu("28.0"), p("))")],
             )),
         "icon.rs" => body
             .child(diff_row(" ", None, &[cm("@@ icon set @@")]))
             .child(diff_row(
                 " ",
                 None,
-                &[p("    "), p("\"dock\" => "), fx("svg"), p("("), p("\"dock\""), p("),")],
+                &[
+                    p("    "),
+                    p("\"dock\" => "),
+                    fx("svg"),
+                    p("("),
+                    p("\"dock\""),
+                    p("),"),
+                ],
             ))
             .child(diff_row(
                 "+",
                 Some(success_tint()),
-                &[p("    "), p("\"edge\" => "), fx("svg"), p("("), p("\"edge\""), p("),")],
+                &[
+                    p("    "),
+                    p("\"edge\" => "),
+                    fx("svg"),
+                    p("("),
+                    p("\"edge\""),
+                    p("),"),
+                ],
             )),
         _ => body
             .child(diff_row(" ", None, &[cm("@@ edge bar @@")]))
@@ -4435,6 +4507,7 @@ fn send_button(ready: bool, cx: &mut Context<GlassPreview>) -> Stateful<Div> {
 
 fn drawer_header(
     section: DrawerSection,
+    changes: &[ChangeFile],
     pinned: bool,
     focus: &FocusHandle,
     cx: &mut Context<GlassPreview>,
@@ -4454,7 +4527,7 @@ fn drawer_header(
                 .text_color(ink())
                 .child(section.title()),
         )
-        .child(soft_chip(section.chip()))
+        .child(soft_chip(section_chip(section, changes)))
         .child(div().flex_1())
         .child(pin_toggle(pinned, focus, cx))
         .child(drawer_close(cx))
@@ -4556,13 +4629,14 @@ fn panel_card() -> Div {
 }
 
 fn changed_files_card(
+    files: &'static [ChangeFile],
     selected: &'static str,
     show_open_diff: bool,
+    applied: bool,
     cx: &mut Context<GlassPreview>,
 ) -> Div {
-    let added: u32 = CHANGE_FILES.iter().map(|file| file.added).sum();
-    let removed: u32 = CHANGE_FILES.iter().map(|file| file.removed).sum();
-    let rows: Vec<AnyElement> = CHANGE_FILES
+    let (added, removed) = change_totals(files);
+    let rows: Vec<AnyElement> = files
         .iter()
         .map(|file| file_change_row(file, file.name == selected, cx).into_any_element())
         .collect();
@@ -4585,37 +4659,53 @@ fn changed_files_card(
                         .child("Changed files"),
                 )
                 .child(div().flex_1())
-                .child(
-                    div()
-                        .font_family(theme::code_font())
-                        .text_size(px(11.0))
-                        .text_color(ink_muted())
-                        .child(format!("+{added} −{removed}")),
-                ),
-        )
-        .children(rows)
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .pt(px(2.0))
-                .child(
-                    div()
-                        .text_size(px(11.5))
-                        .text_color(ink_muted())
-                        .child("Nothing applied yet"),
-                )
-                .child(div().flex_1())
-                .when(show_open_diff, |this| {
-                    this.child(link_button("glass-open-diff", "Open full diff").on_click(
-                        cx.listener(|this, _event, _window, cx| {
-                            this.selected_change = "theme.rs";
-                            this.open_section(DrawerSection::Changes, cx);
-                            cx.notify();
-                        }),
-                    ))
+                .when(!files.is_empty(), |this| {
+                    this.child(
+                        div()
+                            .font_family(theme::code_font())
+                            .text_size(px(11.0))
+                            .text_color(ink_muted())
+                            .child(format!("+{added} −{removed}")),
+                    )
                 }),
         )
+        .children(rows)
+        .when(files.is_empty(), |this| {
+            this.child(
+                div()
+                    .py(px(8.0))
+                    .text_size(px(11.0))
+                    .text_color(ink_muted())
+                    .child("No files changed in this chat."),
+            )
+        })
+        .when(!files.is_empty(), |this| {
+            this.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .pt(px(2.0))
+                    .child(
+                        div()
+                            .text_size(px(11.5))
+                            .text_color(ink_muted())
+                            .child(if applied {
+                                "Applied to your worktree"
+                            } else {
+                                "Nothing applied yet"
+                            }),
+                    )
+                    .child(div().flex_1())
+                    .when(show_open_diff, |this| {
+                        this.child(link_button("glass-open-diff", "Open full diff").on_click(
+                            cx.listener(|this, _event, _window, cx| {
+                                this.open_section(DrawerSection::Changes, cx);
+                                cx.notify();
+                            }),
+                        ))
+                    }),
+            )
+        })
 }
 
 fn file_change_row(
@@ -4706,8 +4796,8 @@ fn file_change_row(
         )
 }
 
-fn checks_card(show_warnings: bool, cx: &mut Context<GlassPreview>) -> Div {
-    panel_card()
+fn checks_card(has_run: bool, show_warnings: bool, cx: &mut Context<GlassPreview>) -> Div {
+    let card = panel_card()
         .flex_shrink_0()
         .p(px(12.0))
         .pr(px(DRAWER_CARD_RIGHT))
@@ -4726,9 +4816,42 @@ fn checks_card(show_warnings: bool, cx: &mut Context<GlassPreview>) -> Div {
                         .child("Checks"),
                 )
                 .child(div().flex_1())
-                .child(soft_chip("just ran")),
-        )
-        .child(check_stat_row("Builds clean", "2.1s"))
+                .child(soft_chip(if has_run { "just ran" } else { "not run" })),
+        );
+    if !has_run {
+        return card.child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .h(px(26.0))
+                .child(
+                    div()
+                        .size(px(16.0))
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_full()
+                        .bg(tint(0x14))
+                        .child(icon("minus", 10.0, ink_muted())),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.5))
+                        .text_color(ink_soft())
+                        .child("No checks yet"),
+                )
+                .child(div().flex_1())
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(ink_muted())
+                        .child("Run a task first"),
+                ),
+        );
+    }
+    card.child(check_stat_row("Builds clean", "2.1s"))
         .child(check_stat_row("All tests pass", "0.8s"))
         .child(check_warning_row(show_warnings, cx))
         .when(show_warnings, |this| this.child(warning_detail()))
@@ -5813,6 +5936,9 @@ struct EdgeState {
     selected_change: &'static str,
     selected_run: &'static str,
     all_runs: bool,
+    changes: &'static [ChangeFile],
+    applied: bool,
+    live: bool,
 }
 
 fn edge_overlay(
@@ -5901,7 +6027,7 @@ fn edge_drawer(
                 .flex_col()
                 .gap(px(10.0))
                 .p(px(12.0))
-                .child(drawer_header(section, pinned, focus, cx))
+                .child(drawer_header(section, state.changes, pinned, focus, cx))
                 .child(
                     div()
                         .flex_1()
@@ -5966,7 +6092,7 @@ fn edge_drawer(
                                 )),
                         ),
                 )
-                .when(section == DrawerSection::Session, |this| {
+                .when(section == DrawerSection::Session && state.live, |this| {
                     this.child(live_chat_panel())
                 }),
         )
@@ -5981,22 +6107,50 @@ fn edge_drawer(
 }
 
 fn section_body(state: EdgeState, cx: &mut Context<GlassPreview>) -> Div {
-    let file = change_file(state.selected_change);
+    let file = state
+        .changes
+        .iter()
+        .find(|file| file.name == state.selected_change)
+        .or_else(|| state.changes.first());
     let body = match state.section {
         DrawerSection::Session => div()
             .flex()
             .flex_col()
             .gap(px(10.0))
-            .child(changed_files_card(state.selected_change, true, cx))
-            .child(checks_card(state.show_warnings, cx)),
+            .child(changed_files_card(
+                state.changes,
+                state.selected_change,
+                true,
+                state.applied,
+                cx,
+            ))
+            .child(checks_card(
+                state.changes.len() > 0,
+                state.show_warnings,
+                cx,
+            )),
         DrawerSection::Changes => div()
             .flex()
             .flex_col()
             .gap(px(10.0))
-            .child(diff_preview(file.name, file.dir, file.added, file.removed))
+            .when_some(file, |this, file| {
+                this.child(diff_preview(file.name, file.dir, file.added, file.removed))
+            })
+            .when(file.is_none(), |this| this.child(no_changes_card()))
             // The file list closes the panel; its footer sits on the card's
             // bottom edge when the window leaves spare height.
-            .child(changed_files_card(state.selected_change, false, cx).flex_grow()),
+            .when(!state.changes.is_empty(), |this| {
+                this.child(
+                    changed_files_card(
+                        state.changes,
+                        state.selected_change,
+                        false,
+                        state.applied,
+                        cx,
+                    )
+                    .flex_grow(),
+                )
+            }),
         DrawerSection::Editor => div()
             .flex()
             .flex_col()
@@ -6015,6 +6169,40 @@ fn section_body(state: EdgeState, cx: &mut Context<GlassPreview>) -> Div {
     body.flex_grow().flex_shrink_0()
 }
 
+fn no_changes_card() -> Div {
+    panel_card()
+        .flex_shrink_0()
+        .p(px(16.0))
+        .pr(px(DRAWER_CARD_RIGHT))
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(px(6.0))
+        .child(icon("files", 18.0, ink_muted()))
+        .child(
+            div()
+                .text_size(px(12.0))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(ink_soft())
+                .child("Nothing to diff yet"),
+        )
+        .child(
+            div()
+                .text_size(px(11.0))
+                .text_color(ink_muted())
+                .child("This chat has not produced any changes."),
+        )
+}
+
+fn context_usage(files: usize) -> f32 {
+    match files {
+        0 => 0.0,
+        // The workbench run is the one the intro cards describe.
+        6 => 0.62,
+        count => (0.06 + count as f32 * 0.065).min(0.9),
+    }
+}
+
 fn nav_column(state: EdgeState, focus: &FocusHandle, cx: &mut Context<GlassPreview>) -> Div {
     let EdgeState { section, .. } = state;
     div()
@@ -6029,10 +6217,11 @@ fn nav_column(state: EdgeState, focus: &FocusHandle, cx: &mut Context<GlassPrevi
         .justify_center()
         .gap(px(14.0))
         .child(nav_capsule(section, focus, cx))
-        .child(context_indicator())
+        .child(context_indicator(state.changes.len()))
 }
 
-fn context_indicator() -> Stateful<Div> {
+fn context_indicator(files: usize) -> Stateful<Div> {
+    let used = context_usage(files);
     div()
         .id("glass-context")
         .size(px(CONTEXT_SIZE))
@@ -6045,8 +6234,12 @@ fn context_indicator() -> Stateful<Div> {
         .border_1()
         .border_color(nav_border())
         .shadow(glass_shadow())
-        .tooltip(hint("62% of context used — 75k of 120k tokens"))
-        .child(context_ring())
+        .tooltip(hint(if files == 0 {
+            "No context used yet"
+        } else {
+            "Context window used by this chat"
+        }))
+        .child(context_ring(used))
 }
 
 fn nav_capsule(
@@ -6171,8 +6364,7 @@ fn nav_icon(section: DrawerSection, active: bool, cx: &mut Context<GlassPreview>
         .into_any_element()
 }
 
-fn context_ring() -> impl IntoElement {
-    const USED: f32 = 0.62;
+fn context_ring(used: f32) -> impl IntoElement {
     div()
         .size(px(CONTEXT_RING))
         .flex_shrink_0()
@@ -6180,7 +6372,7 @@ fn context_ring() -> impl IntoElement {
         .child(
             canvas(
                 |_bounds, _window, _cx| (),
-                |bounds, _prepaint, window, _cx| {
+                move |bounds, _prepaint, window, _cx| {
                     let stroke = px(3.0);
                     let center = bounds.center();
                     let radius = (bounds.size.width - stroke) / 2.0;
@@ -6193,14 +6385,14 @@ fn context_ring() -> impl IntoElement {
                     if let Ok(path) = track.build() {
                         window.paint_path(path, tint(0x24));
                     }
-                    let end_angle = -FRAC_PI_2 + TAU * USED;
+                    let end_angle = -FRAC_PI_2 + TAU * used;
                     let end = point(
                         center.x + radius * end_angle.cos(),
                         center.y + radius * end_angle.sin(),
                     );
                     let mut arc = PathBuilder::stroke(stroke);
                     arc.move_to(top);
-                    arc.arc_to(point(radius, radius), px(0.0), USED > 0.5, true, end);
+                    arc.arc_to(point(radius, radius), px(0.0), used > 0.5, true, end);
                     if let Ok(path) = arc.build() {
                         window.paint_path(path, brand());
                     }
@@ -6221,8 +6413,12 @@ fn context_ring() -> impl IntoElement {
                     div()
                         .text_size(px(10.0))
                         .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(brand_text())
-                        .child("62%"),
+                        .text_color(if used > 0.0 {
+                            brand_text()
+                        } else {
+                            ink_muted()
+                        })
+                        .child(format!("{}%", (used * 100.0).round() as i32)),
                 ),
         )
 }
