@@ -6940,37 +6940,45 @@ fn stat_tile(value: &'static str, label: &'static str) -> Div {
         )
 }
 
-fn week_chart() -> Div {
-    const DAYS: [(&str, usize); 7] = [
-        ("M", 3),
-        ("T", 5),
-        ("W", 2),
-        ("T", 6),
-        ("F", 4),
-        ("S", 7),
-        ("S", 2),
+fn week_chart() -> Stateful<Div> {
+    const DAYS: [(&str, &str, usize); 7] = [
+        ("M", "Monday", 3),
+        ("T", "Tuesday", 5),
+        ("W", "Wednesday", 2),
+        ("T", "Thursday", 6),
+        ("F", "Friday", 4),
+        ("S", "Saturday", 7),
+        ("S", "Sunday", 2),
     ];
+    let peak = DAYS
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, (_, _, count))| *count)
+        .map_or(0, |(index, _)| index);
     div()
+        .id("week-chart")
         .h(px(48.0))
         .w_full()
         .flex()
         .items_end()
         .gap(px(6.0))
-        .children(DAYS.iter().enumerate().map(|(index, (day, count))| {
+        .children(DAYS.iter().enumerate().map(|(index, (day, full, count))| {
             let height = 8.0 + *count as f32 * 4.5;
             div()
+                .id(ElementId::named_usize("week-bar", index))
                 .flex_1()
                 .flex()
                 .flex_col()
                 .items_center()
                 .justify_end()
                 .gap(px(4.0))
+                .tooltip(hint(format!("{full} · {count} runs")))
                 .child(
                     div()
                         .w_full()
                         .h(px(height))
                         .rounded(px(3.0))
-                        .bg(if index == 5 { brand() } else { tint(0x24) }),
+                        .bg(if index == peak { brand() } else { tint(0x24) }),
                 )
                 .child(div().text_size(px(8.5)).text_color(ink_muted()).child(*day))
         }))
