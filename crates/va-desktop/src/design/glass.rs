@@ -329,13 +329,6 @@ fn bubble() -> Rgba {
         rgb(0x1E1E20)
     }
 }
-fn tile_fill() -> Rgba {
-    if day() {
-        rgb(0xFFFFFF)
-    } else {
-        rgb(0x151517)
-    }
-}
 fn status_fill() -> Rgba {
     if day() {
         rgba(0xF4EFE6E6)
@@ -2104,12 +2097,7 @@ fn brand_tile() -> Div {
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(10.0))
-        .bg(tile_fill())
-        .border_1()
-        .border_color(panel_border())
-        .shadow(soft_shadow())
-        .child(branding::logo(21.0))
+        .child(branding::logo(22.0))
 }
 
 fn search(open: bool, cx: &mut Context<GlassPreview>) -> Stateful<Div> {

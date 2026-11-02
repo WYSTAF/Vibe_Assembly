@@ -253,12 +253,7 @@ fn brand_tile() -> Div {
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(9.0))
-        .bg(raised())
-        .border_1()
-        .border_color(border())
-        .shadow(soft_shadow())
-        .child(branding::logo(20.0))
+        .child(branding::logo(22.0))
 }
 
 fn search() -> Div {
