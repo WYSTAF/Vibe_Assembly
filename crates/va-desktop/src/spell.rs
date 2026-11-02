@@ -135,7 +135,11 @@ impl Lexicon {
             candidate.clear();
             candidate.push_str(&word[..position]);
             candidate.push_str(&word[position + 1..]);
-            self.consider(word, &candidate, 900, &mut best);
+            // A doubled letter is usually a slip, not a word the writer meant.
+            let doubled = (position > 0 && bytes[position] == bytes[position - 1])
+                || (position + 1 < bytes.len() && bytes[position] == bytes[position + 1]);
+            let bonus = if doubled { 180 } else { 0 };
+            self.consider(word, &candidate, 900 + bonus, &mut best);
         }
 
         for position in 0..bytes.len() {
@@ -750,6 +754,13 @@ mod tests {
         assert_eq!(fix("helo wrld thisisnotaword"), "hello|world");
         assert_eq!(fix("inpt colum scrool"), "input|column|scroll");
         assert_eq!(fix("seperate definately"), "separate|definitely");
+    }
+
+    #[test]
+    fn prefers_dropping_a_doubled_letter() {
+        assert_eq!(fix("dooing"), "doing");
+        assert_eq!(fix("helllo"), "hello");
+        assert_eq!(fix("whaat"), "what");
     }
 
     #[test]
