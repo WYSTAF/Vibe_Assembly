@@ -2494,6 +2494,7 @@ fn search_overlay(state: SearchState, cx: &mut Context<GlassPreview>) -> impl In
         .items_start()
         .pt(px(16.0))
         .bg(sheet_scrim())
+        .occlude()
         .on_click(cx.listener(|this, _event, window, cx| {
             this.close_search(window);
             cx.notify();
@@ -3162,6 +3163,7 @@ fn conversation(
                     .top_0()
                     .left_0()
                     .size_full()
+                    .occlude()
                     .on_click(cx.listener(|this, _event, _window, cx| {
                         this.model_menu = false;
                         cx.notify();
@@ -6282,6 +6284,9 @@ fn nav_column(state: EdgeState, focus: &FocusHandle, cx: &mut Context<GlassPrevi
         .bottom_0()
         .right(px(NAV_INSET))
         .w(px(NAV_W))
+        // Icons float over the drawer; clicks on the rail must not also hit the
+        // rows underneath it, while the wheel still scrolls the panel.
+        .block_mouse_except_scroll()
         .flex()
         .flex_col()
         .items_center()
