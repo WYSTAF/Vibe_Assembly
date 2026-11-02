@@ -4190,11 +4190,9 @@ fn composer(
                         .child(composer_icon(
                             "glass-web",
                             "globe",
-                            if web_search {
-                                "Web search on · click to turn off"
-                            } else {
-                                "Search the web"
-                            },
+                            // Tooltips do not repaint while hovered, so this one
+                            // stays state-neutral; the yellow tint reports on/off.
+                            "Search the web",
                             web_search,
                             |this, cx| this.toggle_web_search(cx),
                             cx,
@@ -4573,7 +4571,8 @@ fn pin_toggle(pinned: bool, focus: &FocusHandle, cx: &mut Context<GlassPreview>)
             })
         })
         .active(|style| style.bg(press_wash()))
-        .tooltip(hint(if pinned { "Unpin panel" } else { "Pin panel" }))
+        // The label already reads Pin/Pinned; a stateful tooltip would keep
+        // showing the old action after the click.
         .on_click(cx.listener(|this, _event, _window, cx| {
             let next = !this.nav_pinned;
             this.set_pinned(next, cx);
@@ -4935,11 +4934,6 @@ fn check_warning_row(show_warnings: bool, cx: &mut Context<GlassPreview>) -> Div
                     this.scroll_to_warnings(cx);
                 }
                 cx.notify();
-            }))
-            .tooltip(hint(if show_warnings {
-                "Hide the warnings"
-            } else {
-                "Show the three warnings"
             })),
         )
 }
