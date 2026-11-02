@@ -6,6 +6,7 @@
 //! drawer, and the nav rail. GPUI 0.2.2 has no in-app backdrop blur, so frost
 //! is approximated with translucent fills, specular edges, and long shadows.
 
+use std::collections::HashMap;
 use std::f32::consts::{FRAC_PI_2, TAU};
 use std::ops::Range;
 use std::path::PathBuf;
@@ -941,7 +942,7 @@ const SEARCH_ENTRIES: &[SearchEntry] = &[
     SearchEntry {
         id: "glass-search-theme",
         icon: "sun",
-        title: "Switch day / night mode",
+        title: "Switch day / night theme",
         meta: "Command · Appearance",
         action: SearchAction::Theme,
         recent: true,
@@ -1088,6 +1089,13 @@ struct Attachment {
     icon: &'static str,
 }
 
+#[derive(Default)]
+struct ComposerDraft {
+    text: String,
+    selection: InputSelection,
+    attachments: Vec<Attachment>,
+}
+
 fn seeded_attachments() -> Vec<Attachment> {
     [
         ("design-preview-glass.png", "PNG image · 1.8 MB", "image"),
@@ -1182,6 +1190,7 @@ pub struct GlassPreview {
     attachments: Vec<Attachment>,
     draft: String,
     draft_selection: InputSelection,
+    parked_drafts: HashMap<u64, ComposerDraft>,
     typo_notice: Option<usize>,
     typo_notice_epoch: usize,
     sent: Vec<(u64, String)>,
@@ -1251,6 +1260,7 @@ impl GlassPreview {
             attachments: seeded_attachments(),
             draft: String::new(),
             draft_selection: InputSelection::default(),
+            parked_drafts: HashMap::new(),
             typo_notice: None,
             typo_notice_epoch: 0,
             sent: Vec::new(),
@@ -1515,6 +1525,8 @@ impl GlassPreview {
         self.sent.push((self.active_chat, text));
         self.draft.clear();
         self.draft_selection = InputSelection::default();
+        // Files travel with the message they were attached to.
+        self.attachments.clear();
         self.thread_settled = false;
         if fixed > 0 {
             self.typo_notice = Some(fixed);
@@ -1586,6 +1598,32 @@ impl GlassPreview {
             .unwrap_or(&self.chats[0])
     }
 
+    fn park_draft(&mut self) {
+        let text = std::mem::take(&mut self.draft);
+        let selection = std::mem::take(&mut self.draft_selection);
+        let attachments = std::mem::take(&mut self.attachments);
+        if text.is_empty() && attachments.is_empty() {
+            self.parked_drafts.remove(&self.active_chat);
+        } else {
+            self.parked_drafts.insert(
+                self.active_chat,
+                ComposerDraft {
+                    text,
+                    selection,
+                    attachments,
+                },
+            );
+        }
+    }
+
+    fn restore_draft(&mut self, id: u64) {
+        let parked = self.parked_drafts.remove(&id).unwrap_or_default();
+        self.draft = parked.text;
+        self.draft_selection = parked.selection;
+        self.attachments = parked.attachments;
+        self.typo_notice = None;
+    }
+
     fn select_chat(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
         if !self.chats.iter().any(|chat| chat.id == id) {
             return;
@@ -1596,7 +1634,11 @@ impl GlassPreview {
             cx.notify();
             return;
         }
+        // Every chat keeps its own unfinished prompt; switching must not carry
+        // a draft, selection, or attachment into an unrelated conversation.
+        self.park_draft();
         self.active_chat = id;
+        self.restore_draft(id);
         self.chat_epoch += 1;
         self.thread_settled = false;
         cx.notify();
@@ -1629,7 +1671,9 @@ impl GlassPreview {
             }
         };
         if self.active_chat != id {
+            self.park_draft();
             self.active_chat = id;
+            self.restore_draft(id);
             self.chat_epoch += 1;
         }
         self.model_menu = false;
@@ -2118,7 +2162,7 @@ fn search(open: bool, cx: &mut Context<GlassPreview>) -> Stateful<Div> {
         .when(!open, |this| {
             this.hover(|style| style.bg(glass_fill_strong()).border_color(glass_border()))
                 .active(|style| style.bg(tint(0x12)))
-                .tooltip(hint("Search files, panels and commands · Ctrl K"))
+                .tooltip(hint("Search files, panels, commands · Ctrl K"))
         })
         .on_click(cx.listener(|this, _event, window, cx| {
             if this.search_open {
@@ -2323,7 +2367,7 @@ fn search_overlay(state: SearchState, cx: &mut Context<GlassPreview>) -> impl In
                                     &query,
                                     &selection,
                                     focused,
-                                    "Search files, panels and commands…",
+                                    "Search files, panels, commands…",
                                     13.0,
                                     true,
                                     &[],
@@ -3409,7 +3453,10 @@ fn check_line(label: &'static str) -> Div {
         )
         .child(
             div()
+                .flex_1()
+                .min_w_0()
                 .text_size(px(12.5))
+                .line_height(px(18.0))
                 .text_color(ink_soft())
                 .child(label),
         )
@@ -3808,22 +3855,87 @@ fn attachment_row(
     compact: bool,
     cx: &mut Context<GlassPreview>,
 ) -> Div {
-    div().w_full().flex().flex_wrap().gap(px(8.0)).children(
-        attachments
-            .iter()
-            .enumerate()
-            .map(|(index, attachment)| attachment_card(attachment, index, compact, cx)),
-    )
+    let row = div()
+        .w_full()
+        .flex()
+        .flex_wrap()
+        .gap(px(if compact { 6.0 } else { 8.0 }));
+    if compact {
+        // A narrow composer cannot afford three full-width cards; pills keep
+        // the thread's viewport taller while the filename stays readable.
+        row.children(
+            attachments
+                .iter()
+                .enumerate()
+                .map(|(index, attachment)| attachment_chip(attachment, index, cx)),
+        )
+    } else {
+        row.children(
+            attachments
+                .iter()
+                .enumerate()
+                .map(|(index, attachment)| attachment_card(attachment, index, cx)),
+        )
+    }
+}
+
+fn attachment_chip(
+    attachment: &Attachment,
+    index: usize,
+    cx: &mut Context<GlassPreview>,
+) -> Stateful<Div> {
+    div()
+        .id(ElementId::named_usize("glass-attach", index))
+        .w(px(140.0))
+        .h(px(30.0))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .gap(px(6.0))
+        .pl(px(8.0))
+        .pr(px(2.0))
+        .rounded_full()
+        .bg(card_fill())
+        .border_1()
+        .border_color(panel_border_soft())
+        .child(icon(attachment.icon, 12.0, ink_muted()))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .text_size(px(11.0))
+                .text_color(ink_soft())
+                .child(attachment.name.clone()),
+        )
+        .child(
+            div()
+                .id(ElementId::named_usize("glass-attach-remove", index))
+                .size(px(20.0))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(5.0))
+                .cursor_pointer()
+                .hover(|style| style.bg(hover_wash()))
+                .active(|style| style.bg(press_wash()))
+                .tooltip(hint("Remove attachment"))
+                .on_click(cx.listener(move |this, _event, _window, cx| {
+                    this.remove_attachment(index, cx);
+                }))
+                .child(icon("x", 11.0, ink_muted())),
+        )
 }
 
 fn attachment_card(
     attachment: &Attachment,
     index: usize,
-    compact: bool,
     cx: &mut Context<GlassPreview>,
 ) -> Stateful<Div> {
-    let card = div()
+    div()
         .id(ElementId::named_usize("glass-attach", index))
+        .w(px(222.0))
         .h(px(46.0))
         .flex_shrink_0()
         .flex()
@@ -3835,68 +3947,61 @@ fn attachment_card(
         .bg(card_fill())
         .border_1()
         .border_color(panel_border_soft())
-        .shadow(soft_shadow());
-    // A narrow composer gives each card the full row; a wide one tucks three
-    // Explorer-style cards side by side.
-    let card = if compact {
-        card.w_full()
-    } else {
-        card.w(px(222.0))
-    };
-    card.child(
-        div()
-            .size(px(32.0))
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(8.0))
-            .bg(well())
-            .border_1()
-            .border_color(panel_border_soft())
-            .child(icon(attachment.icon, 14.0, ink_muted())),
-    )
-    .child(
-        div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .gap(px(1.0))
-            .child(
-                div()
-                    .truncate()
-                    .text_size(px(11.5))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(ink())
-                    .child(attachment.name.clone()),
-            )
-            .child(
-                div()
-                    .truncate()
-                    .text_size(px(10.0))
-                    .text_color(ink_muted())
-                    .child(attachment.meta.clone()),
-            ),
-    )
-    .child(
-        div()
-            .id(ElementId::named_usize("glass-attach-remove", index))
-            .size(px(24.0))
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(6.0))
-            .cursor_pointer()
-            .hover(|style| style.bg(hover_wash()))
-            .active(|style| style.bg(press_wash()))
-            .tooltip(hint("Remove attachment"))
-            .on_click(cx.listener(move |this, _event, _window, cx| {
-                this.remove_attachment(index, cx);
-            }))
-            .child(icon("x", 12.0, ink_muted())),
-    )
+        .shadow(soft_shadow())
+        .child(
+            div()
+                .size(px(32.0))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(8.0))
+                .bg(well())
+                .border_1()
+                .border_color(panel_border_soft())
+                .child(icon(attachment.icon, 14.0, ink_muted())),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(px(1.0))
+                .child(
+                    div()
+                        .truncate()
+                        .text_size(px(11.5))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(ink())
+                        .child(attachment.name.clone()),
+                )
+                .child(
+                    div()
+                        .truncate()
+                        .text_size(px(10.0))
+                        .text_color(ink_muted())
+                        .child(attachment.meta.clone()),
+                ),
+        )
+        .child(
+            div()
+                .id(ElementId::named_usize("glass-attach-remove", index))
+                .size(px(24.0))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(6.0))
+                .cursor_pointer()
+                .hover(|style| style.bg(hover_wash()))
+                .active(|style| style.bg(press_wash()))
+                .tooltip(hint("Remove attachment"))
+                .on_click(cx.listener(move |this, _event, _window, cx| {
+                    this.remove_attachment(index, cx);
+                }))
+                .child(icon("x", 12.0, ink_muted())),
+        )
 }
 
 fn composer_icon(
@@ -4263,7 +4368,7 @@ fn checks_card(show_warnings: bool, cx: &mut Context<GlassPreview>) -> Div {
                 .child(soft_chip("just ran")),
         )
         .child(check_stat_row("Builds clean", "2.1s"))
-        .child(check_stat_row("204 tests pass", "0.8s"))
+        .child(check_stat_row("All tests pass", "0.8s"))
         .child(check_warning_row(show_warnings, cx))
         .when(show_warnings, |this| this.child(warning_detail()))
 }
