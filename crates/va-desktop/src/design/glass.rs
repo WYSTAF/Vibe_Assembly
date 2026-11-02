@@ -3108,7 +3108,13 @@ fn conversation(
                         )),
                 ),
         )
-        .child(suggestions(pinned, show_tokens, show_warnings, cx))
+        .child(suggestions(
+            pinned,
+            show_tokens,
+            show_warnings,
+            chat.files > 0,
+            cx,
+        ))
         .child(composer(
             compact,
             draft,
@@ -3120,6 +3126,7 @@ fn conversation(
             &attachments,
             web_search,
             show_tokens,
+            chat.files,
             typo_notice,
             cx,
         ))
@@ -3998,6 +4005,7 @@ fn suggestions(
     pinned: bool,
     show_tokens: bool,
     show_warnings: bool,
+    has_checks: bool,
     cx: &mut Context<GlassPreview>,
 ) -> Div {
     div()
@@ -4036,17 +4044,21 @@ fn suggestions(
                     |this, _cx| this.toggle_tokens(),
                     cx,
                 ))
-                .child(suggestion(
-                    "glass-suggest-warnings",
-                    if show_warnings {
-                        "Hide warnings"
-                    } else {
-                        "Explain warnings"
-                    },
-                    show_warnings,
-                    |this, cx| this.explain_warnings(cx),
-                    cx,
-                )),
+                // A chat that has not run anything has no warnings to explain;
+                // offering the chip would promise content that does not exist.
+                .when(has_checks, |this| {
+                    this.child(suggestion(
+                        "glass-suggest-warnings",
+                        if show_warnings {
+                            "Hide warnings"
+                        } else {
+                            "Explain warnings"
+                        },
+                        show_warnings,
+                        |this, cx| this.explain_warnings(cx),
+                        cx,
+                    ))
+                }),
         )
 }
 
@@ -4092,10 +4104,32 @@ fn composer(
     attachments: &[Attachment],
     web_search: bool,
     show_tokens: bool,
+    files: usize,
     typo_notice: Option<usize>,
     cx: &mut Context<GlassPreview>,
 ) -> Div {
     let ready = !draft.trim().is_empty();
+    // Keep the token figure and the context ring in agreement: both derive
+    // from the active chat, so an empty chat reads zero.
+    let token_label = if files == 0 {
+        if compact {
+            "0".to_string()
+        } else {
+            "0 / 120k".to_string()
+        }
+    } else {
+        let tokens = (context_usage(files) * 120.0).round() as u32;
+        if compact {
+            format!("{tokens}k")
+        } else {
+            format!("{tokens}k / 120k")
+        }
+    };
+    let token_tip = if files == 0 {
+        "No context used yet"
+    } else {
+        "Context window used by this chat"
+    };
     let typos: Vec<Range<usize>> = spell::suggestions(&draft)
         .into_iter()
         .map(|fix| fix.range)
@@ -4202,8 +4236,8 @@ fn composer(
                                     .font_family(theme::code_font())
                                     .text_size(px(10.5))
                                     .text_color(ink_muted())
-                                    .tooltip(hint("75k of 120k context tokens used"))
-                                    .child(if compact { "75k" } else { "75k / 120k" }),
+                                    .tooltip(hint(token_tip))
+                                    .child(token_label),
                             )
                         })
                         .child(
