@@ -5392,13 +5392,20 @@ fn diff_row(sign: &'static str, wash: Option<Rgba>, spans: &[(&'static str, Rgba
                 .text_color(sign_color)
                 .child(sign),
         )
-        .children(spans.iter().map(|(text, color)| {
+        .child(
             div()
-                .font_family(theme::code_font())
-                .text_size(px(11.5))
-                .text_color(*color)
-                .child(*text)
-        }))
+                .flex()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .children(spans.iter().map(|(text, color)| {
+                    div()
+                        .font_family(theme::code_font())
+                        .text_size(px(11.5))
+                        .text_color(*color)
+                        .child(*text)
+                })),
+        )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6375,7 +6382,9 @@ fn editor_card(file: EditorFile, cx: &mut Context<GlassPreview>) -> Div {
 }
 
 fn editor_body(file: EditorFile) -> Div {
-    let body = div().p(px(10.0)).flex().flex_col();
+    // The nav capsule floats over the drawer, so code lines have to stop at
+    // the same gutter the other cards use instead of sliding under it.
+    let body = div().p(px(10.0)).pr(px(DRAWER_CARD_RIGHT)).flex().flex_col();
     match file {
         EditorFile::Theme => body
             .child(code_line("1", &[cm("//! Warm-black theme tokens.")]))
@@ -6695,6 +6704,7 @@ fn code_line(no: &'static str, spans: &[(&'static str, Rgba)]) -> Div {
             div()
                 .flex()
                 .min_w_0()
+                .overflow_hidden()
                 .children(spans.iter().map(|(text, color)| {
                     div()
                         .font_family(theme::code_font())
