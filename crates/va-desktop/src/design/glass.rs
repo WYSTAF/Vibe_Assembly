@@ -7,7 +7,6 @@
 //! is approximated with translucent fills, specular edges, and long shadows.
 
 use std::collections::{HashMap, HashSet};
-use std::f32::consts::{FRAC_PI_2, TAU};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -20,7 +19,7 @@ use gpui::{
     pulsating_between, px, rgb, rgba, Animation, AnimationExt, AnyElement, AnyView, App,
     Background, BoxShadow, ClipboardItem, Context, Div, ElementId, ElementInputHandler, Entity,
     EntityInputHandler, FocusHandle, FontWeight, HighlightStyle, IntoElement, KeyDownEvent,
-    Keystroke, MouseMoveEvent, PathBuilder, PathPromptOptions, Point, Rgba, ScrollHandle,
+    Keystroke, MouseMoveEvent, PathBuilder, PathPromptOptions, Pixels, Point, Rgba, ScrollHandle,
     SharedString, Stateful, StyleRefinement, StyledText, UTF16Selection, UnderlineStyle, Window,
     WindowControlArea,
 };
@@ -243,10 +242,6 @@ fn glass_border() -> Rgba {
         rgba(0xFFFFFF3D)
     }
 }
-fn nav_border() -> Rgba {
-    rgba(0xFFFFFF24)
-}
-
 // The drawer floats over chat content, and GPUI 0.2.2 cannot blur what is
 // behind it - so it stays effectively opaque, glass only at its edges.
 fn drawer_fill() -> Background {
@@ -398,8 +393,30 @@ const R_SM: f32 = 8.0;
 const R_LG: f32 = 18.0;
 const TITLEBAR: f32 = 56.0;
 const STATUS: f32 = 30.0;
-const NAV_ITEM: f32 = 40.0;
+const NAV_ITEM: f32 = 36.0;
 const NAV_W: f32 = 56.0;
+// The edge nav is drawn as a blade: a straight left edge, a top scooped away
+// by a wide S-curve, a rounded bottom-left corner and a taper that ends in a
+// point at the lower right. The context arc curls off beside that point.
+const BLADE_W: f32 = 48.3;
+const BLADE_H: f32 = 292.5;
+// The scoop is one cubic whose tangents are vertical at both ends, so it
+// leaves the right edge and rejoins the straight left edge without a corner.
+const BLADE_SCOOP_C1_Y: f32 = 30.2;
+const BLADE_SCOOP_C2_Y: f32 = 14.7;
+const BLADE_LEFT_TOP: f32 = 44.3;
+const BLADE_LEFT_BOTTOM: f32 = 246.0;
+const BLADE_CORNER_R: f32 = 24.0;
+const BLADE_TAPER_R: f32 = 37.8;
+const BLADE_TIP_X: f32 = 48.3;
+const BLADE_TIP_Y: f32 = 292.5;
+const BLADE_ICON_TOP: f32 = 40.0;
+const CONTEXT_ARC_R: f32 = 15.8;
+const CONTEXT_ARC_CX: f32 = 24.8;
+const CONTEXT_ARC_CY: f32 = 291.6;
+const CONTEXT_ARC_START: f32 = -108.4;
+const CONTEXT_ARC_SPAN: f32 = 126.8;
+const NAV_STACK_H: f32 = 308.0;
 // The drawer floats 12px off the window edge and its cards run the full
 // width; the nav rides on top of them with its own margin from the edge.
 const EDGE_INSET: f32 = 12.0;
@@ -410,8 +427,6 @@ const DRAWER_W: f32 = 408.0;
 // (or click-blocked) by the 52px nav capsule.
 const DRAWER_CARD_RIGHT: f32 = 62.0;
 const CHAT_ROW: f32 = 44.0;
-const CONTEXT_SIZE: f32 = 52.0;
-const CONTEXT_RING: f32 = 42.0;
 
 fn soft_shadow() -> Vec<BoxShadow> {
     vec![BoxShadow {
@@ -8256,36 +8271,92 @@ fn nav_column(state: EdgeState, focus: &FocusHandle, cx: &mut Context<GlassPrevi
         .flex_col()
         .items_center()
         .justify_center()
-        .gap(px(14.0))
-        .child(nav_capsule(section, focus, cx))
-        .child(context_indicator(state, cx))
+        .child(
+            // The blade silhouette is painted first so the icons and the
+            // context arc land on top of it.
+            div()
+                .relative()
+                .w(px(BLADE_W))
+                .h(px(NAV_STACK_H))
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .w(px(BLADE_W))
+                        .h(px(BLADE_H))
+                        .child(nav_blade_paint()),
+                )
+                .child(nav_capsule(section, focus, cx))
+                .child(context_arc(state, cx)),
+        )
 }
 
-fn context_indicator(state: EdgeState, cx: &mut Context<GlassPreview>) -> Stateful<Div> {
+/// Builds the blade outline in the local box of the canvas it is painted on.
+fn blade_path(builder: &mut PathBuilder, origin: Point<Pixels>) {
+    let p = |x: f32, y: f32| point(origin.x + px(x), origin.y + px(y));
+    builder.move_to(p(BLADE_W, 0.0));
+    // The scooped top: one cubic that rises off the right edge, flattens
+    // through the middle and lands back on the straight left edge.
+    builder.cubic_bezier_to(
+        p(0.0, BLADE_LEFT_TOP),
+        p(BLADE_W, BLADE_SCOOP_C1_Y),
+        p(0.0, BLADE_SCOOP_C2_Y),
+    );
+    builder.line_to(p(0.0, BLADE_LEFT_BOTTOM));
+    // Rounded bottom-left corner.
+    builder.arc_to(
+        point(px(BLADE_CORNER_R), px(BLADE_CORNER_R)),
+        px(0.0),
+        false,
+        false,
+        p(BLADE_CORNER_R, BLADE_LEFT_BOTTOM + BLADE_CORNER_R),
+    );
+    // Taper down to the point at the lower right.
+    builder.arc_to(
+        point(px(BLADE_TAPER_R), px(BLADE_TAPER_R)),
+        px(0.0),
+        false,
+        true,
+        p(BLADE_TIP_X, BLADE_TIP_Y),
+    );
+    builder.close();
+}
+
+fn nav_blade_paint() -> impl IntoElement {
+    canvas(
+        |_bounds, _window, _cx| (),
+        |bounds, _prepaint, window, _cx| {
+            let origin = bounds.origin;
+            let mut fill = PathBuilder::fill();
+            blade_path(&mut fill, origin);
+            if let Ok(path) = fill.build() {
+                window.paint_path(path, nav_fill());
+            }
+        },
+    )
+}
+
+fn context_arc(state: EdgeState, cx: &mut Context<GlassPreview>) -> Stateful<Div> {
     let used = state.context_used;
     let hovered = state.context_hovered;
+    let percent = (used * 100.0).round() as i32;
+    let tokens = (used * 120.0).round() as u32;
     let tooltip = if used == 0.0 {
-        "No context used yet"
+        "Context window - nothing used yet - click to compact".to_string()
     } else if state.compacted {
-        "Context compacted - click to compact again"
+        format!("Context compacted - {percent}% ({tokens}k/120k) - click to compact again")
     } else {
-        "Context window - click to compact"
+        format!("Context window - {percent}% ({tokens}k/120k) - click to compact")
     };
     div()
         .id("glass-context")
-        .block_mouse_except_scroll()
-        .size(px(CONTEXT_SIZE))
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded_full()
-        .bg(nav_fill())
-        .border_1()
-        .border_color(nav_border())
-        .shadow(glass_shadow())
+        .absolute()
+        .left(px(CONTEXT_ARC_CX - CONTEXT_ARC_R))
+        .top(px(CONTEXT_ARC_CY - CONTEXT_ARC_R))
+        .size(px(CONTEXT_ARC_R * 2.0))
         .cursor_pointer()
-        .when(!hovered, |this| this.tooltip(hint(tooltip)))
+        .tooltip(hint(tooltip))
         .on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
             if this.context_hovered != *hovered {
                 this.context_hovered = *hovered;
@@ -8295,7 +8366,69 @@ fn context_indicator(state: EdgeState, cx: &mut Context<GlassPreview>) -> Statef
         .on_click(cx.listener(|this, _event, _window, cx| {
             this.compact_context(cx);
         }))
-        .child(context_ring(used, hovered))
+        .child(context_arc_paint(used, hovered))
+}
+
+fn context_arc_paint(used: f32, hovered: bool) -> impl IntoElement {
+    canvas(
+        |_bounds, _window, _cx| (),
+        move |bounds, _prepaint, window, _cx| {
+            let centre = point(
+                bounds.origin.x + px(CONTEXT_ARC_R),
+                bounds.origin.y + px(CONTEXT_ARC_R),
+            );
+            let radius = px(CONTEXT_ARC_R);
+            let arc_point = |angle: f32| {
+                point(
+                    centre.x + radius * angle.cos(),
+                    centre.y + radius * angle.sin(),
+                )
+            };
+            let start = CONTEXT_ARC_START.to_radians();
+            let stroke = px(2.6);
+            // The track is the part of the curl that is still free.
+            let mut track = PathBuilder::stroke(stroke);
+            track.move_to(arc_point(start));
+            track.arc_to(
+                point(radius, radius),
+                px(0.0),
+                false,
+                true,
+                arc_point((CONTEXT_ARC_START + CONTEXT_ARC_SPAN).to_radians()),
+            );
+            if let Ok(path) = track.build() {
+                window.paint_path(
+                    path,
+                    if hovered {
+                        if day() {
+                            rgba(0x3A3A3FFF)
+                        } else {
+                            rgba(0xFFFFFF73)
+                        }
+                    } else if day() {
+                        rgba(0x24262AFF)
+                    } else {
+                        rgba(0xFFFFFF59)
+                    },
+                );
+            }
+            if used > 0.0 {
+                let mut filled = PathBuilder::stroke(stroke);
+                filled.move_to(arc_point(start));
+                filled.arc_to(
+                    point(radius, radius),
+                    px(0.0),
+                    false,
+                    true,
+                    arc_point((CONTEXT_ARC_START + CONTEXT_ARC_SPAN * used).to_radians()),
+                );
+                if let Ok(path) = filled.build() {
+                    window.paint_path(path, brand());
+                }
+            }
+        },
+    )
+    .size_full()
 }
 
 fn nav_capsule(
@@ -8305,25 +8438,21 @@ fn nav_capsule(
 ) -> Stateful<Div> {
     div()
         .id("glass-nav")
-        // The capsule floats over the drawer; clicks on an icon must not also
+        // The blade floats over the drawer; clicks on an icon must not also
         // hit rows underneath, while the wheel still scrolls the panel. The
         // full-height column stays transparent so header controls showing
         // through its margins remain clickable.
         .block_mouse_except_scroll()
-        .w(px(52.0))
+        .absolute()
+        .top_0()
+        .left_0()
+        .w(px(BLADE_W))
+        .h(px(BLADE_H))
         .flex_shrink_0()
         .flex()
         .flex_col()
         .items_center()
-        .gap(px(2.0))
-        .p(px(6.0))
-        .relative()
-        .overflow_hidden()
-        .rounded_full()
-        .bg(nav_fill())
-        .border_1()
-        .border_color(nav_border())
-        .shadow(glass_shadow())
+        .pt(px(BLADE_ICON_TOP))
         .cursor_pointer()
         .track_focus(focus)
         .focus(focus_ring_neutral)
@@ -8433,106 +8562,10 @@ fn nav_icon(section: DrawerSection, active: bool, cx: &mut Context<GlassPreview>
         }))
         .child(icon(
             section.icon(),
-            17.0,
+            18.0,
             if active { brand() } else { rgba(0xFFFFFFD9) },
         ))
         .into_any_element()
-}
-
-fn context_ring(used: f32, hovered: bool) -> impl IntoElement {
-    let percent = (used * 100.0).round() as i32;
-    let tokens = (used * 120.0).round() as u32;
-    div()
-        .size(px(CONTEXT_RING))
-        .flex_shrink_0()
-        .relative()
-        .child(
-            canvas(
-                |_bounds, _window, _cx| (),
-                move |bounds, _prepaint, window, _cx| {
-                    let stroke = px(3.0);
-                    let center = bounds.center();
-                    let radius = (bounds.size.width - stroke) / 2.0;
-                    let top = point(center.x, center.y - radius);
-                    let bottom = point(center.x, center.y + radius);
-                    let arc_point = |angle: f32| {
-                        point(
-                            center.x + radius * angle.cos(),
-                            center.y + radius * angle.sin(),
-                        )
-                    };
-                    if hovered {
-                        let mut track = PathBuilder::stroke(stroke);
-                        track.move_to(top);
-                        track.arc_to(point(radius, radius), px(0.0), false, true, bottom);
-                        track.arc_to(point(radius, radius), px(0.0), false, true, top);
-                        if let Ok(path) = track.build() {
-                            window.paint_path(path, rgba(0xFFFFFF2E));
-                        }
-                        let end_angle = -FRAC_PI_2 + TAU * used;
-                        let mut arc = PathBuilder::stroke(stroke);
-                        arc.move_to(top);
-                        arc.arc_to(
-                            point(radius, radius),
-                            px(0.0),
-                            used > 0.5,
-                            true,
-                            arc_point(end_angle),
-                        );
-                        if let Ok(path) = arc.build() {
-                            window.paint_path(path, brand());
-                        }
-                    } else {
-                        // A short yellow dash at the bottom until the pointer
-                        // arrives; hovering completes it into the full ring.
-                        let start = TAU * 0.16;
-                        let end = TAU * 0.34;
-                        let mut dash = PathBuilder::stroke(stroke);
-                        dash.move_to(arc_point(start));
-                        dash.arc_to(point(radius, radius), px(0.0), false, true, arc_point(end));
-                        if let Ok(path) = dash.build() {
-                            window.paint_path(
-                                path,
-                                if used > 0.0 {
-                                    brand()
-                                } else {
-                                    rgba(0xFFFFFF33)
-                                },
-                            );
-                        }
-                    }
-                },
-            )
-            .size_full(),
-        )
-        .when(hovered, |this| {
-            this.child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .size_full()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .text_size(px(10.0))
-                            .line_height(px(11.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(brand())
-                            .child(format!("{percent}%")),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(7.5))
-                            .line_height(px(9.0))
-                            .text_color(rgba(0xFFFFFFB3))
-                            .child(format!("{tokens}k/120k")),
-                    ),
-            )
-        })
 }
 
 fn active_halo() -> Div {
