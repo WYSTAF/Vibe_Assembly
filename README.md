@@ -6,7 +6,7 @@
 
 [![XERJ Corpus Hub](https://img.shields.io/badge/XERJ_Corpus_Hub-Featured_Reference-10B981?style=flat-square)](https://hub.xerj.org/contributors/WYSTAF)
 [![Rust](https://img.shields.io/badge/Rust-2024_Edition-F74C00?style=flat-square&logo=rust)](https://www.rust-lang.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-3B82F6?style=flat-square)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-3B82F6?style=flat-square)](LICENSE)
 
 
 **v2.4.0 - a production-hardened, pure-Rust multi-agent coding workspace with a native Liquid Glass workbench that persists night and warm day themes, searches everything from the titlebar, and fits its edge drawer to the window.**
