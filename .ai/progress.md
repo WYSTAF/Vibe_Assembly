@@ -48,10 +48,15 @@
   planner, execution modes and language lens, automatic context compaction,
   reasoning-trace eviction, ambiguity/stagnation guards, EXPERIENCE.md,
   `prompt`/`chat`, and interactive desktop/TUI selectors.
+- **ADR-020 (2026-11-08):** production wiring wave: `components` (c1..c8) and
+  `recursive` (Propose -> Probe -> Compose) Harness² modules, `harness inspect`
+  and `run --recursive-k`, MCP contrastive/experience tools, and live desktop
+  execution (real composer, atomic hash-verified Accept, Revert, Judge, 75%
+  compaction) with the Liquid Glass sample wiring removed.
 
 ## Verification
 
 - `cargo fmt --all -- --check` - clean
 - `cargo clippy --workspace --all-targets -- -D warnings` - clean
-- `cargo test --workspace` - 204 passed, 0 failed
+- `cargo test --workspace` - 243 passed, 0 failed
 - `cargo build --release` - both binaries produced

@@ -29,11 +29,10 @@ use va_core::router_client::{
     RouterStatus,
 };
 
+use crate::components::HarnessLayers;
 use crate::diagnostics::{DiagnosticPinpointer, PinnedDiagnostic};
 use crate::engine::{Action, EngineError, Planner};
-use crate::experience::{
-    ContrastiveRecovery, ExperienceStore, HarnessLayers, RecoveryCandidate, StepFailure,
-};
+use crate::experience::{ContrastiveRecovery, ExperienceStore, RecoveryCandidate, StepFailure};
 use crate::patcher::{hash_file, segment_blocks, PatchOp};
 use crate::repomap::RepoMap;
 use crate::session::{hash_str, ContextWindowConfig, NodeKind, Session, WorkingSetEntry};

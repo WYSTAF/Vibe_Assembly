@@ -138,6 +138,9 @@ enum Command {
         /// Explicit task text instead of .ai/active_task.md
         #[arg(long)]
         prompt: Option<String>,
+        /// Opt-in contrastive probing rounds (0 = zero-overhead fast path)
+        #[arg(long, default_value_t = 0)]
+        recursive_k: usize,
     },
     /// Run one task in a chosen execution mode and print the result
     Prompt {
@@ -226,6 +229,24 @@ enum Command {
     Blocks {
         /// File to inspect
         file: PathBuf,
+    },
+    /// Inspect the Harness² component surfaces and durable experience
+    Harness {
+        #[command(subcommand)]
+        action: HarnessCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum HarnessCommand {
+    /// Show the c1..c8 surfaces, active overlays, and EXPERIENCE.md lessons
+    Inspect {
+        /// Task id whose overlays to load (default: base only)
+        #[arg(long)]
+        task: Option<String>,
+        /// Emit machine-readable JSON
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -362,6 +383,10 @@ fn main() -> ExitCode {
             let root = Workspace::discover(&start).unwrap_or(start);
             return run_profile(&root, profile.as_deref(), *json);
         }
+        Some(Command::Harness { action }) => {
+            let root = Workspace::discover(&start).unwrap_or(start);
+            return run_harness(&root, action);
+        }
         Some(Command::Blocks { file }) => {
             return run_blocks(file);
         }
@@ -396,6 +421,7 @@ fn main() -> ExitCode {
             judge_model,
             offline_mock,
             prompt,
+            recursive_k,
         }) => {
             let root = match Workspace::discover(&start) {
                 Some(r) => r,
@@ -420,6 +446,9 @@ fn main() -> ExitCode {
             };
             if *auto_combo {
                 seed_model_combo(&root);
+            }
+            if *recursive_k > 0 {
+                run_recursive(&root, *recursive_k, language);
             }
             return run_execute(
                 &root,
@@ -2080,6 +2109,94 @@ fn run_profile(root: &Path, profile: Option<&str>, json: bool) -> ExitCode {
         println!();
         ExitCode::SUCCESS
     }
+}
+
+fn run_harness(root: &Path, command: &HarnessCommand) -> ExitCode {
+    match command {
+        HarnessCommand::Inspect { task, json } => {
+            let experience = va_harness::experience::ExperienceStore::load(root);
+            let layers = match task {
+                Some(t) => va_harness::components::HarnessLayers::load_with_overlays(root, t)
+                    .unwrap_or_default(),
+                None => va_harness::components::HarnessLayers::base(),
+            };
+            if *json {
+                let surfaces: Vec<_> = layers
+                    .surfaces()
+                    .iter()
+                    .map(|s| serde_json::json!({ "id": s.id, "content": s.content }))
+                    .collect();
+                let lessons: Vec<_> = experience
+                    .entries()
+                    .iter()
+                    .map(|e| {
+                        serde_json::json!({
+                            "date": e.date, "language": e.language,
+                            "domain": e.domain, "lesson": e.lesson
+                        })
+                    })
+                    .collect();
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "surfaces": surfaces,
+                        "lessons": lessons,
+                        "pristine": layers.is_pristine()
+                    }))
+                    .unwrap_or_default()
+                );
+            } else {
+                let p = Palette::detect();
+                println!("\n {}🧩 HARNESS² COMPONENTS{}", p.bold, p.reset);
+                for s in layers.surfaces() {
+                    println!(
+                        "  {}[{}]{} {}",
+                        p.yellow,
+                        s.id,
+                        p.reset,
+                        s.content.lines().next().unwrap_or("")
+                    );
+                }
+                println!(
+                    "  {}Pristine base:{} {}",
+                    p.dim,
+                    p.reset,
+                    layers.is_pristine()
+                );
+                println!(
+                    "  {}Durable lessons:{} {}",
+                    p.dim,
+                    p.reset,
+                    experience.entries().len()
+                );
+                println!();
+            }
+            ExitCode::SUCCESS
+        }
+    }
+}
+
+fn run_recursive(root: &Path, k: usize, language: LanguageLens) {
+    let session_path = root.join(".ai").join("session.jsonl");
+    let mut session = if session_path.exists() {
+        Session::from_jsonl(&std::fs::read_to_string(&session_path).unwrap_or_default())
+            .unwrap_or_default()
+    } else {
+        Session::new()
+    };
+    let mut verifier = va_harness::recursive::SandboxJudgeVerifier::new(root);
+    let recursive = va_harness::recursive::RecursiveLoop::new(
+        root,
+        va_harness::recursive::RecursiveConfig { k },
+    );
+    let command = language.verification_command(root);
+    let outcome = recursive.execute_step(&mut session, &mut verifier, &command, &[], None);
+    let _ = std::fs::write(&session_path, session.to_jsonl());
+    let p = Palette::detect();
+    println!(
+        "{}🔁 recursive k={k} fast_path={} probes={} winner={:?}{}",
+        p.yellow, outcome.fast_path, outcome.probes, outcome.winner, p.reset
+    );
 }
 
 fn run_session(root: &Path, command: &SessionCommand) -> ExitCode {

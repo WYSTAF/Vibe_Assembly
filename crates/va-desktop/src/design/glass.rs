@@ -23,11 +23,13 @@ use gpui::{
     SharedString, Stateful, StyleRefinement, StyledText, UTF16Selection, UnderlineStyle, Window,
     WindowControlArea,
 };
-use va_core::modes::ExecutionMode;
+use va_core::modes::{ExecutionMode, LanguageLens};
+use va_core::state::Workspace;
 
 use crate::branding;
 use crate::design::icon::icon;
 use crate::spell;
+use crate::state::WorkbenchState;
 use crate::theme;
 use crate::ui_kit::InputSelection;
 
@@ -301,13 +303,6 @@ fn raised() -> Rgba {
         rgb(0x1B1B1D)
     }
 }
-fn work_surface() -> Rgba {
-    if day() {
-        rgb(0xFFFDF8)
-    } else {
-        rgb(0x18181A)
-    }
-}
 fn bubble() -> Rgba {
     if day() {
         rgb(0xFFFFFF)
@@ -478,20 +473,6 @@ fn glass_shadow() -> Vec<BoxShadow> {
     ]
 }
 
-fn lifted_shadow() -> Vec<BoxShadow> {
-    vec![BoxShadow {
-        color: if day() {
-            rgba(0x3A33261F)
-        } else {
-            rgba(0x000000A6)
-        }
-        .into(),
-        offset: point(px(0.0), px(14.0)),
-        blur_radius: px(34.0),
-        spread_radius: px(0.0),
-    }]
-}
-
 fn brand_glow() -> Vec<BoxShadow> {
     vec![BoxShadow {
         color: rgba(0xFDCC0259).into(),
@@ -586,7 +567,12 @@ impl Render for HintView {
 
 fn hint(label: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
     let label = label.into();
-    move |_window, cx| cx.new(|_| HintView { label: label.clone() }).into()
+    move |_window, cx| {
+        cx.new(|_| HintView {
+            label: label.clone(),
+        })
+        .into()
+    }
 }
 
 // ------------------------------------------------------------- preferences
@@ -731,10 +717,7 @@ fn snapshot_repo() -> RepoSnapshot {
                 .map(|hash| format!("detached at {hash}"))
         });
     let origin = git_output(&root, &["remote", "get-url", "origin"]);
-    let (slug, web_url) = origin
-        .as_deref()
-        .map(github_parts)
-        .unwrap_or((None, None));
+    let (slug, web_url) = origin.as_deref().map(github_parts).unwrap_or((None, None));
     let upstream = git_output(
         &root,
         &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
@@ -853,20 +836,14 @@ fn push_repo_blocking(root: &Path, has_upstream: bool) -> Result<bool, String> {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 if output.status.success() {
-                    let quiet =
-                        stdout.contains("[up to date]") || stdout.trim().is_empty();
+                    let quiet = stdout.contains("[up to date]") || stdout.trim().is_empty();
                     return Ok(!quiet);
                 }
                 let message = stderr
                     .lines()
                     .map(str::trim)
                     .rfind(|line| !line.is_empty())
-                    .or_else(|| {
-                        stdout
-                            .lines()
-                            .map(str::trim)
-                            .rfind(|line| !line.is_empty())
-                    })
+                    .or_else(|| stdout.lines().map(str::trim).rfind(|line| !line.is_empty()))
                     .unwrap_or("git push failed");
                 return Err(message.to_string());
             }
@@ -1337,15 +1314,10 @@ enum ChatGroup {
     Yesterday,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum ChatKind {
-    /// The live demo conversation with the work card and its diff.
-    Workbench,
-    /// Earlier sessions: a prompt and the reply that closed it.
-    Archive {
-        prompt: &'static str,
-        reply: &'static str,
-    },
+    /// A recorded session: the user prompt and the reply that closed it.
+    Archive { prompt: String, reply: String },
     /// A fresh chat, empty until the first message is sent.
     New,
 }
@@ -1360,91 +1332,66 @@ struct ChatThread {
     kind: ChatKind,
 }
 
-fn seeded_chats() -> Vec<ChatThread> {
-    let seeds = [
-        (
-            "Restyle the workbench",
-            "now · 6 files",
-            6,
-            ChatGroup::Today,
-            ChatKind::Workbench,
-        ),
-        (
-            "Glass dock, round two",
-            "42m · 4 files",
-            4,
-            ChatGroup::Today,
-            ChatKind::Archive {
-                prompt: "Round two on the dock: it should float, not dock. Give the nav a margin \
-                         from the edge and keep the panel on top.",
-                reply: "Widened the right gutter to 12, floated the bar over the drawer, and \
-                        rebuilt the dock as a capsule. Opening a panel pushes the thread instead \
-                        of covering it.",
-            },
-        ),
-        (
-            "Midnight palette pass",
-            "2h · 9 files",
-            9,
-            ChatGroup::Today,
-            ChatKind::Archive {
-                prompt: "Take the whole surface to midnight. Keep the yellow only on chrome and \
-                         primary actions.",
-                reply: "Rebuilt the palette around near-black glass with one warm yellow light. \
-                        Body text sits at 7:1, muted labels at 4.8:1, and no syntax color moved.",
-            },
-        ),
-        (
-            "Paper & Ink rollout",
-            "9:40 PM · 12 files",
-            12,
-            ChatGroup::Yesterday,
-            ChatKind::Archive {
-                prompt: "Roll Paper & Ink out to the full app: rails, palette, docks and the \
-                         editor. It ships by default.",
-                reply: "Swapped the default tokens, restyled the shared kit, and rebuilt every \
-                        dock on the new radii. The release ships Paper & Ink as the default look.",
-            },
-        ),
-        (
-            "Studio direction",
-            "3:15 PM · 2 files",
-            2,
-            ChatGroup::Yesterday,
-            ChatKind::Archive {
-                prompt: "Show me a calmer studio direction - more space, fewer borders, one \
-                         accent.",
-                reply: "Pulled two borders out of every card, opened the gutters to 14, and kept \
-                        the single yellow accent. The hierarchy is quieter and the thread reads \
-                        first.",
-            },
-        ),
-        (
-            "Obsidian first look",
-            "11:02 AM · 3 files",
-            3,
-            ChatGroup::Yesterday,
-            ChatKind::Archive {
-                prompt: "First look at Obsidian: black glass, gold hairlines, and a dock that \
-                         hides.",
-                reply: "Obsidian holds up: black glass panels, gold hairlines and an auto-hiding \
-                        dock. The look is darker than Liquid Glass, with the same structure \
-                        underneath.",
-            },
-        ),
-    ];
-    seeds
-        .into_iter()
-        .enumerate()
-        .map(|(id, (title, meta, files, group, kind))| ChatThread {
-            id: id as u64,
-            title: title.to_string(),
-            meta: meta.to_string(),
-            files,
-            group,
-            kind,
-        })
-        .collect()
+/// Load the real workspace backend when the launch directory is a Vibe
+/// Assembly workspace; otherwise the surface stays honestly empty.
+fn load_live(mode: ExecutionMode) -> Option<WorkbenchState> {
+    let root = repo_root()?;
+    if !root.join(".ai").exists() {
+        return None;
+    }
+    Some(WorkbenchState::new(
+        Workspace::load(&root),
+        None,
+        mode,
+        LanguageLens::Auto,
+        "auto-combo".to_string(),
+    ))
+}
+
+/// Real chat threads derived from the session DAG's recorded user prompts and
+/// their replies. With no workspace (or no history) there is a single fresh
+/// chat, not a demo.
+fn initial_chats(live: &Option<WorkbenchState>) -> Vec<ChatThread> {
+    let mut chats = Vec::new();
+    if let Some(state) = live {
+        let nodes: Vec<_> = state.session.nodes().collect();
+        for (i, node) in nodes.iter().enumerate() {
+            if let va_harness::session::NodeKind::Prompt { role, text } = &node.kind {
+                if role != "user" {
+                    continue;
+                }
+                let reply = nodes[i + 1..]
+                    .iter()
+                    .find_map(|n| match &n.kind {
+                        va_harness::session::NodeKind::Thought { text } => Some(text.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                chats.push(ChatThread {
+                    id: node.id,
+                    title: draft_title(text),
+                    meta: format!("node {}", node.id),
+                    files: 0,
+                    group: ChatGroup::Today,
+                    kind: ChatKind::Archive {
+                        prompt: text.clone(),
+                        reply,
+                    },
+                });
+            }
+        }
+    }
+    if chats.is_empty() {
+        chats.push(ChatThread {
+            id: 0,
+            title: "New chat".to_string(),
+            meta: "now · just started".to_string(),
+            files: 0,
+            group: ChatGroup::Today,
+            kind: ChatKind::New,
+        });
+    }
+    chats
 }
 
 #[derive(Clone)]
@@ -1466,21 +1413,6 @@ struct ComposerDraft {
     text: String,
     selection: InputSelection,
     attachments: Vec<Attachment>,
-}
-
-fn seeded_attachments() -> Vec<Attachment> {
-    [
-        ("design-preview-glass.png", "PNG image · 1.8 MB", "image"),
-        ("theme.rs", "Rust source · 4.2 KB", "file-code"),
-        ("README.md", "Markdown · 6.1 KB", "file-text"),
-    ]
-    .into_iter()
-    .map(|(name, meta, icon)| Attachment {
-        name: name.to_string(),
-        meta: meta.to_string(),
-        icon,
-    })
-    .collect()
 }
 
 fn human_size(bytes: u64) -> String {
@@ -1551,7 +1483,13 @@ enum ThinkingLevel {
 }
 
 impl ThinkingLevel {
-    const ALL: [Self; 5] = [Self::Auto, Self::Fast, Self::Balanced, Self::Deep, Self::Max];
+    const ALL: [Self; 5] = [
+        Self::Auto,
+        Self::Fast,
+        Self::Balanced,
+        Self::Deep,
+        Self::Max,
+    ];
 
     fn label(self) -> &'static str {
         match self {
@@ -1578,7 +1516,11 @@ impl ThinkingLevel {
 fn fallback_models() -> Vec<ModelChoice> {
     [
         ("claude-opus-4.6", "Opus 4.6", "Deepest reasoning"),
-        ("claude-sonnet-4.6", "Sonnet 4.6", "Balanced everyday coding"),
+        (
+            "claude-sonnet-4.6",
+            "Sonnet 4.6",
+            "Balanced everyday coding",
+        ),
         ("claude-haiku-4.5", "Haiku 4.5", "Fastest answers"),
     ]
     .into_iter()
@@ -1677,6 +1619,7 @@ pub struct GlassPreview {
     model_menu: bool,
     session_map: bool,
     repo: RepoSnapshot,
+    live: Option<WorkbenchState>,
     web_search: bool,
     attachments: Vec<Attachment>,
     draft: String,
@@ -1685,6 +1628,7 @@ pub struct GlassPreview {
     typo_notice: Option<usize>,
     typo_notice_epoch: usize,
     sent: Vec<SentMessage>,
+    replies: HashMap<u64, Vec<String>>,
     nav_focus: FocusHandle,
     search_focus: FocusHandle,
     composer_focus: FocusHandle,
@@ -1732,7 +1676,8 @@ impl GlassPreview {
         DAY_MODE.store(day, Ordering::Relaxed);
         // Chats open on the latest turn, not the oldest.
         let thread_scroll = ScrollHandle::new();
-        let chats = seeded_chats();
+        let live = load_live(mode);
+        let chats = initial_chats(&live);
         let next_chat = chats.len() as u64;
         let mut preview = Self {
             mode,
@@ -1767,14 +1712,16 @@ impl GlassPreview {
             model_menu: false,
             session_map: false,
             repo: RepoSnapshot::default(),
+            live,
             web_search: false,
-            attachments: seeded_attachments(),
+            attachments: Vec::new(),
             draft: String::new(),
             draft_selection: InputSelection::default(),
             parked_drafts: HashMap::new(),
             typo_notice: None,
             typo_notice_epoch: 0,
             sent: Vec::new(),
+            replies: HashMap::new(),
             nav_focus: cx.focus_handle(),
             search_focus: cx.focus_handle(),
             composer_focus: cx.focus_handle(),
@@ -2109,6 +2056,21 @@ impl GlassPreview {
                 chat.meta = "now · just started".to_string();
             }
         }
+        // Real engine execution against the workspace (read-only in Chat).
+        if let Some(live) = self.live.as_mut() {
+            live.set_mode(self.mode);
+            live.prompt_input = text.clone();
+            let _ = live.submit_prompt();
+            if let Some(reply) = live.thread.iter().rev().find_map(|item| match item {
+                crate::state::ThreadItem::Assistant { text, .. } => Some(text.clone()),
+                _ => None,
+            }) {
+                self.replies
+                    .entry(self.active_chat)
+                    .or_default()
+                    .push(reply);
+            }
+        }
         // Files travel with the message they were attached to.
         let files = std::mem::take(&mut self.attachments);
         self.sent.push(SentMessage {
@@ -2185,8 +2147,8 @@ impl GlassPreview {
     }
 
     fn compact_context(&mut self, cx: &mut Context<Self>) {
-        if self.active_thread().files == 0 {
-            return;
+        if let Some(live) = self.live.as_mut() {
+            live.compact_context();
         }
         if self.compacted.insert(self.active_chat) {
             cx.notify();
@@ -2194,6 +2156,9 @@ impl GlassPreview {
     }
 
     fn context_used(&self, files: usize) -> f32 {
+        if let Some(live) = &self.live {
+            return (live.context_pct as f32 / 100.0).min(1.0);
+        }
         let base = context_usage(files);
         if self.compacted.contains(&self.active_chat) {
             (base * 0.55 * 100.0).round() / 100.0
@@ -2639,7 +2604,11 @@ impl Render for GlassPreview {
         let context_used = self.context_used(chat.files);
         let compacted = self.compacted.contains(&self.active_chat);
         let changes = changes_for(chat.files);
-        let live_run = matches!(chat.kind, ChatKind::Workbench);
+        let live_run = self
+            .live
+            .as_ref()
+            .map(|live| !live.session.is_empty())
+            .unwrap_or(false);
         let draft = self.draft.clone();
         let draft_selection = self.draft_selection.clone();
         let typo_notice = self.typo_notice;
@@ -2649,6 +2618,7 @@ impl Render for GlassPreview {
             .filter(|message| message.chat == active_chat)
             .cloned()
             .collect();
+        let replies = self.replies.get(&active_chat).cloned().unwrap_or_default();
         let nav_focus = self.nav_focus.clone();
         let search_focus = self.search_focus.clone();
         let composer_focus = self.composer_focus.clone();
@@ -2742,12 +2712,12 @@ impl Render for GlassPreview {
                                         &thread_scroll,
                                         ConversationState {
                                             compact,
-                                            applied,
                                             show_tokens,
                                             context_used,
                                             chat: chat.clone(),
                                             chat_epoch,
                                             sent,
+                                            replies,
                                             draft,
                                             draft_selection,
                                             typo_notice,
@@ -3604,12 +3574,12 @@ fn project_chip() -> Stateful<Div> {
 
 struct ConversationState {
     compact: bool,
-    applied: bool,
     show_tokens: bool,
     context_used: f32,
     chat: ChatThread,
     chat_epoch: usize,
     sent: Vec<SentMessage>,
+    replies: Vec<String>,
     draft: String,
     draft_selection: InputSelection,
     typo_notice: Option<usize>,
@@ -3635,12 +3605,12 @@ fn conversation(
 ) -> Div {
     let ConversationState {
         compact,
-        applied,
         show_tokens,
         context_used,
         chat,
         chat_epoch,
         sent,
+        replies,
         draft,
         draft_selection,
         typo_notice,
@@ -3710,22 +3680,18 @@ fn conversation(
                                         .flex()
                                         .flex_col()
                                         .gap(px(14.0))
-                                        .when(matches!(chat.kind, ChatKind::Workbench), |this| {
-                                            this.child(intro_turn())
-                                                .child(user_turn())
-                                                .child(work_turn(compact, applied, cx))
-                                        })
                                         .when_some(
-                                            archive_parts(chat.kind),
+                                            archive_parts(&chat.kind),
                                             |this, (prompt, reply)| {
-                                                this.child(sent_turn(prompt, &[]))
-                                                    .child(reply_turn(reply))
+                                                this.child(sent_turn(&prompt, &[]))
+                                                    .child(reply_turn(&reply))
                                             },
                                         )
                                         .when(blank, |this| this.child(empty_thread()))
                                         .children(sent.iter().map(|message| {
                                             sent_turn(&message.text, &message.attachments)
                                         }))
+                                        .children(replies.iter().map(|reply| reply_turn(reply)))
                                         .with_animation(
                                             ("glass-chat", chat_epoch),
                                             Animation::new(motion(180))
@@ -3831,7 +3797,10 @@ fn model_menu_panel(
     let (host, port, _) = va_core::router_client::router_endpoint();
     let (status, status_color) = match catalog {
         ModelCatalog::Loading => ("Checking gateway".to_string(), ink_muted()),
-        ModelCatalog::Live => (format!("{} models · {host}:{port}", models.len()), success()),
+        ModelCatalog::Live => (
+            format!("{} models · {host}:{port}", models.len()),
+            success(),
+        ),
         ModelCatalog::Builtin => ("Gateway offline · built-in list".to_string(), ink_muted()),
     };
     div()
@@ -3927,7 +3896,11 @@ fn model_menu_panel(
                                         div()
                                             .text_size(px(9.5))
                                             .font_weight(FontWeight::MEDIUM)
-                                            .text_color(if active { brand_text() } else { ink_muted() })
+                                            .text_color(if active {
+                                                brand_text()
+                                            } else {
+                                                ink_muted()
+                                            })
                                             .child(level.label()),
                                     )
                             },
@@ -3944,7 +3917,13 @@ fn model_menu_panel(
                 .gap(px(6.0))
                 .border_t_1()
                 .border_color(panel_border_soft())
-                .child(div().size(px(5.0)).flex_shrink_0().rounded_full().bg(status_color))
+                .child(
+                    div()
+                        .size(px(5.0))
+                        .flex_shrink_0()
+                        .rounded_full()
+                        .bg(status_color),
+                )
                 .child(
                     div()
                         .flex_1()
@@ -4016,7 +3995,11 @@ fn model_option(
             this.set_model(index, cx);
         }))
         .child(icon(
-            if choice.combo { "git-branch" } else { "sparkles" },
+            if choice.combo {
+                "git-branch"
+            } else {
+                "sparkles"
+            },
             12.0,
             if choice.combo { brand() } else { ink_muted() },
         ))
@@ -4043,9 +4026,7 @@ fn model_option(
                         .child(choice.blurb.clone()),
                 ),
         )
-        .when(active, |this| {
-            this.child(icon("check", 13.0, brand_text()))
-        })
+        .when(active, |this| this.child(icon("check", 13.0, brand_text())))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4061,7 +4042,6 @@ fn conversation_header(
     cx: &mut Context<GlassPreview>,
 ) -> Div {
     let status = match chat.kind {
-        ChatKind::Workbench => "Vibe · Code mode · this session",
         ChatKind::Archive { .. } => "Vibe · Code mode · earlier",
         ChatKind::New if chat.title == "New chat" => "Vibe · Code mode · new session",
         ChatKind::New => "Vibe · Code mode · this session",
@@ -4230,7 +4210,7 @@ struct MapNode {
 
 fn session_map_nodes(chat: &ChatThread, _turns: usize) -> (Vec<MapNode>, Vec<(usize, usize)>) {
     let files = chat.files;
-    let live = matches!(chat.kind, ChatKind::Workbench);
+    let live = !matches!(chat.kind, ChatKind::New);
     let node = |x: f32,
                 y: f32,
                 icon: &'static str,
@@ -4846,32 +4826,10 @@ fn vibe_turn(content: impl IntoElement) -> Div {
         )
 }
 
-fn intro_turn() -> Div {
-    vibe_turn(
-        div()
-            .w_full()
-            .max_w(px(580.0))
-            .p(px(11.0))
-            .rounded(px(14.0))
-            .bg(card_fill())
-            .border_1()
-            .border_color(panel_border_soft())
-            .text_size(px(13.0))
-            .line_height(px(20.0))
-            .text_color(ink_soft())
-            .child(
-                "Took the sketch: chats on the left, the model pill up top, and a nav at the \
-                 right edge. Hover a nav icon to open its panel - Session, Changes, Editor, \
-                 History, Settings. Pin keeps it open; hover the context orb for usage, click \
-                 it to compact.",
-            ),
-    )
-}
-
-fn archive_parts(kind: ChatKind) -> Option<(&'static str, &'static str)> {
+fn archive_parts(kind: &ChatKind) -> Option<(String, String)> {
     match kind {
-        ChatKind::Archive { prompt, reply } => Some((prompt, reply)),
-        ChatKind::Workbench | ChatKind::New => None,
+        ChatKind::Archive { prompt, reply } => Some((prompt.clone(), reply.clone())),
+        ChatKind::New => None,
     }
 }
 
@@ -4935,28 +4893,6 @@ fn empty_thread() -> Div {
         )
 }
 
-fn user_turn() -> Div {
-    div().w_full().flex().justify_end().child(
-        div()
-            .w_full()
-            .max_w(px(500.0))
-            .min_w_0()
-            .p(px(12.0))
-            .rounded(px(14.0))
-            .bg(raised())
-            .border_1()
-            .border_color(panel_border())
-            .shadow(soft_shadow())
-            .text_size(px(13.0))
-            .line_height(px(20.0))
-            .text_color(ink())
-            .child(
-                "Move Session and Changes into the auto-hide bar, animate it, and \
-                 give the context window a quiet progress ring.",
-            ),
-    )
-}
-
 fn sent_turn(text: &str, attachments: &[Attachment]) -> Div {
     div().w_full().flex().justify_end().child(
         div()
@@ -5010,101 +4946,6 @@ fn sent_turn(text: &str, attachments: &[Attachment]) -> Div {
                     .child(text.to_string()),
             ),
     )
-}
-
-fn work_turn(compact: bool, applied: bool, cx: &mut Context<GlassPreview>) -> Div {
-    vibe_turn(work_card(compact, applied, cx))
-}
-
-fn work_card(compact: bool, applied: bool, cx: &mut Context<GlassPreview>) -> Div {
-    div()
-        .w_full()
-        .p(px(14.0))
-        .rounded(px(R_LG))
-        .bg(work_surface())
-        .border_1()
-        .border_color(panel_border())
-        .shadow(lifted_shadow())
-        .flex()
-        .flex_col()
-        .gap(px(6.0))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .child(
-                    div()
-                        .text_size(px(12.5))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(ink())
-                        .child("What I changed"),
-                )
-                .child(div().flex_1())
-                .child(
-                    div()
-                        .text_size(px(11.5))
-                        .text_color(ink_muted())
-                        .child("6 files · 86 lines"),
-                ),
-        )
-        .child(check_line(
-            "Nav opens Session, Changes, Editor, History and Settings on hover",
-        ))
-        .child(check_line("Pin in the panel header keeps it open"))
-        .child(check_line(
-            "Context orb shows usage and compacts on click",
-        ))
-        .child(check_line(
-            "Live chat still steers the run without stopping it",
-        ))
-        .child(diff_preview("chrome.rs", "crates/va-desktop/src", 42, 12))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(8.0))
-                .pt(px(2.0))
-                .child(apply_button(applied, cx))
-                .child(review_button(cx))
-                .when(applied, |this| this.child(undo_button(cx)))
-                .child(div().flex_1())
-                // Below ~600px the row has no room for the reassurance copy.
-                .when(!compact, |this| {
-                    this.child(
-                        div()
-                            .text_size(px(11.0))
-                            .text_color(ink_muted())
-                            .child("You can undo anytime"),
-                    )
-                }),
-        )
-}
-
-fn check_line(label: &'static str) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .gap(px(8.0))
-        .child(
-            div()
-                .size(px(16.0))
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_full()
-                .bg(success_tint())
-                .child(icon("check", 10.0, success())),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .text_size(px(12.5))
-                .line_height(px(18.0))
-                .text_color(ink_soft())
-                .child(label),
-        )
 }
 
 fn diff_preview(name: &'static str, dir: &'static str, added: u32, removed: u32) -> Div {
@@ -6399,7 +6240,11 @@ fn editor_card(file: EditorFile, cx: &mut Context<GlassPreview>) -> Div {
 fn editor_body(file: EditorFile) -> Div {
     // The nav capsule floats over the drawer, so code lines have to stop at
     // the same gutter the other cards use instead of sliding under it.
-    let body = div().p(px(10.0)).pr(px(DRAWER_CARD_RIGHT)).flex().flex_col();
+    let body = div()
+        .p(px(10.0))
+        .pr(px(DRAWER_CARD_RIGHT))
+        .flex()
+        .flex_col();
     match file {
         EditorFile::Theme => body
             .child(code_line("1", &[cm("//! Warm-black theme tokens.")]))
@@ -7282,12 +7127,11 @@ fn status_bar(
         ))
         .child(branch_chip(branch, repo_loading, cx))
         .child(separator())
-        .child(
-            div()
-                .size(px(5.0))
-                .rounded_full()
-                .bg(if files > 0 { success() } else { ink_muted() }),
-        )
+        .child(div().size(px(5.0)).rounded_full().bg(if files > 0 {
+            success()
+        } else {
+            ink_muted()
+        }))
         .child(
             div()
                 .text_color(if files > 0 { ink_soft() } else { ink_muted() })
@@ -7502,7 +7346,14 @@ fn edge_drawer(
                 .flex_col()
                 .gap(px(10.0))
                 .p(px(12.0))
-                .child(drawer_header(section, state.changes, repo, pinned, focus, cx))
+                .child(drawer_header(
+                    section,
+                    state.changes,
+                    repo,
+                    pinned,
+                    focus,
+                    cx,
+                ))
                 .child(
                     div()
                         .flex_1()
@@ -7625,7 +7476,16 @@ fn section_body(state: EdgeState, repo: &RepoSnapshot, cx: &mut Context<GlassPre
                     )
                     .flex_grow(),
                 )
-            }),
+            })
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(apply_button(state.applied, cx))
+                    .child(review_button(cx))
+                    .child(undo_button(cx)),
+            ),
         DrawerSection::Editor => div()
             .flex()
             .flex_col()
@@ -7745,16 +7605,18 @@ fn github_card(repo: &RepoSnapshot, cx: &mut Context<GlassPreview>) -> Div {
                 .gap(px(8.0))
                 .pt(px(4.0))
                 .child(repo_push_button(repo, cx))
-                .when(repo.github(), |this| {
-                    this.child(repo_open_button(repo))
-                }),
+                .when(repo.github(), |this| this.child(repo_open_button(repo))),
         )
         .when_some(repo.note.as_deref(), |this, note| {
             this.child(
                 div()
                     .pt(px(8.0))
                     .text_size(px(10.5))
-                    .text_color(if repo.note_error { warning() } else { success() })
+                    .text_color(if repo.note_error {
+                        warning()
+                    } else {
+                        success()
+                    })
                     .child(ellipsize(note, 120)),
             )
         })
@@ -8058,41 +7920,52 @@ fn settings_card(state: EdgeState, cx: &mut Context<GlassPreview>) -> Div {
         .flex_col()
         .gap(px(4.0))
         .child(
-            div()
-                .flex()
-                .items_center()
-                .pb(px(4.0))
-                .child(
-                    div()
-                        .text_size(px(12.5))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(ink())
-                        .child("Preferences"),
-                ),
+            div().flex().items_center().pb(px(4.0)).child(
+                div()
+                    .text_size(px(12.5))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(ink())
+                    .child("Preferences"),
+            ),
         )
         .child(setting_row(
             "sun",
             "Day theme",
             "Light surface for bright rooms",
-            setting_switch("settings-theme", state.day, |this, cx| {
-                this.toggle_theme(cx);
-            }, cx),
+            setting_switch(
+                "settings-theme",
+                state.day,
+                |this, cx| {
+                    this.toggle_theme(cx);
+                },
+                cx,
+            ),
         ))
         .child(setting_row(
             "gauge",
             "Token counts",
             "Show context usage beside the composer",
-            setting_switch("settings-tokens", state.show_tokens, |this, _cx| {
-                this.toggle_tokens();
-            }, cx),
+            setting_switch(
+                "settings-tokens",
+                state.show_tokens,
+                |this, _cx| {
+                    this.toggle_tokens();
+                },
+                cx,
+            ),
         ))
         .child(setting_row(
             "pin",
             "Keep panel open",
             "The panel stays put when the pointer leaves",
-            setting_switch("settings-pin", state.pinned, |this, cx| {
-                this.set_pinned(!this.nav_pinned, cx);
-            }, cx),
+            setting_switch(
+                "settings-pin",
+                state.pinned,
+                |this, cx| {
+                    this.set_pinned(!this.nav_pinned, cx);
+                },
+                cx,
+            ),
         ))
         .child(setting_row(
             "triangle-alert",
@@ -8545,7 +8418,9 @@ fn nav_icon(section: DrawerSection, active: bool, cx: &mut Context<GlassPreview>
                 .border_1()
                 .border_color(rgba(0xFDCC0266))
         })
-        .when(!active, |this| this.hover(|style| style.bg(rgba(0xFFFFFF14))))
+        .when(!active, |this| {
+            this.hover(|style| style.bg(rgba(0xFFFFFF14)))
+        })
         .active(|style| style.bg(rgba(0xFFFFFF1F)))
         .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
             if !*hovered {
@@ -8621,9 +8496,7 @@ fn map_toggle(active: bool, cx: &mut Context<GlassPreview>) -> Stateful<Div> {
             "Session network"
         }))
         .when(active, |this| {
-            this.bg(brand_tint())
-                .border_1()
-                .border_color(brand_line())
+            this.bg(brand_tint()).border_1().border_color(brand_line())
         })
         .when(!active, |this| {
             this.hover(|style| style.bg(hover_wash()))
@@ -8745,6 +8618,9 @@ fn apply_button(applied: bool, cx: &mut Context<GlassPreview>) -> Stateful<Div> 
                 .hover(|style| style.bg(brand_hover()))
                 .active(|style| style.bg(brand_press()))
                 .on_click(cx.listener(|this, _event, _window, cx| {
+                    if let Some(live) = this.live.as_mut() {
+                        live.accept_patch();
+                    }
                     if !this.applied_chats.contains(&this.active_chat) {
                         this.applied_chats.push(this.active_chat);
                         cx.notify();
@@ -8780,6 +8656,9 @@ fn undo_button(cx: &mut Context<GlassPreview>) -> Stateful<Div> {
         .active(|style| style.bg(press_wash()))
         .tooltip(hint("Undo the applied changes"))
         .on_click(cx.listener(|this, _event, _window, cx| {
+            if let Some(live) = this.live.as_mut() {
+                let _ = live.revert_to_verified();
+            }
             let active = this.active_chat;
             this.applied_chats.retain(|chat| *chat != active);
             cx.notify();
@@ -8808,6 +8687,9 @@ fn review_button(cx: &mut Context<GlassPreview>) -> Stateful<Div> {
         .active(|style| style.bg(press_wash()))
         .tooltip(hint("Open the diff in Changes"))
         .on_click(cx.listener(|this, _event, _window, cx| {
+            if let Some(live) = this.live.as_mut() {
+                let _ = live.run_judge_on_diff();
+            }
             this.reveal_section(DrawerSection::Changes, true, cx);
             cx.notify();
         }))
@@ -8981,21 +8863,10 @@ mod tests {
     }
 
     #[test]
-    fn history_rows_open_the_chat_with_the_same_title() {
-        let chats = seeded_chats();
-        for (id, title) in [
-            (0, "Restyle the workbench"),
-            (1, "Glass dock, round two"),
-            (2, "Midnight palette pass"),
-            (3, "Paper & Ink rollout"),
-            (4, "Studio direction"),
-            (5, "Obsidian first look"),
-        ] {
-            let chat = chats
-                .iter()
-                .find(|chat| chat.id == id)
-                .expect("history row should point at a seeded chat");
-            assert_eq!(chat.title, title);
-        }
+    fn empty_workspace_yields_a_single_fresh_chat() {
+        let chats = initial_chats(&None);
+        assert_eq!(chats.len(), 1);
+        assert_eq!(chats[0].title, "New chat");
+        assert!(matches!(chats[0].kind, ChatKind::New));
     }
 }

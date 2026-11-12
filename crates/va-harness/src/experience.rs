@@ -1,155 +1,22 @@
 //! Token-frugal harness self-improvement (Harness² mechanics).
 //!
-//! Four independent pieces, all dependency-free:
+//! The eight modular surfaces live in [`crate::components`]; the contrastive
+//! `Propose -> Probe -> Compose` loop lives in [`crate::recursive`]. This module
+//! owns the durable, dependency-free pieces they share:
 //!
-//! 1. **Eight modular harness surfaces** (`c1`..`c8`). Every task starts from
-//!    the pristine base definitions - overlays are never allowed to leak from
-//!    a previous task (strict reset-to-base).
-//! 2. **Contrastive recovery.** When a step fails, compare the invariant
+//! 1. **Contrastive recovery.** When a step fails, compare the invariant
 //!    candidate (what must always hold) with the domain candidate (what this
 //!    language/project prefers). The winner is chosen from evidence, not vibes.
-//! 3. **EXPERIENCE.md reflector.** The chosen lesson is persisted to
+//! 2. **EXPERIENCE.md reflector.** The chosen lesson is persisted to
 //!    `.ai/EXPERIENCE.md` and rendered as a precondition for future tasks in
 //!    the same language/domain.
-//! 4. **Zero extra rollouts on the fast path.** Nothing here calls a model:
+//! 3. **Zero extra rollouts on the fast path.** Nothing here calls a model:
 //!    the planner only pays for a recovery probe when a failure actually
-//!    happens (or when `--recursive` explicitly asks for one).
+//!    happens (or when `--recursive-k` explicitly asks for one).
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-
-/// Stable ids of the eight harness surfaces.
-pub const SURFACE_IDS: [&str; 8] = [
-    "c1_system_prompt",
-    "c2_guardrails",
-    "c3_memory",
-    "c4_tool_guidance",
-    "c5_subagents",
-    "c6_skills",
-    "c7_scripts",
-    "c8_plugins",
-];
-
-/// One modular harness surface.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HarnessSurface {
-    pub id: String,
-    pub content: String,
-}
-
-/// The eight surfaces that make up the harness overlay.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HarnessLayers {
-    surfaces: BTreeMap<String, String>,
-}
-
-impl Default for HarnessLayers {
-    fn default() -> Self {
-        Self::base()
-    }
-}
-
-impl HarnessLayers {
-    /// Pristine base definitions. Every new task starts here.
-    pub fn base() -> Self {
-        let mut surfaces = BTreeMap::new();
-        surfaces.insert(
-            "c1_system_prompt".into(),
-            "You are a disciplined coding agent. Work only inside the active ticket's allowlist. \
-             Prefer the smallest correct change. Report evidence, never claims."
-                .into(),
-        );
-        surfaces.insert(
-            "c2_guardrails".into(),
-            "Never write outside files_allowed. Never self-approve a failing verification. \
-             Stop after two identical failures and escalate."
-                .into(),
-        );
-        surfaces.insert(
-            "c3_memory".into(),
-            "Use the immutable trajectory DAG for history. Use .ai/EXPERIENCE.md for durable \
-             lessons. Never re-read a file whose block hash you already hold."
-                .into(),
-        );
-        surfaces.insert(
-            "c4_tool_guidance".into(),
-            "Address edits by block hash, never by line number. Verify with the language lens \
-             command before claiming success."
-                .into(),
-        );
-        surfaces.insert(
-            "c5_subagents".into(),
-            "A single writer owns the workspace. Observers (chat/audit) are read-only and may \
-             not patch."
-                .into(),
-        );
-        surfaces.insert(
-            "c6_skills".into(),
-            "Keep instructions short and composable; load only the skill needed for the current \
-             ticket."
-                .into(),
-        );
-        surfaces.insert(
-            "c7_scripts".into(),
-            "Prefer deterministic, re-runnable scripts over ad-hoc shell sequences. Capture exit \
-             codes as evidence."
-                .into(),
-        );
-        surfaces.insert(
-            "c8_plugins".into(),
-            "Plugins must be optional. A missing plugin degrades gracefully and never blocks the \
-             core loop."
-                .into(),
-        );
-        Self { surfaces }
-    }
-
-    /// Strict reset-to-base. Called at the start of every task.
-    pub fn reset_to_base(&mut self) {
-        *self = Self::base();
-    }
-
-    /// Apply an overlay to one surface (used only within the current task).
-    pub fn set(&mut self, id: &str, content: impl Into<String>) -> Result<(), String> {
-        if !SURFACE_IDS.contains(&id) {
-            return Err(format!("unknown harness surface `{id}`"));
-        }
-        self.surfaces.insert(id.to_string(), content.into());
-        Ok(())
-    }
-
-    pub fn get(&self, id: &str) -> Option<&str> {
-        self.surfaces.get(id).map(String::as_str)
-    }
-
-    pub fn surfaces(&self) -> Vec<HarnessSurface> {
-        self.surfaces
-            .iter()
-            .map(|(id, content)| HarnessSurface {
-                id: id.clone(),
-                content: content.clone(),
-            })
-            .collect()
-    }
-
-    /// True when every surface still equals the pristine base.
-    pub fn is_pristine(&self) -> bool {
-        *self == Self::base()
-    }
-
-    /// Render the overlay for a system prompt, in c1..c8 order.
-    pub fn render(&self) -> String {
-        let mut out = String::new();
-        for id in SURFACE_IDS {
-            if let Some(content) = self.surfaces.get(id) {
-                out.push_str(&format!("[{id}]\n{content}\n\n"));
-            }
-        }
-        out
-    }
-}
 
 /// A failure observed by the engine, used as contrastive evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -449,31 +316,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
-    }
-
-    #[test]
-    fn eight_surfaces_are_all_present_and_non_empty() {
-        let layers = HarnessLayers::base();
-        assert_eq!(layers.surfaces().len(), 8);
-        for id in SURFACE_IDS {
-            assert!(!layers.get(id).unwrap_or("").is_empty(), "{id} is empty");
-        }
-    }
-
-    #[test]
-    fn strict_reset_to_base_discards_overlays() {
-        let mut layers = HarnessLayers::base();
-        layers.set("c1_system_prompt", "poisoned overlay").unwrap();
-        assert!(!layers.is_pristine());
-        layers.reset_to_base();
-        assert!(layers.is_pristine());
-        assert_ne!(layers.get("c1_system_prompt").unwrap(), "poisoned overlay");
-    }
-
-    #[test]
-    fn unknown_surfaces_are_rejected() {
-        let mut layers = HarnessLayers::base();
-        assert!(layers.set("c9_unknown", "x").is_err());
     }
 
     #[test]

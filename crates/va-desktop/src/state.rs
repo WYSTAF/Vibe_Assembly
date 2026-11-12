@@ -15,12 +15,17 @@ use va_core::knowledge::context_window_tokens;
 use va_core::lock::{check_task_lock, LockStatus};
 use va_core::modes::{ExecutionMode, LanguageLens};
 use va_core::router_client::router_endpoint;
+use va_core::runtime::AtomicStateSync;
 use va_core::state::Workspace;
+use va_harness::components::HarnessLayers;
 use va_harness::diagnostics::{DiagnosticPinpointer, PinnedDiagnostic};
-use va_harness::experience::{ExperienceStore, HarnessLayers};
+use va_harness::engine::{Engine, StagnationPolicy};
+use va_harness::experience::ExperienceStore;
 use va_harness::judge::{DiffLine as JudgeDiffLine, Judge, Verdict};
-use va_harness::patcher::{segment_blocks, Block};
+use va_harness::live_planner::{LivePlannerConfig, LiveRouterPlanner};
+use va_harness::patcher::{apply_patch, find_blocks_by_hash, segment_blocks, Block, PatchOp};
 use va_harness::repomap::RepoMap;
+use va_harness::sandbox::{SandboxConfig, SandboxExecutor};
 use va_harness::session::{ContextWindowConfig, NodeId, NodeKind, Session};
 
 use crate::command_palette::PaletteAction;
@@ -360,6 +365,7 @@ pub struct WorkbenchState {
     pub router_live: bool,
     pub status_message: String,
     pub patch_preview: Option<PatchPreview>,
+    pub pending_patch: Option<(PathBuf, PatchOp)>,
     pub tournament_runs: usize,
     pub last_verified: Option<NodeId>,
     pub head: Option<NodeId>,
@@ -452,6 +458,7 @@ impl WorkbenchState {
             router_live,
             status_message: "Workbench ready · Ctrl+P for commands".to_string(),
             patch_preview: None,
+            pending_patch: None,
             tournament_runs: 0,
             last_verified: None,
             head: None,
@@ -910,139 +917,212 @@ impl WorkbenchState {
 
     pub fn submit_prompt(&mut self) -> SubmitOutcome {
         let text = self.prompt_input.trim().to_string();
-        if text.is_empty() {
+        self.prompt_input.clear();
+        self.execute_live(&text)
+    }
+
+    /// Execute one prompt through `va-harness`'s live planner + engine. When the
+    /// router is offline this falls back to deterministic local synthesis so the
+    /// workbench still functions without a network.
+    pub fn execute_live(&mut self, text: &str) -> SubmitOutcome {
+        if text.trim().is_empty() {
             self.status_message = "Prompt is empty".to_string();
             return SubmitOutcome::Empty;
         }
-
-        self.prompt_input.clear();
-        self.thread.push(ThreadItem::User { text: text.clone() });
+        self.thread.push(ThreadItem::User {
+            text: text.to_string(),
+        });
         self.push_session(NodeKind::Prompt {
             role: "user".to_string(),
-            text: text.clone(),
+            text: text.to_string(),
         });
 
         let read_only = !self.mode.allows_writes();
-        let reference = self.context_reference();
-        let model = self.model_label();
+        let mut config = LivePlannerConfig::default_for(&self.root);
+        config.mode = self.mode;
+        config.language = self.language;
+        config.model = if self.model == "auto-combo" {
+            None
+        } else {
+            Some(self.model.clone())
+        };
+        config.offline_mock = !self.router_live;
+        config.task_prompt = Some(text.to_string());
+        let mut planner = LiveRouterPlanner::with_config(config);
+        planner.begin_task();
 
         if read_only {
-            let response = format!(
-                "Read-only {} session.\n\nI will use {reference} as the context anchor. \
-                 Chat / Architect cannot emit patches, write files, or run mutating commands. \
-                 Switch to Code, Web, or Debug before asking for an edit.",
-                self.mode.short_label()
-            );
-            self.push_session(NodeKind::Thought {
-                text: response.clone(),
-            });
-            self.thread.push(ThreadItem::Assistant {
-                text: response,
-                read_only: true,
-            });
-            self.status_message = "Read-only response added; no patch staged".to_string();
+            match planner.ask(text, &self.session) {
+                Ok(answer) => {
+                    let cleaned = va_core::router_client::strip_think_blocks(&answer);
+                    self.push_session(NodeKind::Thought {
+                        text: answer.clone(),
+                    });
+                    self.thread.push(ThreadItem::Assistant {
+                        text: cleaned,
+                        read_only: true,
+                    });
+                }
+                Err(err) => {
+                    self.thread.push(ThreadItem::System {
+                        text: format!("Read-only query failed: {err}"),
+                    });
+                }
+            }
+            self.persist_session();
             self.refresh_session_views();
             self.refresh_context_usage();
+            self.status_message = "Read-only response; no patch staged".to_string();
             return SubmitOutcome::ReadOnly;
         }
 
-        let file = self
-            .active_rel_path()
-            .unwrap_or_else(|| "workspace".to_string());
-        let symbol = self
-            .active_symbol_name()
-            .unwrap_or_else(|| "selection".to_string());
-        let block = self
-            .current_block_hash()
-            .map(hash8)
-            .unwrap_or_else(|| "no block pinned".to_string());
-        let tokens = estimate_tokens(&text);
+        let reference = self.context_reference();
+        let context = ContextWindowConfig::new(self.context_window.max(1));
+        let mut engine = Engine::new(&self.root)
+            .with_max_steps(20)
+            .with_profile(self.mode, self.language)
+            .with_context_window(context)
+            .with_stagnation_policy(StagnationPolicy::Fail);
+        let result = engine.run(&mut self.session, &mut planner);
+        let stats = engine.stats().clone();
 
-        self.thread.push(ThreadItem::Step(ExecutionStep {
-            phase: StepPhase::Observe,
-            title: "Observe workspace".to_string(),
-            detail: format!(
-                "{file} · {symbol} · block {block} · {}",
-                self.resolved_language().short_label()
-            ),
-            tokens: self.context_tokens.max(tokens),
-            cost_micros: 0,
-            latency_ms: 0,
-            think_evicted: false,
-            expanded: false,
-            status: "ready".to_string(),
-        }));
-        self.thread.push(ThreadItem::Step(ExecutionStep {
-            phase: StepPhase::Think,
-            title: "Think before patch".to_string(),
-            detail: format!(
-                "{model} plans against the {} lens. The raw thought stays in the DAG until the patch step.",
-                self.resolved_language().short_label()
-            ),
-            tokens,
-            cost_micros: 0,
-            latency_ms: 0,
-            think_evicted: false,
-            expanded: false,
-            status: "planning".to_string(),
-        }));
-        self.thread.push(ThreadItem::Step(ExecutionStep {
-            phase: StepPhase::Patch,
-            title: "Patch preview".to_string(),
-            detail: "No filesystem write has been staged. The live CLI applies block patches through va-harness::patcher after verification and the judge pass.".to_string(),
-            tokens: 0,
-            cost_micros: 0,
-            latency_ms: 0,
-            think_evicted: true,
-            expanded: false,
-            status: "preview".to_string(),
-        }));
-        self.thread.push(ThreadItem::Step(ExecutionStep {
-            phase: StepPhase::Verify,
-            title: "Verification gate".to_string(),
-            detail: self.resolved_language().verification_command(&self.root),
-            tokens: 0,
-            cost_micros: 0,
-            latency_ms: 0,
-            think_evicted: true,
-            expanded: false,
-            status: "gated".to_string(),
-        }));
-        self.thread.push(ThreadItem::Step(ExecutionStep {
-            phase: StepPhase::Judge,
-            title: "Independent judge".to_string(),
-            detail: if self.judge_on {
-                "Judge ON. Open Diff and run Judge to review the current patch before applying it."
-                    .to_string()
-            } else {
-                "Judge is OFF. Enable the independent judge before applying a patch.".to_string()
-            },
-            tokens: 0,
-            cost_micros: 0,
-            latency_ms: 0,
-            think_evicted: false,
-            expanded: false,
-            status: if self.judge_on { "armed" } else { "off" }.to_string(),
-        }));
+        match result {
+            Ok(records) => {
+                for record in &records {
+                    self.thread.push(ThreadItem::Step(ExecutionStep {
+                        phase: phase_for_action(&record.action),
+                        title: record.action.clone(),
+                        detail: record
+                            .judge
+                            .clone()
+                            .unwrap_or_else(|| "verified".to_string()),
+                        tokens: stats.context_tokens,
+                        cost_micros: self.session.total_cost_micros(),
+                        latency_ms: self.session.total_latency_ms(),
+                        think_evicted: true,
+                        expanded: false,
+                        status: if record.verified { "pass" } else { "fail" }.to_string(),
+                    }));
+                }
+                self.thread.push(ThreadItem::Assistant {
+                    text: format!(
+                        "Live run complete: {} step(s), {} patch(es), {} verification(s), {} judge rejection(s). Context: {reference}.",
+                        records.len(),
+                        stats.patches_applied,
+                        stats.verifications_run,
+                        stats.judge_rejections
+                    ),
+                    read_only: false,
+                });
+                self.status_message = format!(
+                    "Live run: {} patch(es), {} verification(s)",
+                    stats.patches_applied, stats.verifications_run
+                );
+            }
+            Err(err) => {
+                self.thread.push(ThreadItem::System {
+                    text: format!("Live run stopped: {err}"),
+                });
+                self.status_message = format!("Live run stopped: {err}");
+            }
+        }
 
-        let plan = format!(
-            "Plan staged for {reference} in {} mode.\n\n\
-             The workbench has recorded the prompt in the session DAG, but has not written files. \
-             Select a block, open Diff, and run Judge before handing the plan to the live CLI.",
-            self.mode.short_label()
-        );
-        self.push_session(NodeKind::Thought { text: plan.clone() });
-        self.thread.push(ThreadItem::Assistant {
-            text: plan,
-            read_only: false,
-        });
-        self.status_message = format!(
-            "Prompt queued in {} mode; no file writes",
-            self.mode.short_label()
-        );
+        self.spend_micros = self.session.total_cost_micros();
+        self.latency_ms = self.session.total_latency_ms();
+        self.persist_session();
         self.refresh_session_views();
         self.refresh_context_usage();
         SubmitOutcome::Queued
+    }
+
+    /// Accept the staged patch: write it atomically and advance the DAG.
+    pub fn apply_staged_patch(&mut self) -> Result<(), String> {
+        let Some((path, op)) = self.pending_patch.take() else {
+            return Err("no staged patch to accept".to_string());
+        };
+        let source = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        if find_blocks_by_hash(&source, op.target_hash()).len() > 1 {
+            return Err("duplicate anchor: refusing to apply".to_string());
+        }
+        let patched = apply_patch(&source, &op).map_err(|e| e.to_string())?;
+        AtomicStateSync::write_atomic(&path, patched.as_bytes()).map_err(|e| e.to_string())?;
+        self.push_session(NodeKind::Patch {
+            path: self.rel_path(&path),
+            summary: format!("accepted block {}", hash8(op.target_hash())),
+        });
+        let _ = self.session.commit();
+        self.last_verified = self.session.head();
+        let _ = self.open_file(&path);
+        self.patch_preview = None;
+        self.persist_session();
+        self.refresh_session_views();
+        self.status_message = "Patch applied and recorded in the session DAG".to_string();
+        Ok(())
+    }
+
+    /// Revert the DAG to the last verified node and restore the active file.
+    pub fn revert_to_verified(&mut self) -> Result<(), String> {
+        let node = self
+            .session
+            .rollback_to_last_verified()
+            .map_err(|e| e.to_string())?;
+        if let Some(path) = self.active_file_path() {
+            let rel = self.rel_path(&path);
+            if let Ok(original) = read_git_file(&self.root, &rel) {
+                let _ = AtomicStateSync::write_atomic(&path, original.as_bytes());
+                let _ = self.open_file(&path);
+            }
+        }
+        self.pending_patch = None;
+        self.patch_preview = None;
+        self.persist_session();
+        self.refresh_session_views();
+        self.status_message = format!("Rolled back to verified node {node:?}");
+        Ok(())
+    }
+
+    /// Run the independent judge plus sandbox verification on the active diff.
+    pub fn run_judge_on_diff(&mut self) -> Verdict {
+        let diff: Vec<JudgeDiffLine> = self
+            .patch_preview
+            .as_ref()
+            .map(|p| {
+                p.lines
+                    .iter()
+                    .map(|l| JudgeDiffLine {
+                        marker: l.marker,
+                        path: p.rel_path.clone(),
+                        text: l.text.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let numbers: Vec<usize> = (1..=diff.len()).collect();
+        let verdict = Judge::with_defaults().review(&diff, &numbers);
+
+        let command = self.resolved_language().verification_command(&self.root);
+        let sandbox = SandboxExecutor::new(SandboxConfig::default_for(&self.root));
+        let output = sandbox
+            .execute(&command, None)
+            .map(|r| format!("{}\n{}", r.stdout, r.stderr))
+            .unwrap_or_else(|e| e.to_string());
+        self.verify_output = va_harness::session::slice_observation(&output);
+        self.diagnostics = DiagnosticPinpointer::pin_from_output(&self.root, &output);
+        self.push_session(NodeKind::Verification {
+            passed: matches!(verdict, Verdict::Pass),
+            detail: format!("judge + `{command}`"),
+        });
+        let _ = self.session.commit();
+        self.persist_session();
+        self.refresh_session_views();
+        self.bottom_tab = BottomTab::Verify;
+        self.show_bottom = true;
+        verdict
+    }
+
+    fn persist_session(&self) {
+        let path = self.root.join(".ai").join("session.jsonl");
+        let _ = AtomicStateSync::write_atomic(&path, self.session.to_jsonl().as_bytes());
     }
 
     pub fn clear_thread(&mut self) {
@@ -1311,10 +1391,18 @@ impl WorkbenchState {
     pub fn rollback(&mut self) {
         match self.session.rollback_to_last_verified() {
             Ok(Some(id)) => {
+                if let Some(path) = self.active_file_path() {
+                    let rel = self.rel_path(&path);
+                    if let Ok(original) = read_git_file(&self.root, &rel) {
+                        let _ = AtomicStateSync::write_atomic(&path, original.as_bytes());
+                        let _ = self.open_file(&path);
+                    }
+                }
+                self.pending_patch = None;
                 self.refresh_session_views();
                 self.refresh_context_usage();
                 let message = format!(
-                    "Rolled DAG head back to verified node {id}; the working tree was not touched."
+                    "Rolled DAG head back to verified node {id} and restored the active file."
                 );
                 self.thread.push(ThreadItem::System {
                     text: message.clone(),
@@ -1441,6 +1529,17 @@ impl WorkbenchState {
     }
 
     pub fn accept_patch(&mut self) {
+        if self.pending_patch.is_some() {
+            let message = match self.apply_staged_patch() {
+                Ok(()) => "Hash-verified patch written to disk and recorded in the DAG".to_string(),
+                Err(err) => format!("Patch rejected: {err}"),
+            };
+            self.thread.push(ThreadItem::System {
+                text: message.clone(),
+            });
+            self.status_message = message;
+            return;
+        }
         let Some(patch) = self.patch_preview.as_ref() else {
             self.status_message = "No patch preview to accept".to_string();
             return;
@@ -1490,7 +1589,7 @@ impl WorkbenchState {
 
         let line_numbers = vec![0usize; diff.len()];
         let verdict = Judge::with_defaults().review(&diff, &line_numbers);
-        let message = match verdict {
+        let message = match &verdict {
             Verdict::Pass => format!(
                 "Judge PASS · {} changed line(s) · {}",
                 diff.len(),
@@ -1505,6 +1604,24 @@ impl WorkbenchState {
                 format!("Judge REJECT · {} finding(s)\n{detail}", findings.len())
             }
         };
+        let command = self.resolved_language().verification_command(&self.root);
+        let sandbox = SandboxExecutor::new(SandboxConfig::default_for(&self.root));
+        let output = sandbox
+            .execute(&command, None)
+            .map(|r| format!("{}\n{}", r.stdout, r.stderr))
+            .unwrap_or_else(|e| e.to_string());
+        self.verify_output = va_harness::session::slice_observation(&output);
+        self.diagnostics = DiagnosticPinpointer::pin_from_output(&self.root, &output);
+        self.push_session(NodeKind::Verification {
+            passed: matches!(verdict, Verdict::Pass),
+            detail: format!("judge + `{command}`"),
+        });
+        let _ = self.session.commit();
+        self.persist_session();
+        self.refresh_session_views();
+        self.show_bottom = true;
+        self.bottom_tab = BottomTab::Verify;
+
         self.thread.push(ThreadItem::System {
             text: message.clone(),
         });
@@ -2148,10 +2265,6 @@ impl Render for Workbench {
 
 // --------------------------------------------------------------------- helpers
 
-fn estimate_tokens(text: &str) -> usize {
-    (text.chars().count() / 4).max(1)
-}
-
 fn compact_number(value: usize) -> String {
     if value >= 1_048_576 {
         format!("{:.1}m", value as f64 / 1_048_576.0)
@@ -2288,6 +2401,34 @@ fn read_verification_file(root: &Path) -> String {
     std::fs::read_to_string(root.join(".ai").join("verification.md")).unwrap_or_default()
 }
 
+fn read_git_file(root: &Path, rel: &str) -> Result<String, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["show", &format!("HEAD:{rel}")])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err("file not present at HEAD".to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn phase_for_action(action: &str) -> StepPhase {
+    let lower = action.to_lowercase();
+    if lower.contains("patch") {
+        StepPhase::Patch
+    } else if lower.contains("verify") || lower.contains("check") {
+        StepPhase::Verify
+    } else if lower.contains("judge") {
+        StepPhase::Judge
+    } else if lower.contains("think") || lower.contains("plan") || lower.contains("boss") {
+        StepPhase::Think
+    } else {
+        StepPhase::Observe
+    }
+}
+
 fn model_choices(root: &Path, current: &str) -> Vec<String> {
     let mut models = vec![
         "auto-combo".to_string(),
@@ -2382,6 +2523,7 @@ mod tests {
 
     use super::*;
     use crate::theme;
+    use va_harness::patcher::hash_file;
 
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -2634,6 +2776,131 @@ mod tests {
         assert!(!state.show_palette);
         state.palette_query = "no-such-match-zzzz".into();
         assert!(crate::command_palette::items(&state).is_empty());
+        drop(state);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn real_file_loading_computes_fnv1a_block_hashes() {
+        let dir = temp_workspace("hashes");
+        let mut state = state_for(&dir);
+        state.open_file(&dir.join("src/lib.rs")).unwrap();
+        let buffer = state.active_buffer().unwrap();
+        assert!(!buffer.blocks.is_empty());
+        let expected = segment_blocks(&buffer.content);
+        assert_eq!(buffer.blocks.len(), expected.len());
+        assert_eq!(buffer.blocks[0].hash, expected[0].hash);
+        assert!(state.current_block_hash().is_some());
+        drop(state);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn duplicate_anchor_is_rejected_before_staging() {
+        let dir = temp_workspace("dup");
+        let dup = "pub fn dup() {\n    let z = 1;\n}\npub fn dup() {\n    let z = 1;\n}\n";
+        fs::write(dir.join("src/dup.rs"), dup).unwrap();
+        let mut state = state_for(&dir);
+        let blocks = segment_blocks(dup);
+        let hash = blocks[0].hash;
+        state.pending_patch = Some((
+            dir.join("src/dup.rs"),
+            PatchOp::new(hash, "pub fn dup() {}"),
+        ));
+        let result = state.apply_staged_patch();
+        assert!(result.is_err(), "repeated anchor must be rejected");
+        assert_eq!(fs::read_to_string(dir.join("src/dup.rs")).unwrap(), dup);
+        drop(state);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn staged_patch_accept_writes_atomically_and_advances_dag() {
+        let dir = temp_workspace("accept");
+        let mut state = state_for(&dir);
+        let path = dir.join("src/lib.rs");
+        let source = fs::read_to_string(&path).unwrap();
+        let hash = segment_blocks(&source)[0].hash;
+        state.pending_patch = Some((
+            path.clone(),
+            PatchOp::new(hash, "pub fn alpha() {\n    let x = 42;\n}")
+                .with_expected_file_hash(hash_file(&source)),
+        ));
+        state.accept_patch();
+        let after = fs::read_to_string(&path).unwrap();
+        assert!(after.contains("let x = 42;"));
+        assert!(state.pending_patch.is_none());
+        assert!(state
+            .session
+            .nodes()
+            .any(|n| matches!(n.kind, NodeKind::Patch { .. })));
+        drop(state);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn live_prompt_records_trajectory_and_chat_is_read_only() {
+        let dir = temp_workspace("live");
+        let mut state = state_for(&dir);
+        let before = state.session.len();
+        state.execute_live("describe the workspace");
+        assert!(state.session.len() > before);
+        assert!(state
+            .thread
+            .iter()
+            .any(|i| matches!(i, ThreadItem::User { .. })));
+
+        state.set_mode(ExecutionMode::Chat);
+        let patches_before = state
+            .session
+            .nodes()
+            .filter(|n| matches!(n.kind, NodeKind::Patch { .. }))
+            .count();
+        let outcome = state.execute_live("how is state persisted?");
+        assert_eq!(outcome, SubmitOutcome::ReadOnly);
+        let patches_after = state
+            .session
+            .nodes()
+            .filter(|n| matches!(n.kind, NodeKind::Patch { .. }))
+            .count();
+        assert_eq!(patches_before, patches_after, "Chat must not add patches");
+        drop(state);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn mode_and_language_switching_update_lens_and_verification() {
+        let dir = temp_workspace("lens");
+        let mut state = state_for(&dir);
+        state.set_mode(ExecutionMode::Web);
+        assert_eq!(state.mode, ExecutionMode::Web);
+        state.set_language(LanguageLens::Python);
+        assert_eq!(state.resolved_language(), LanguageLens::Python);
+        assert!(state
+            .resolved_language()
+            .verification_command(&dir)
+            .contains("python"));
+        state.set_language(LanguageLens::Rust);
+        assert!(state
+            .resolved_language()
+            .verification_command(&dir)
+            .contains("cargo"));
+        drop(state);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn rollback_clears_pending_patch_and_moves_head() {
+        let dir = temp_workspace("rollback");
+        let mut state = state_for(&dir);
+        let path = dir.join("src/lib.rs");
+        let source = fs::read_to_string(&path).unwrap();
+        let hash = segment_blocks(&source)[0].hash;
+        state.pending_patch = Some((path.clone(), PatchOp::new(hash, "pub fn alpha() {}")));
+        state.accept_patch();
+        state.rollback();
+        assert!(state.pending_patch.is_none());
+        assert!(state.patch_preview.is_none());
         drop(state);
         let _ = fs::remove_dir_all(dir);
     }

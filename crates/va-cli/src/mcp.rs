@@ -246,6 +246,34 @@ pub fn handle_mcp_request(raw: &str, root: Option<&Path>) -> Option<String> {
                         },
                         "required": ["candidates"]
                     }
+                },
+                {
+                    "name": "vibe_assembly_propose_probe_compose",
+                    "description": "Run the Harness² Propose -> Probe -> Compose contrastive loop: fast path on first-try success, else fork invariant/domain branches, probe with sandbox+judge, and merge the winner.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "verification_command": {
+                                "type": "string",
+                                "description": "Verification command (default: language lens command)"
+                            },
+                            "k": {
+                                "type": "integer",
+                                "description": "Opt-in probing rounds (0 = fast path only)"
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "vibe_assembly_query_experience",
+                    "description": "Query durable .ai/EXPERIENCE.md lessons, optionally filtered by language/domain.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "language": { "type": "string" },
+                            "domain": { "type": "string" }
+                        }
+                    }
                 }
             ]
         })),
@@ -703,6 +731,63 @@ fn execute_tool(name: &str, args: &Value, root: Option<&Path>) -> Result<Value, 
                 "content": [{
                     "type": "text",
                     "text": serde_json::to_string_pretty(&outcome).unwrap_or_default()
+                }],
+                "isError": false
+            }))
+        }
+        "vibe_assembly_propose_probe_compose" => {
+            let r = root.unwrap_or_else(|| Path::new("."));
+            let k = args.get("k").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let command = args
+                .get("verification_command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("cargo check")
+                .to_string();
+
+            let session_path = r.join(".ai").join("session.jsonl");
+            let mut session = if session_path.exists() {
+                let raw = std::fs::read_to_string(&session_path).unwrap_or_default();
+                Session::from_jsonl(&raw).unwrap_or_default()
+            } else {
+                Session::new()
+            };
+
+            let mut verifier = va_harness::recursive::SandboxJudgeVerifier::new(r);
+            let recursive = va_harness::recursive::RecursiveLoop::new(
+                r,
+                va_harness::recursive::RecursiveConfig { k },
+            );
+            let outcome = recursive.execute_step(&mut session, &mut verifier, &command, &[], None);
+            let _ = std::fs::write(&session_path, session.to_jsonl());
+
+            Ok(json!({
+                "content": [{
+                    "type": "text",
+                    "text": serde_json::to_string_pretty(&json!({
+                        "fast_path": outcome.fast_path,
+                        "passed": outcome.passed,
+                        "probes": outcome.probes,
+                        "winner": outcome.winner.map(|w| format!("{w:?}")),
+                        "merged_node": outcome.merged_node,
+                        "lesson_recorded": outcome.lesson_recorded
+                    })).unwrap_or_default()
+                }],
+                "isError": false
+            }))
+        }
+        "vibe_assembly_query_experience" => {
+            let r = root.unwrap_or_else(|| Path::new("."));
+            let language = args.get("language").and_then(|v| v.as_str()).unwrap_or("");
+            let domain = args.get("domain").and_then(|v| v.as_str()).unwrap_or("");
+            let store = va_harness::experience::ExperienceStore::load(r);
+            let lessons = store.lessons_for(language, domain);
+            Ok(json!({
+                "content": [{
+                    "type": "text",
+                    "text": serde_json::to_string_pretty(&json!({
+                        "count": lessons.len(),
+                        "lessons": lessons
+                    })).unwrap_or_default()
                 }],
                 "isError": false
             }))

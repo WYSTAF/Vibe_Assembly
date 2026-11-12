@@ -505,12 +505,14 @@ fn conversation() -> Div {
                 ),
         )
         .child(composer())
-        .child(div().w_full().flex().justify_center().pb(px(12.0)).child(
-            div()
-                .text_size(px(10.0))
-                .text_color(ink_muted())
-                .child("62% context used"),
-        ))
+        .child(
+            div().w_full().flex().justify_center().pb(px(12.0)).child(
+                div()
+                    .text_size(px(10.0))
+                    .text_color(ink_muted())
+                    .child("62% context used"),
+            ),
+        )
 }
 
 fn conversation_header() -> Div {

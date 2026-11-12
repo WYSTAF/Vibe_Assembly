@@ -36,7 +36,7 @@
     editor and git diff view, an interactive assistant composer, a floating
     command palette, a real context-window meter, a shared native `ui_kit`,
     embedded brand/Windows icon assets, and preview-only design samples.
-- **Verification Status:** 204 tests passing, 0 failed; clippy clean with
+- **Verification Status:** 243 tests passing, 0 failed; clippy clean with
   `-D warnings`; formatting clean; release build produced both binaries.
 - **Resume Anchor:** n/a - wave verified and complete.
 - **Blockers:** None.

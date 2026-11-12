@@ -16,7 +16,7 @@ projects without exhausting a single chat context. Roles communicate through a
 regulated `.ai/` contract, and every edit passes through a deterministic,
 hash-anchored execution harness.
 
-**Current status:** 216 tests passing, clippy clean with `-D warnings`, both
+**Current status:** 243 tests passing, clippy clean with `-D warnings`, both
 release binaries build. There is no browser runtime, webview, or Node/npm
 toolchain.
 
@@ -193,8 +193,11 @@ Shared presentation primitives live in `crates/va-desktop/src/ui_kit`; the
 supplied rounded yellow brand mark is embedded as a GPUI asset, and the Windows
 executable carries the matching multi-size application icon.
 Inline diffs come from `git diff` or `git show HEAD` and fall back to a session
-patch summary. The desktop surface never fabricates a diff and never writes
-files directly; applying patches remains the live CLI's job.
+patch summary. The desktop never fabricates a diff. The composer runs the real
+`va-harness` live planner/engine (with a deterministic local fallback when the
+router is offline), and `Accept changes` writes a hash-verified patch atomically
+and advances the session DAG; `Revert` rolls back to the last verified node.
+Chat / Architect remains a hard read-only boundary.
 
 ## Command reference
 
@@ -217,6 +220,7 @@ files directly; applying patches remains the live CLI's job.
 | `mcp` | Start the Model Context Protocol server over stdio |
 | `patch` | Apply a hash-anchored patch by block hash |
 | `blocks` | List block hashes in a file |
+| `harness inspect` | Show the c1..c8 surfaces, per-task overlays, and EXPERIENCE.md lessons |
 
 `--root <path>` is a global option. Commands that support machine-readable
 output list `--json` in their `--help` (for example `up`, `repomap`, `diagnose`,
@@ -263,6 +267,8 @@ live in `.ai/EXPERIENCE.md`; the trajectory DAG lives in `.ai/session.jsonl`.
 | `sandbox` | Confined command execution with wall-clock timeouts, directory confinement, and bounded output |
 | `tournament` | Multi-branch speculative runner scoring candidates by warnings and line churn, merging the winner into the DAG |
 | `experience` | Harness^2 c1..c8 surfaces with strict reset-to-base, contrastive recovery, and durable `.ai/EXPERIENCE.md` lessons |
+| `components` | The eight modular harness surfaces (`c1..c8`) loaded from `va-core::prompts`, with per-task overlays in `.ai/harness_overlays/<task_id>/` and strict reset-to-base isolation |
+| `recursive` | `Propose -> Probe -> Compose` contrastive loop: zero-overhead fast path, failure/opt-in probing, two-branch DAG fork, and evidence-scored merge |
 | `live_planner` | Real `POST /v1/chat/completions` Boss -> Code -> Verify -> Debug -> Judge loop with Vibe-Link headers and telemetry |
 | `engine` | Orchestration with auto-compaction, read-only enforcement, stagnation detection, and judge-verified hashes |
 
@@ -366,7 +372,7 @@ cargo test --workspace
 cargo build --release
 ```
 
-Current workspace: **216 tests passing**, clippy clean, both release binaries
+Current workspace: **243 tests passing**, clippy clean, both release binaries
 built. The live HTTP planner is tested against a local mock OpenAI-compatible
 TCP server; unit tests cover compaction, think-trace eviction, observation
 slicing, repeated anchors, read-only enforcement, stagnation escalation,
