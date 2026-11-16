@@ -2770,6 +2770,10 @@ impl Render for GlassPreview {
                             changes,
                             applied,
                             live: live_run,
+                            nodes: self.live.as_ref().map(|l| l.session.len()).unwrap_or(0),
+                            cost_micros: self.live.as_ref().map(|l| l.spend_micros).unwrap_or(0),
+                            latency_ms: self.live.as_ref().map(|l| l.latency_ms).unwrap_or(0),
+                            chats: self.chats.clone(),
                         },
                         &self.repo,
                         &nav_focus,
@@ -6575,8 +6579,17 @@ fn code_line(no: &'static str, spans: &[(&'static str, Rgba)]) -> Div {
         )
 }
 
-fn history_card(active_chat: u64, all_runs: bool, cx: &mut Context<GlassPreview>) -> Div {
-    let shown = if all_runs { 12 } else { 6 };
+fn history_card(
+    chats: &[ChatThread],
+    active_chat: u64,
+    all_runs: bool,
+    cx: &mut Context<GlassPreview>,
+) -> Div {
+    let shown = if all_runs {
+        chats.len()
+    } else {
+        6.min(chats.len())
+    };
     panel_card()
         .flex_shrink_0()
         .p(px(12.0))
@@ -6597,111 +6610,18 @@ fn history_card(active_chat: u64, all_runs: bool, cx: &mut Context<GlassPreview>
                         .child("Recent runs"),
                 )
                 .child(div().flex_1())
-                .child(soft_chip("24 this week")),
+                .child(soft_chip(format!("{} runs", chats.len()))),
         )
-        .child(chat_section_label("TODAY"))
-        .child(history_row(
-            "glass-hist-1",
-            "Restyle the workbench",
-            "Now · 6 files changed",
-            Some(0),
-            active_chat,
-            cx,
-        ))
-        .child(history_row(
-            "glass-hist-2",
-            "Glass dock, round two",
-            "42m ago · 4 files changed",
-            Some(1),
-            active_chat,
-            cx,
-        ))
-        .child(history_row(
-            "glass-hist-3",
-            "Midnight palette pass",
-            "2h ago · 9 files changed",
-            Some(2),
-            active_chat,
-            cx,
-        ))
-        .child(chat_section_label("YESTERDAY"))
-        .child(history_row(
-            "glass-hist-4",
-            "Paper & Ink rollout",
-            "21:40 · 12 files changed",
-            Some(3),
-            active_chat,
-            cx,
-        ))
-        .child(history_row(
-            "glass-hist-5",
-            "Studio direction",
-            "15:15 · 2 files changed",
-            Some(4),
-            active_chat,
-            cx,
-        ))
-        .child(history_row(
-            "glass-hist-6",
-            "Obsidian first look",
-            "11:02 · no changes",
-            Some(5),
-            active_chat,
-            cx,
-        ))
-        .when(all_runs, |this| {
-            // Archived runs have no chat left in the rail, so they are
-            // informational only - no pointer, no click, no chevron.
-            this.child(chat_section_label("LAST WEEK"))
-                .child(history_row(
-                    "glass-hist-7",
-                    "Dock spacing pass",
-                    "Mon 18:20 · 3 files changed",
-                    None,
-                    active_chat,
-                    cx,
-                ))
-                .child(history_row(
-                    "glass-hist-8",
-                    "Context ring math",
-                    "Mon 14:05 · 2 files changed",
-                    None,
-                    active_chat,
-                    cx,
-                ))
-                .child(history_row(
-                    "glass-hist-9",
-                    "Glass nav overlay",
-                    "Sun 16:40 · 7 files changed",
-                    None,
-                    active_chat,
-                    cx,
-                ))
-                .child(history_row(
-                    "glass-hist-10",
-                    "Search palette probe",
-                    "Sat 11:12 · 5 files changed",
-                    None,
-                    active_chat,
-                    cx,
-                ))
-                .child(history_row(
-                    "glass-hist-11",
-                    "Day mode contrast",
-                    "Fri 09:30 · 4 files changed",
-                    None,
-                    active_chat,
-                    cx,
-                ))
-                .child(history_row(
-                    "glass-hist-12",
-                    "Type scale sweep",
-                    "Thu 17:22 · 8 files changed",
-                    None,
-                    active_chat,
-                    cx,
-                ))
-        })
+        .children(chats.iter().take(shown).enumerate().map(|(i, c)| {
+            history_row(
+                i,
+                c.title.clone(),
+                c.meta.clone(),
+                Some(c.id),
+                active_chat,
+                cx,
+            )
+        }))
         .child(
             div()
                 .flex()
@@ -6711,7 +6631,7 @@ fn history_card(active_chat: u64, all_runs: bool, cx: &mut Context<GlassPreview>
                     div()
                         .text_size(px(11.5))
                         .text_color(ink_muted())
-                        .child(format!("{shown} of 24 runs")),
+                        .child(format!("{shown} of {} runs", chats.len())),
                 )
                 .child(div().flex_1())
                 .child(
@@ -6731,7 +6651,7 @@ fn history_card(active_chat: u64, all_runs: bool, cx: &mut Context<GlassPreview>
         )
 }
 
-fn run_stats_card() -> Div {
+fn run_stats_card(nodes: usize, cost_micros: u64, latency_ms: u64) -> Div {
     div().flex_shrink_0().child(
         panel_card()
             .p(px(12.0))
@@ -6748,43 +6668,26 @@ fn run_stats_card() -> Div {
                             .text_size(px(12.5))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(ink())
-                            .child("This week"),
+                            .child("Session"),
                     )
                     .child(div().flex_1())
-                    .child(soft_chip("+18% vs last")),
+                    .child(soft_chip(format!("{nodes} nodes"))),
             )
             .child(
                 div()
                     .flex()
                     .gap(px(6.0))
-                    .child(stat_tile("24", "Runs"))
-                    .child(stat_tile("18", "Applied"))
-                    .child(stat_tile("86", "Files")),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .pt(px(2.0))
-                    .child(
-                        div()
-                            .text_size(px(10.5))
-                            .text_color(ink_muted())
-                            .child("Runs per day"),
-                    )
-                    .child(div().flex_1())
-                    .child(
-                        div()
-                            .text_size(px(10.5))
-                            .text_color(ink_muted())
-                            .child("7 days"),
-                    ),
-            )
-            .child(week_chart()),
+                    .child(stat_tile(format!("{nodes}"), "DAG nodes"))
+                    .child(stat_tile(
+                        format!("${:.4}", cost_micros as f64 / 1_000_000.0),
+                        "Spend",
+                    ))
+                    .child(stat_tile(format!("{latency_ms}ms"), "Latency")),
+            ),
     )
 }
 
-fn stat_tile(value: &'static str, label: &'static str) -> Div {
+fn stat_tile(value: String, label: &'static str) -> Div {
     div()
         .flex_1()
         .p(px(8.0))
@@ -6810,54 +6713,10 @@ fn stat_tile(value: &'static str, label: &'static str) -> Div {
         )
 }
 
-fn week_chart() -> Stateful<Div> {
-    const DAYS: [(&str, &str, usize); 7] = [
-        ("M", "Monday", 3),
-        ("T", "Tuesday", 5),
-        ("W", "Wednesday", 2),
-        ("T", "Thursday", 6),
-        ("F", "Friday", 4),
-        ("S", "Saturday", 7),
-        ("S", "Sunday", 2),
-    ];
-    let peak = DAYS
-        .iter()
-        .enumerate()
-        .max_by_key(|(_, (_, _, count))| *count)
-        .map_or(0, |(index, _)| index);
-    div()
-        .id("week-chart")
-        .h(px(48.0))
-        .w_full()
-        .flex()
-        .items_end()
-        .gap(px(6.0))
-        .children(DAYS.iter().enumerate().map(|(index, (day, full, count))| {
-            let height = 8.0 + *count as f32 * 4.5;
-            div()
-                .id(ElementId::named_usize("week-bar", index))
-                .flex_1()
-                .flex()
-                .flex_col()
-                .items_center()
-                .justify_end()
-                .gap(px(4.0))
-                .tooltip(hint(format!("{full} · {count} runs")))
-                .child(
-                    div()
-                        .w_full()
-                        .h(px(height))
-                        .rounded(px(3.0))
-                        .bg(if index == peak { brand() } else { tint(0x24) }),
-                )
-                .child(div().text_size(px(8.5)).text_color(ink_muted()).child(*day))
-        }))
-}
-
 fn history_row(
-    id: &'static str,
-    title: &'static str,
-    meta: &'static str,
+    id: usize,
+    title: String,
+    meta: String,
     chat: Option<u64>,
     active_chat: u64,
     cx: &mut Context<GlassPreview>,
@@ -6865,7 +6724,7 @@ fn history_row(
     let active = chat == Some(active_chat);
     let clickable = chat.is_some();
     div()
-        .id(id)
+        .id(ElementId::named_usize("glass-hist", id))
         .flex()
         .items_center()
         .gap(px(9.0))
@@ -7248,7 +7107,7 @@ fn status_chip(
         .child(div().text_color(ink_soft()).child(label))
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct EdgeState {
     open: bool,
     epoch: usize,
@@ -7268,6 +7127,10 @@ struct EdgeState {
     changes: &'static [ChangeFile],
     applied: bool,
     live: bool,
+    nodes: usize,
+    cost_micros: u64,
+    latency_ms: u64,
+    chats: Vec<ChatThread>,
 }
 
 fn edge_overlay(
@@ -7284,7 +7147,7 @@ fn edge_overlay(
         .top_0()
         .bottom(px(8.0))
         .right(px(EDGE_INSET))
-        .child(edge_drawer(state, repo, focus, scroll, cx))
+        .child(edge_drawer(state.clone(), repo, focus, scroll, cx))
         .child(nav_column(state, focus, cx))
         .with_animation(
             ("glass-edge", epoch),
@@ -7378,7 +7241,7 @@ fn edge_drawer(
                                         .flex()
                                         .flex_col()
                                         .gap(px(10.0))
-                                        .child(section_body(state, repo, cx))
+                                        .child(section_body(state.clone(), repo, cx))
                                         .with_animation(
                                             ("glass-section", section_epoch),
                                             Animation::new(motion(170))
@@ -7496,8 +7359,13 @@ fn section_body(state: EdgeState, repo: &RepoSnapshot, cx: &mut Context<GlassPre
             .flex()
             .flex_col()
             .gap(px(10.0))
-            .child(history_card(state.active_chat, state.all_runs, cx))
-            .child(run_stats_card().flex_grow()),
+            .child(history_card(
+                &state.chats,
+                state.active_chat,
+                state.all_runs,
+                cx,
+            ))
+            .child(run_stats_card(state.nodes, state.cost_micros, state.latency_ms).flex_grow()),
         DrawerSection::GitHub => div()
             .flex()
             .flex_col()
