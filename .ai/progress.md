@@ -22,6 +22,13 @@
   theme choice persisted across launches, full-height drawer sections, card
   text clear of the floating nav capsule so trailing stats and links stay
   usable, and compact-layout regression coverage in both themes.
+- **v2.4.1 (2026-11-18):** thinking-effort wiring - the Liquid Glass thinking
+  ladder maps to `ReasoningEffort`, persists per model in `preferences.conf`
+  alongside the theme, coerces unsupported levels down and shows the coerced
+  level on the model pill, and reaches real router requests via
+  `LivePlannerConfig`; CLI `run`/`prompt` gain `--effort`; router endpoint
+  (`/api/assignment`), CLI constants, `up` search paths, and MCP version made
+  consistent.
 - Scope: real HTTP live planner, four execution modes with dynamic accents,
   language lens, auto-compaction at 75%, think-trace eviction, pinned working
   set, repeated-anchor rejection, spin-loop breaker, durable EXPERIENCE.md,
@@ -58,5 +65,5 @@
 
 - `cargo fmt --all -- --check` - clean
 - `cargo clippy --workspace --all-targets -- -D warnings` - clean
-- `cargo test --workspace` - 243 passed, 0 failed
+- `cargo test --workspace` - 254 passed, 0 failed
 - `cargo build --release` - both binaries produced

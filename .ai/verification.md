@@ -1,14 +1,14 @@
 # Verification Record & Proven Baselines
 
-**Current feature proven:** v2.4.0 Liquid Glass real command sheet, persisted
-day/night theme, full-height drawer sections with nav-clear card text, and
-window-fit drawer geometry
+**Current feature proven:** v2.4.1 thinking-effort ladder wired to real router
+requests with per-model persistence and honest coercion display, plus
+router/CLI/MCP endpoint and version consistency
 
 **Test suites and checks executed:**
 
 - [x] `cargo fmt --all -- --check`
 - [x] `cargo clippy --workspace --all-targets -- -D warnings`
-- [x] `cargo test --workspace` - 204 passed, 0 failed
+- [x] `cargo test --workspace` - 254 passed, 0 failed
 - [x] `cargo build --release` - `vibe-assembly` and `vibe-assembly-desktop`
 - [x] Desktop smoke test - a bare launch of the release binary installed at
       `target/release` opens the Liquid Glass workbench in the persisted theme;
@@ -22,6 +22,19 @@ window-fit drawer geometry
       then close, click-outside dismissal, clear button, and no-results state
 - [x] Theme preference persists to `%APPDATA%\Vibe Assembly\preferences.conf`
       and is restored on the next launch
+- [x] Per-model thinking preference (`thinking.<model_id>=<effort>`) round-trips
+      in `preferences.conf` without disturbing the theme or other models;
+      malformed values fail closed to Auto
+- [x] `ReasoningEffort` parsing, labels, serde round-trip, and per-model
+      coercion (XHigh -> High, omission on fast-tier models and tool conflicts)
+- [x] `reasoning_effort` JSON payload emission verified against the local mock
+      HTTP server, including omission for Auto/unsupported models and coercion
+      on every Boss/Code call through `LivePlannerConfig`
+- [x] Model pill displays the coerced effective level (`Model · Deep (coerced)`)
+      instead of claiming an unsupported level
+- [x] Router endpoint consistency: `DEFAULT_ROUTER_PATH=/api/assignment` used by
+      `models`, `doctor`, and `up`; MCP `initialize` version equals
+      `CARGO_PKG_VERSION`
 - [x] Drawer sections fill the panel to the bottom edge and card text, stats,
       and row links stay clear of the floating nav capsule at 1440x900 and
       1120x720
@@ -40,4 +53,4 @@ window-fit drawer geometry
 - State: `.ai/*.md` and `.ai/session.jsonl`
 - Router: local OpenAI-compatible HTTP gateway
 
-**Last date proven working:** 2026-10-31
+**Last date proven working:** 2026-11-18

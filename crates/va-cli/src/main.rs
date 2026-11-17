@@ -15,9 +15,11 @@ use va_core::allocator::{allocate, load_knowledge};
 use va_core::bootstrap;
 use va_core::knowledge::context_window_tokens;
 use va_core::lock::check_task_lock;
-use va_core::modes::{ExecutionMode, LanguageLens};
+use va_core::modes::{ExecutionMode, LanguageLens, ReasoningEffort};
 use va_core::parser::{parse_active_task, validate_contract, verified_steps};
-use va_core::router::fetch_live_assignment;
+use va_core::router::{
+    fetch_live_assignment, DEFAULT_ROUTER_HOST, DEFAULT_ROUTER_PATH, DEFAULT_ROUTER_PORT,
+};
 use va_core::runtime::{detect_system_specs, AtomicStateSync};
 use va_core::state::Workspace;
 use va_harness::engine::{Engine, EngineError, StagnationPolicy};
@@ -141,6 +143,9 @@ enum Command {
         /// Opt-in contrastive probing rounds (0 = zero-overhead fast path)
         #[arg(long, default_value_t = 0)]
         recursive_k: usize,
+        /// Reasoning effort: auto | low | medium | high | xhigh
+        #[arg(long, default_value = "auto")]
+        effort: String,
     },
     /// Run one task in a chosen execution mode and print the result
     Prompt {
@@ -164,6 +169,9 @@ enum Command {
         /// Deterministic offline synthesis; never calls the router
         #[arg(long)]
         offline_mock: bool,
+        /// Reasoning effort: auto | low | medium | high | xhigh
+        #[arg(long, default_value = "auto")]
+        effort: String,
         /// Emit machine-readable JSON
         #[arg(long)]
         json: bool,
@@ -422,6 +430,7 @@ fn main() -> ExitCode {
             offline_mock,
             prompt,
             recursive_k,
+            effort,
         }) => {
             let root = match Workspace::discover(&start) {
                 Some(r) => r,
@@ -439,6 +448,13 @@ fn main() -> ExitCode {
             };
             let language = match lang.parse::<LanguageLens>() {
                 Ok(l) => l,
+                Err(e) => {
+                    eprintln!("❌ {e}");
+                    return ExitCode::from(2);
+                }
+            };
+            let effort = match effort.parse::<ReasoningEffort>() {
+                Ok(e) => e,
                 Err(e) => {
                     eprintln!("❌ {e}");
                     return ExitCode::from(2);
@@ -465,6 +481,7 @@ fn main() -> ExitCode {
                     judge_model: judge_model.clone(),
                     offline_mock: *offline_mock,
                     task_prompt: prompt.clone(),
+                    effort,
                 },
             );
         }
@@ -476,6 +493,7 @@ fn main() -> ExitCode {
             judge_model,
             max_steps,
             offline_mock,
+            effort,
             json,
         }) => {
             let root = match Workspace::discover(&start) {
@@ -499,6 +517,13 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             };
+            let effort = match effort.parse::<ReasoningEffort>() {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("❌ {e}");
+                    return ExitCode::from(2);
+                }
+            };
             return run_prompt(
                 &root,
                 text,
@@ -508,6 +533,7 @@ fn main() -> ExitCode {
                 judge_model.clone(),
                 *max_steps,
                 *offline_mock,
+                effort,
                 *json,
             );
         }
@@ -718,9 +744,9 @@ fn run_status(root: &Path, p: &Palette, json: bool) -> ExitCode {
 fn run_models(root: &Path, p: &Palette) -> ExitCode {
     // Prefer live router assignments; fall back to the local knowledge base.
     if let Some(live) = fetch_live_assignment(
-        "127.0.0.1",
-        20128,
-        "/v1/assignment",
+        DEFAULT_ROUTER_HOST,
+        DEFAULT_ROUTER_PORT,
+        DEFAULT_ROUTER_PATH,
         std::time::Duration::from_millis(200),
     ) {
         println!();
@@ -888,9 +914,9 @@ fn run_doctor(root: &Path, p: &Palette) -> ExitCode {
 
     // Router connectivity (informational)
     let router_ok = fetch_live_assignment(
-        "127.0.0.1",
-        20128,
-        "/v1/assignment",
+        DEFAULT_ROUTER_HOST,
+        DEFAULT_ROUTER_PORT,
+        DEFAULT_ROUTER_PATH,
         std::time::Duration::from_millis(200),
     )
     .is_some();
@@ -1164,6 +1190,7 @@ struct ExecutionOptions<'a> {
     judge_model: Option<String>,
     offline_mock: bool,
     task_prompt: Option<String>,
+    effort: ReasoningEffort,
 }
 
 fn run_execute(root: &Path, opts: ExecutionOptions<'_>) -> ExitCode {
@@ -1180,6 +1207,7 @@ fn run_execute(root: &Path, opts: ExecutionOptions<'_>) -> ExitCode {
         judge_model,
         offline_mock,
         task_prompt,
+        effort,
     } = opts;
     use va_core::knowledge::{auto_combo as plan, score_model};
     use va_core::router_client::fetch_default;
@@ -1322,6 +1350,7 @@ fn run_execute(root: &Path, opts: ExecutionOptions<'_>) -> ExitCode {
             judge_model.clone(),
             offline_mock,
             task_prompt.clone(),
+            effort,
         );
         planner.begin_task();
         let active_model = if offline_mock {
@@ -1467,6 +1496,7 @@ fn accent_ansi(mode: ExecutionMode) -> String {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_planner(
     root: &Path,
     mode: ExecutionMode,
@@ -1475,6 +1505,7 @@ fn build_planner(
     judge_model: Option<String>,
     offline_mock: bool,
     task_prompt: Option<String>,
+    effort: ReasoningEffort,
 ) -> LiveRouterPlanner {
     let mut config = LivePlannerConfig::default_for(root);
     config.mode = mode;
@@ -1483,6 +1514,7 @@ fn build_planner(
     config.judge_model = judge_model;
     config.offline_mock = offline_mock;
     config.task_prompt = task_prompt;
+    config.reasoning_effort = effort;
     LiveRouterPlanner::with_config(config)
 }
 
@@ -1527,6 +1559,7 @@ fn run_prompt(
     judge_model: Option<String>,
     max_steps: u32,
     offline_mock: bool,
+    effort: ReasoningEffort,
     json: bool,
 ) -> ExitCode {
     let p = Palette::detect();
@@ -1539,6 +1572,7 @@ fn run_prompt(
         judge_model,
         offline_mock,
         Some(text.to_string()),
+        effort,
     );
     planner.begin_task();
 
@@ -1733,6 +1767,7 @@ fn run_chat(
         judge_model,
         false,
         None,
+        ReasoningEffort::Auto,
     );
     planner.begin_task();
     let mut session = Session::new();
@@ -1831,7 +1866,8 @@ fn run_up(root: &Path, profile: Option<&str>, json: bool) -> ExitCode {
     use std::time::Duration;
 
     let p = Palette::detect();
-    let addr_str = "127.0.0.1:20128";
+    let addr_str = format!("{DEFAULT_ROUTER_HOST}:{DEFAULT_ROUTER_PORT}");
+    let endpoint = format!("http://{addr_str}{DEFAULT_ROUTER_PATH}");
     let is_alive = addr_str
         .to_socket_addrs()
         .ok()
@@ -1854,13 +1890,15 @@ fn run_up(root: &Path, profile: Option<&str>, json: bool) -> ExitCode {
                 .join("vibe-router.exe"),
         );
         candidates.push(root.join("portable_data").join("bin").join("vibe-router"));
-        candidates.push(root.join("../Vibe Router/target/release/vibe-router.exe"));
-        candidates.push(root.join("../Vibe Router/target/release/vibe-router"));
-        candidates.push(root.join("../../Vibe Router/target/release/vibe-router.exe"));
-        candidates.push(root.join("../../Vibe Router/target/release/vibe-router"));
-        candidates.push(PathBuf::from(
-            "Q:/Vibe Coding/Vibe Router/target/release/vibe-router.exe",
-        ));
+        for dir in [
+            "../Vibe Router",
+            "../Vibe_Router",
+            "../../Vibe Router",
+            "../../Vibe_Router",
+        ] {
+            candidates.push(root.join(dir).join("target/release/vibe-router.exe"));
+            candidates.push(root.join(dir).join("target/release/vibe-router"));
+        }
 
         let router_bin = candidates.into_iter().find(|p| p.exists());
         if let Some(bin) = router_bin {
@@ -1900,7 +1938,7 @@ fn run_up(root: &Path, profile: Option<&str>, json: bool) -> ExitCode {
     if json {
         let payload = serde_json::json!({
             "status": if final_alive { "live" } else { "offline" },
-            "endpoint": "http://127.0.0.1:20128/api/assignment",
+            "endpoint": endpoint,
             "spawned_router": started,
             "has_auth": !auth.is_empty(),
             "ready": true,
@@ -1924,8 +1962,8 @@ fn run_up(root: &Path, profile: Option<&str>, json: bool) -> ExitCode {
     );
     if final_alive {
         println!(
-            "   {}Router:{}     {}🟢 LIVE (http://127.0.0.1:20128/api/assignment){}",
-            p.dim, p.reset, p.green, p.reset
+            "   {}Router:{}     {}🟢 LIVE ({}){}",
+            p.dim, p.reset, p.green, endpoint, p.reset
         );
         println!(
             "   {}Handshake:{}  {}Zero-401 authentication token synchronized{}",

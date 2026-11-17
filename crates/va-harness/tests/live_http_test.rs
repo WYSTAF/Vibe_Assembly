@@ -10,7 +10,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use va_core::modes::{ExecutionMode, LanguageLens};
+use va_core::modes::{ExecutionMode, LanguageLens, ReasoningEffort};
+use va_core::router_client::{chat_completion, ChatMessage, RequestContext, RouterAuth};
 use va_harness::engine::{Engine, StagnationPolicy};
 use va_harness::live_planner::{LivePlannerConfig, LiveRouterPlanner};
 use va_harness::patcher::segment_blocks;
@@ -329,5 +330,157 @@ fn live_planner_telemetry_accepts_vr_alias_headers() {
     assert_eq!(planner.last_latency_ms, 7);
     let updated = std::fs::read_to_string(repo.join("src").join("lib.rs")).unwrap();
     assert!(updated.contains("42"));
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+/// One-connection mock that captures the request body and answers a minimal
+/// chat completion, so payload fields can be asserted verbatim.
+fn capture_one_completion() -> (u16, Arc<Mutex<String>>, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let captured = Arc::new(Mutex::new(String::new()));
+    let out = Arc::clone(&captured);
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let (_head, body) = read_request(&mut stream);
+        *out.lock().unwrap() = body;
+        let wrapped = serde_json::json!({
+            "choices": [{"message": {"role": "assistant", "content": "ok"}}]
+        })
+        .to_string();
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+            wrapped.len(),
+            wrapped
+        );
+        let _ = stream.write_all(response.as_bytes());
+    });
+    (port, captured, handle)
+}
+
+#[test]
+fn reasoning_effort_payload_emission_follows_model_capability() {
+    let cases = [
+        ("gpt-5.2-codex", ReasoningEffort::XHigh, Some("xhigh")),
+        ("claude-sonnet-4.6", ReasoningEffort::XHigh, Some("high")),
+        ("claude-sonnet-4.6", ReasoningEffort::High, Some("high")),
+        ("gpt-4o-mini", ReasoningEffort::High, None),
+        ("gemini-2.5-flash", ReasoningEffort::Medium, None),
+        ("claude-opus-4.6", ReasoningEffort::Auto, None),
+    ];
+    for (model, effort, expected) in cases {
+        let (port, captured, server) = capture_one_completion();
+        let ctx = RequestContext {
+            reasoning_effort: effort,
+            ..RequestContext::default()
+        };
+        let result = chat_completion(
+            "127.0.0.1",
+            port,
+            "/v1/chat/completions",
+            &RouterAuth::default(),
+            &ctx,
+            model,
+            &[ChatMessage::user("hi")],
+            0.2,
+            None,
+            5_000,
+        );
+        assert!(result.is_ok(), "{model} / {effort}: {result:?}");
+        server.join().unwrap();
+        let body: serde_json::Value =
+            serde_json::from_str(&captured.lock().unwrap()).expect("request body must be JSON");
+        match expected {
+            Some(level) => assert_eq!(
+                body["reasoning_effort"], level,
+                "{model} requested {effort} must wire {level}"
+            ),
+            None => assert!(
+                body.get("reasoning_effort").is_none(),
+                "{model} requested {effort} must omit the field, got {body}"
+            ),
+        }
+    }
+}
+
+#[test]
+fn live_planner_config_effort_reaches_every_router_call() {
+    let repo = temp_repo("effort-config");
+    let source = "pub fn effort() -> u32 {\n    1\n}\n";
+    std::fs::write(repo.join("src").join("lib.rs"), source).unwrap();
+    let block = segment_blocks(source).first().cloned().unwrap();
+    let short = format!("{:04X}", (block.hash >> 48) as u16);
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let bodies = Arc::new(Mutex::new(Vec::new()));
+    let bodies_out = Arc::clone(&bodies);
+    let handle = thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let (head, body) = read_request(&mut stream);
+            bodies_out.lock().unwrap().push(body);
+            let role = head
+                .lines()
+                .find_map(|l| {
+                    let (k, v) = l.split_once(':')?;
+                    if k.eq_ignore_ascii_case("x-vibe-role") {
+                        Some(v.trim().to_string())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default();
+            let content = if role == "boss" {
+                format!(
+                    "{{\"targets\":[{{\"file\":\"src/lib.rs\",\"block_hash\":\"{short}\"}}],\"verify\":\"exit 0\"}}"
+                )
+            } else {
+                format!(
+                    "{{\"patches\":[{{\"file\":\"src/lib.rs\",\"target_hash\":\"{short}\",\"replacement\":\"pub fn effort() -> u32 {{\\n    2\\n}}\"}}]}}"
+                )
+            };
+            let wrapped = serde_json::json!({
+                "choices": [{"message": {"role": "assistant", "content": content}}]
+            })
+            .to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                wrapped.len(),
+                wrapped
+            );
+            let _ = stream.write_all(response.as_bytes());
+        }
+    });
+
+    let mut config = LivePlannerConfig::default_for(&repo);
+    config.model = Some("claude-sonnet-4.6".into());
+    config.router_port = port;
+    config.timeout_ms = 5_000;
+    config.mode = ExecutionMode::Code;
+    config.language = LanguageLens::Rust;
+    config.verification_command = Some("exit 0".to_string());
+    config.task_prompt = Some("Return two.".to_string());
+    config.reasoning_effort = ReasoningEffort::XHigh;
+    let mut planner = LiveRouterPlanner::with_config(config);
+    let mut session = Session::new();
+    let mut engine = Engine::new(&repo)
+        .with_max_steps(8)
+        .with_profile(ExecutionMode::Code, LanguageLens::Rust);
+    let result = engine.run(&mut session, &mut planner);
+    assert!(result.is_ok(), "{result:?}");
+    handle.join().unwrap();
+
+    let bodies = bodies.lock().unwrap();
+    assert_eq!(bodies.len(), 2, "boss and code calls must both be captured");
+    for body in bodies.iter() {
+        let json: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert_eq!(
+            json["reasoning_effort"], "high",
+            "XHigh on sonnet must coerce to high on every call: {body}"
+        );
+    }
     let _ = std::fs::remove_dir_all(&repo);
 }

@@ -23,7 +23,7 @@ use gpui::{
     SharedString, Stateful, StyleRefinement, StyledText, UTF16Selection, UnderlineStyle, Window,
     WindowControlArea,
 };
-use va_core::modes::{ExecutionMode, LanguageLens};
+use va_core::modes::{ExecutionMode, LanguageLens, ReasoningEffort};
 use va_core::state::Workspace;
 
 use crate::branding;
@@ -599,28 +599,79 @@ fn parse_theme(raw: &str) -> Option<bool> {
     })
 }
 
-fn format_theme(day: bool) -> &'static str {
-    if day {
-        "theme=day\n"
-    } else {
-        "theme=night\n"
-    }
-}
-
 fn stored_theme() -> Option<bool> {
     std::fs::read_to_string(preferences_path()?)
         .ok()
         .and_then(|raw| parse_theme(&raw))
 }
 
-fn store_theme(day: bool) {
+/// Replace (or append) one key while preserving every other line, so the
+/// theme and each per-model thinking choice coexist in one file.
+fn upsert_preference(raw: &str, key: &str, value: &str) -> String {
+    let mut out = String::new();
+    let mut replaced = false;
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some((k, _)) = trimmed.split_once('=') {
+            if k.trim() == key {
+                out.push_str(&format!("{key}={value}\n"));
+                replaced = true;
+                continue;
+            }
+        }
+        out.push_str(trimmed);
+        out.push('\n');
+    }
+    if !replaced {
+        out.push_str(&format!("{key}={value}\n"));
+    }
+    out
+}
+
+fn write_preference(key: &str, value: &str) {
     let Some(path) = preferences_path() else {
         return;
     };
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let _ = std::fs::write(path, format_theme(day));
+    let raw = std::fs::read_to_string(&path).unwrap_or_default();
+    let _ = std::fs::write(path, upsert_preference(&raw, key, value));
+}
+
+fn store_theme(day: bool) {
+    write_preference("theme", if day { "day" } else { "night" });
+}
+
+fn thinking_key(model_id: &str) -> String {
+    format!("thinking.{model_id}")
+}
+
+fn parse_thinking(raw: &str, model_id: &str) -> Option<ThinkingLevel> {
+    let key = thinking_key(model_id);
+    raw.lines().find_map(|line| {
+        let (k, v) = line.split_once('=')?;
+        if k.trim() != key {
+            return None;
+        }
+        v.trim()
+            .parse::<ReasoningEffort>()
+            .ok()
+            .map(ThinkingLevel::from_effort)
+    })
+}
+
+fn stored_thinking(model_id: &str) -> Option<ThinkingLevel> {
+    std::fs::read_to_string(preferences_path()?)
+        .ok()
+        .and_then(|raw| parse_thinking(&raw, model_id))
+}
+
+fn store_thinking(model_id: &str, level: ThinkingLevel) {
+    write_preference(&thinking_key(model_id), level.effort().as_str());
 }
 
 // ---------------------------------------------------------------- repository
@@ -1473,7 +1524,7 @@ enum ModelCatalog {
 
 /// A Codex-style depth ladder: Auto keeps the model default, the rest trade
 /// latency and cost for more reasoning depth.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ThinkingLevel {
     Auto,
     Fast,
@@ -1509,6 +1560,38 @@ impl ThinkingLevel {
             Self::Deep => "Hard reasoning and debugging",
             Self::Max => "Long agent runs, highest cost",
         }
+    }
+
+    fn effort(self) -> ReasoningEffort {
+        match self {
+            Self::Auto => ReasoningEffort::Auto,
+            Self::Fast => ReasoningEffort::Low,
+            Self::Balanced => ReasoningEffort::Medium,
+            Self::Deep => ReasoningEffort::High,
+            Self::Max => ReasoningEffort::XHigh,
+        }
+    }
+
+    fn from_effort(effort: ReasoningEffort) -> Self {
+        match effort {
+            ReasoningEffort::Auto => Self::Auto,
+            ReasoningEffort::Low => Self::Fast,
+            ReasoningEffort::Medium => Self::Balanced,
+            ReasoningEffort::High => Self::Deep,
+            ReasoningEffort::XHigh => Self::Max,
+        }
+    }
+}
+
+/// What the model pill may honestly claim: the effective level after
+/// per-model coercion, and whether it differs from the user's selection.
+fn effective_thinking(model_id: &str, level: ThinkingLevel) -> (ThinkingLevel, bool) {
+    let requested = level.effort();
+    let (_, effective) = requested.resolve_for_model(model_id, false);
+    match effective {
+        Some(e) if e != requested => (ThinkingLevel::from_effort(e), true),
+        None if requested != ReasoningEffort::Auto => (ThinkingLevel::Auto, true),
+        _ => (level, false),
     }
 }
 
@@ -1679,6 +1762,12 @@ impl GlassPreview {
         let live = load_live(mode);
         let chats = initial_chats(&live);
         let next_chat = chats.len() as u64;
+        let models = fallback_models();
+        // Each model remembers its own thinking level across launches.
+        let thinking = models
+            .first()
+            .and_then(|choice| stored_thinking(&choice.id))
+            .unwrap_or(ThinkingLevel::Auto);
         let mut preview = Self {
             mode,
             day,
@@ -1706,9 +1795,9 @@ impl GlassPreview {
             next_chat,
             chat_epoch: 0,
             model: 0,
-            models: fallback_models(),
+            models,
             model_catalog: ModelCatalog::Builtin,
-            thinking: ThinkingLevel::Auto,
+            thinking,
             model_menu: false,
             session_map: false,
             repo: RepoSnapshot::default(),
@@ -1775,6 +1864,11 @@ impl GlassPreview {
             .unwrap_or(0);
         self.models = models;
         self.model_catalog = ModelCatalog::Live;
+        self.thinking = self
+            .models
+            .get(self.model)
+            .and_then(|choice| stored_thinking(&choice.id))
+            .unwrap_or(ThinkingLevel::Auto);
         cx.notify();
     }
 
@@ -2059,6 +2153,10 @@ impl GlassPreview {
         // Real engine execution against the workspace (read-only in Chat).
         if let Some(live) = self.live.as_mut() {
             live.set_mode(self.mode);
+            if let Some(choice) = self.models.get(self.model) {
+                live.set_model(choice.id.clone());
+            }
+            live.reasoning_effort = self.thinking.effort();
             live.prompt_input = text.clone();
             let _ = live.submit_prompt();
             if let Some(reply) = live.thread.iter().rev().find_map(|item| match item {
@@ -2319,11 +2417,19 @@ impl GlassPreview {
     fn set_model(&mut self, model: usize, cx: &mut Context<Self>) {
         self.model = model.min(self.models.len().saturating_sub(1));
         self.model_menu = false;
+        self.thinking = self
+            .models
+            .get(self.model)
+            .and_then(|choice| stored_thinking(&choice.id))
+            .unwrap_or(ThinkingLevel::Auto);
         cx.notify();
     }
 
     fn set_thinking(&mut self, level: ThinkingLevel, cx: &mut Context<Self>) {
         self.thinking = level;
+        if let Some(choice) = self.models.get(self.model) {
+            store_thinking(&choice.id, level);
+        }
         cx.notify();
     }
 
@@ -4059,10 +4165,17 @@ fn conversation_header(
         .get(model)
         .map(|choice| choice.label.as_str())
         .unwrap_or("Model");
-    let pill_label = if compact || thinking == ThinkingLevel::Auto {
+    let model_id = models
+        .get(model)
+        .map(|choice| choice.id.as_str())
+        .unwrap_or("");
+    let (shown, coerced) = effective_thinking(model_id, thinking);
+    let pill_label = if compact || (shown == ThinkingLevel::Auto && !coerced) {
         model_label.to_string()
+    } else if coerced {
+        format!("{model_label} · {} (coerced)", shown.label())
     } else {
-        format!("{model_label} · {}", thinking.label())
+        format!("{model_label} · {}", shown.label())
     };
     div()
         .h(px(56.0))
@@ -8622,8 +8735,8 @@ mod tests {
 
     #[test]
     fn theme_preferences_round_trip_and_tolerate_noise() {
-        assert_eq!(parse_theme(format_theme(true)), Some(true));
-        assert_eq!(parse_theme(format_theme(false)), Some(false));
+        assert_eq!(parse_theme("theme=day\n"), Some(true));
+        assert_eq!(parse_theme("theme=night\n"), Some(false));
         assert_eq!(parse_theme("theme=day\r\n"), Some(true));
         assert_eq!(parse_theme("  theme = night  "), Some(false));
         assert_eq!(parse_theme("sidebar=wide\ntheme=day\n"), Some(true));
@@ -8632,6 +8745,94 @@ mod tests {
         assert_eq!(parse_theme("theme"), None);
         // A malformed theme line must not mask an unambiguous one below it.
         assert_eq!(parse_theme("theme=nope\ntheme=night\n"), Some(false));
+    }
+
+    #[test]
+    fn thinking_levels_map_onto_the_effort_ladder_both_ways() {
+        for level in ThinkingLevel::ALL {
+            assert_eq!(ThinkingLevel::from_effort(level.effort()), level);
+        }
+        assert_eq!(ThinkingLevel::Auto.effort(), ReasoningEffort::Auto);
+        assert_eq!(ThinkingLevel::Fast.effort(), ReasoningEffort::Low);
+        assert_eq!(ThinkingLevel::Balanced.effort(), ReasoningEffort::Medium);
+        assert_eq!(ThinkingLevel::Deep.effort(), ReasoningEffort::High);
+        assert_eq!(ThinkingLevel::Max.effort(), ReasoningEffort::XHigh);
+    }
+
+    #[test]
+    fn per_model_thinking_preferences_round_trip_and_keep_the_theme() {
+        let raw = "theme=night\n";
+        let raw = upsert_preference(raw, &thinking_key("claude-opus-4.6"), "xhigh");
+        let raw = upsert_preference(&raw, &thinking_key("gpt-4o-mini"), "low");
+        assert_eq!(parse_theme(&raw), Some(false));
+        assert_eq!(
+            parse_thinking(&raw, "claude-opus-4.6"),
+            Some(ThinkingLevel::Max)
+        );
+        assert_eq!(
+            parse_thinking(&raw, "gpt-4o-mini"),
+            Some(ThinkingLevel::Fast)
+        );
+        assert_eq!(parse_thinking(&raw, "claude-sonnet-4.6"), None);
+
+        // Updating one model must not disturb the theme or the other model.
+        let raw = upsert_preference(&raw, &thinking_key("claude-opus-4.6"), "medium");
+        assert_eq!(parse_theme(&raw), Some(false));
+        assert_eq!(
+            parse_thinking(&raw, "claude-opus-4.6"),
+            Some(ThinkingLevel::Balanced)
+        );
+        assert_eq!(
+            parse_thinking(&raw, "gpt-4o-mini"),
+            Some(ThinkingLevel::Fast)
+        );
+
+        // A theme change preserves every thinking key.
+        let raw = upsert_preference(&raw, "theme", "day");
+        assert_eq!(parse_theme(&raw), Some(true));
+        assert_eq!(
+            parse_thinking(&raw, "claude-opus-4.6"),
+            Some(ThinkingLevel::Balanced)
+        );
+
+        // Unknown keys survive, and malformed values fail closed.
+        let raw = upsert_preference(&raw, "sidebar", "wide");
+        assert!(raw.contains("sidebar=wide\n"));
+        let noisy = upsert_preference(&raw, &thinking_key("claude-opus-4.6"), "ultra");
+        assert_eq!(parse_thinking(&noisy, "claude-opus-4.6"), None);
+        assert_eq!(parse_thinking("", "claude-opus-4.6"), None);
+    }
+
+    #[test]
+    fn model_pill_shows_the_coerced_effective_level() {
+        // Requested level survives on capable models.
+        assert_eq!(
+            effective_thinking("claude-opus-4.6", ThinkingLevel::Max),
+            (ThinkingLevel::Max, false)
+        );
+        assert_eq!(
+            effective_thinking("claude-sonnet-4.6", ThinkingLevel::Deep),
+            (ThinkingLevel::Deep, false)
+        );
+        // XHigh coerces down to High where xhigh is unsupported.
+        assert_eq!(
+            effective_thinking("claude-sonnet-4.6", ThinkingLevel::Max),
+            (ThinkingLevel::Deep, true)
+        );
+        // Fast-tier models omit the field entirely: Auto is in charge.
+        assert_eq!(
+            effective_thinking("gpt-4o-mini", ThinkingLevel::Deep),
+            (ThinkingLevel::Auto, true)
+        );
+        assert_eq!(
+            effective_thinking("gemini-2.5-flash", ThinkingLevel::Max),
+            (ThinkingLevel::Auto, true)
+        );
+        // Auto is never marked coerced.
+        assert_eq!(
+            effective_thinking("gpt-4o-mini", ThinkingLevel::Auto),
+            (ThinkingLevel::Auto, false)
+        );
     }
 
     #[test]

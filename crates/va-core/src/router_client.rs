@@ -23,6 +23,8 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::modes::ReasoningEffort;
+
 pub const DEFAULT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_PORT: u16 = 20128;
 pub const DEFAULT_PATH: &str = "/api/assignment";
@@ -96,6 +98,8 @@ pub struct RequestContext {
     pub node_id: Option<u64>,
     pub profile: Option<String>,
     pub is_retry: bool,
+    /// Requested reasoning effort; resolved per model before emission.
+    pub reasoning_effort: ReasoningEffort,
 }
 
 impl RequestContext {
@@ -445,13 +449,18 @@ pub fn chat_completion(
     max_tokens: Option<u32>,
     timeout_ms: u64,
 ) -> Result<ChatCompletion, String> {
-    let payload = serde_json::json!({
+    let mut payload = serde_json::json!({
         "model": model,
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
         "stream": false,
     });
+    // This client never sends tools, so `has_tools` is false; unsupported
+    // models still coerce or omit the field rather than risk a 400.
+    if let (Some(level), _) = ctx.reasoning_effort.resolve_for_model(model, false) {
+        payload["reasoning_effort"] = serde_json::Value::String(level.to_string());
+    }
     let body = serde_json::to_string(&payload).map_err(|e| format!("encode request: {e}"))?;
 
     let (status, headers, response_body) = http_request(
@@ -1004,6 +1013,7 @@ mod tests {
             node_id: Some(42),
             profile: Some("portable".into()),
             is_retry: true,
+            reasoning_effort: ReasoningEffort::Auto,
         };
         let headers = ctx.headers();
         assert!(headers.contains(&("X-Vibe-Role".into(), "code".into())));

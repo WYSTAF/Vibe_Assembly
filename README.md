@@ -9,14 +9,14 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-3B82F6?style=flat-square)](LICENSE)
 
 
-**v2.4.0 - a production-hardened, pure-Rust multi-agent coding workspace with a native Liquid Glass workbench that persists night and warm day themes, searches everything from the titlebar, and fits its edge drawer to the window.**
+**v2.4.1 - a production-hardened, pure-Rust multi-agent coding workspace with a native Liquid Glass workbench whose thinking ladder drives real per-model `reasoning_effort` on router requests, persists night/day themes and per-model thinking preferences, searches everything from the titlebar, and fits its edge drawer to the window.**
 
 Vibe Assembly lets small, focused agents build and maintain large software
 projects without exhausting a single chat context. Roles communicate through a
 regulated `.ai/` contract, and every edit passes through a deterministic,
 hash-anchored execution harness.
 
-**Current status:** 243 tests passing, clippy clean with `-D warnings`, both
+**Current status:** 254 tests passing, clippy clean with `-D warnings`, both
 release binaries build. There is no browser runtime, webview, or Node/npm
 toolchain.
 
@@ -226,6 +226,16 @@ Chat / Architect remains a hard read-only boundary.
 output list `--json` in their `--help` (for example `up`, `repomap`, `diagnose`,
 `prompt`, `profile`, and the `session` subcommands).
 
+## Thinking effort
+
+`run` and `prompt` accept `--effort auto|low|medium|high|xhigh` (default
+`auto`). The Liquid Glass thinking ladder maps to the same levels
+(Auto/Fast/Balanced/Deep/Max) and persists per model in
+`%APPDATA%\Vibe Assembly\preferences.conf`. Unsupported levels coerce down
+honestly: fast-tier models (mini/nano/flash/...) omit `reasoning_effort`
+entirely, and Max falls back to Deep unless the model class supports it. The
+model pill shows the coerced effective level.
+
 ## Language lens
 
 `--lang auto|rust|c|python|ts|go` selects a language lens. `auto` resolves from
@@ -372,7 +382,7 @@ cargo test --workspace
 cargo build --release
 ```
 
-Current workspace: **243 tests passing**, clippy clean, both release binaries
+Current workspace: **254 tests passing**, clippy clean, both release binaries
 built. The live HTTP planner is tested against a local mock OpenAI-compatible
 TCP server; unit tests cover compaction, think-trace eviction, observation
 slicing, repeated anchors, read-only enforcement, stagnation escalation,

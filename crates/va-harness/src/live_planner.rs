@@ -22,7 +22,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
-use va_core::modes::{ExecutionMode, LanguageLens};
+use va_core::modes::{ExecutionMode, LanguageLens, ReasoningEffort};
 use va_core::parser::parse_active_task;
 use va_core::router_client::{
     chat_completion, fetch_assignment_with_context, ChatMessage, RequestContext, RouterAuth,
@@ -58,6 +58,8 @@ pub struct LivePlannerConfig {
     /// Optional independent judge model (reported to the UI; the deterministic
     /// judge always runs regardless).
     pub judge_model: Option<String>,
+    /// Requested reasoning effort; coerced per model before emission.
+    pub reasoning_effort: ReasoningEffort,
     /// Deterministic local synthesis. Never enabled for a real live run.
     pub offline_mock: bool,
     pub temperature: f32,
@@ -83,6 +85,7 @@ impl LivePlannerConfig {
             language: LanguageLens::Auto,
             model: None,
             judge_model: None,
+            reasoning_effort: ReasoningEffort::Auto,
             offline_mock: false,
             temperature: 0.2,
             max_tokens: None,
@@ -355,6 +358,7 @@ impl LiveRouterPlanner {
             node_id: None,
             profile: Some(self.config.mode.as_str().to_string()),
             is_retry: false,
+            reasoning_effort: ReasoningEffort::Auto,
         };
         let assignment = fetch_assignment_with_context(
             &self.config.router_host,
@@ -409,6 +413,7 @@ impl LiveRouterPlanner {
                 node_id: session.head(),
                 profile: Some(self.config.mode.as_str().to_string()),
                 is_retry: retried || !self.last_diagnostics.is_empty(),
+                reasoning_effort: self.config.reasoning_effort,
             };
             match chat_completion(
                 &self.config.router_host,

@@ -13,7 +13,7 @@ use gpui::prelude::*;
 use gpui::{div, px, Context, FocusHandle, KeyDownEvent, Render, Window, WindowControlArea};
 use va_core::knowledge::context_window_tokens;
 use va_core::lock::{check_task_lock, LockStatus};
-use va_core::modes::{ExecutionMode, LanguageLens};
+use va_core::modes::{ExecutionMode, LanguageLens, ReasoningEffort};
 use va_core::router_client::router_endpoint;
 use va_core::runtime::AtomicStateSync;
 use va_core::state::Workspace;
@@ -345,6 +345,7 @@ pub struct WorkbenchState {
     pub language: LanguageLens,
     pub model: String,
     pub models: Vec<String>,
+    pub reasoning_effort: ReasoningEffort,
     pub judge_on: bool,
     pub prompt_input: String,
     pub thread: Vec<ThreadItem>,
@@ -438,6 +439,7 @@ impl WorkbenchState {
             language,
             model,
             models,
+            reasoning_effort: ReasoningEffort::Auto,
             judge_on: true,
             prompt_input: String::new(),
             thread: Vec::new(),
@@ -948,6 +950,7 @@ impl WorkbenchState {
         };
         config.offline_mock = !self.router_live;
         config.task_prompt = Some(text.to_string());
+        config.reasoning_effort = self.reasoning_effort;
         let mut planner = LiveRouterPlanner::with_config(config);
         planner.begin_task();
 

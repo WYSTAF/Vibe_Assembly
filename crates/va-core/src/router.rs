@@ -1,5 +1,5 @@
 //! Vibe Router assignment client with offline fallback.
-//! Queries http://127.0.0.1:20128/v1/assignment or falls back to
+//! Queries http://127.0.0.1:20128/api/assignment or falls back to
 //! .ai/model_knowledge.json and .ai/model_combo.txt.
 
 use serde::{Deserialize, Serialize};
@@ -12,7 +12,7 @@ use std::time::Duration;
 
 pub const DEFAULT_ROUTER_HOST: &str = "127.0.0.1";
 pub const DEFAULT_ROUTER_PORT: u16 = 20128;
-pub const DEFAULT_ROUTER_PATH: &str = "/v1/assignment";
+pub const DEFAULT_ROUTER_PATH: &str = "/api/assignment";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoleAllocation {
@@ -279,7 +279,7 @@ pub fn resolve_assignment(root: &Path) -> RouterAssignment {
 fn parse_env_router_endpoint() -> (String, u16, String) {
     if let Ok(url) = std::env::var("VIBE_ROUTER_URL") {
         if let Some(after) = url.strip_prefix("http://") {
-            let (host_port, path) = after.split_once('/').unwrap_or((after, "v1/assignment"));
+            let (host_port, path) = after.split_once('/').unwrap_or((after, "api/assignment"));
             let path = format!("/{}", path);
             if let Some((h, p)) = host_port.split_once(':') {
                 if let Ok(port) = p.parse::<u16>() {

@@ -38,6 +38,7 @@ fn test_live_planner_context_headers_and_retries() {
         node_id: Some(1),
         profile: Some("workstation".into()),
         is_retry: false,
+        ..RequestContext::default()
     };
     let boss_headers = boss_ctx.headers();
     assert!(boss_headers.contains(&("X-Vibe-Role".into(), "boss".into())));
@@ -50,6 +51,7 @@ fn test_live_planner_context_headers_and_retries() {
         node_id: Some(2),
         profile: None,
         is_retry: true,
+        ..RequestContext::default()
     };
     let retry_headers = retry_ctx.headers();
     assert!(retry_headers.contains(&("X-Vibe-Role".into(), "code".into())));

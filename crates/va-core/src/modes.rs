@@ -397,6 +397,115 @@ impl FromStr for LanguageLens {
     }
 }
 
+/// Provider-facing reasoning effort, sent as `reasoning_effort` on OpenAI-
+/// compatible chat completions. `Auto` omits the field so the router/provider
+/// keeps its native default; the other levels trade latency and cost for
+/// deeper reasoning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    /// Omit `reasoning_effort`; the model decides.
+    #[default]
+    Auto,
+    Low,
+    Medium,
+    High,
+    XHigh,
+}
+
+impl ReasoningEffort {
+    pub const ALL: [ReasoningEffort; 5] = [
+        ReasoningEffort::Auto,
+        ReasoningEffort::Low,
+        ReasoningEffort::Medium,
+        ReasoningEffort::High,
+        ReasoningEffort::XHigh,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ReasoningEffort::Auto => "auto",
+            ReasoningEffort::Low => "low",
+            ReasoningEffort::Medium => "medium",
+            ReasoningEffort::High => "high",
+            ReasoningEffort::XHigh => "xhigh",
+        }
+    }
+
+    /// UI ladder label (Auto / Fast / Balanced / Deep / Max).
+    pub fn label(self) -> &'static str {
+        match self {
+            ReasoningEffort::Auto => "Auto",
+            ReasoningEffort::Low => "Fast",
+            ReasoningEffort::Medium => "Balanced",
+            ReasoningEffort::High => "Deep",
+            ReasoningEffort::XHigh => "Max",
+        }
+    }
+
+    /// Resolve the requested effort against a concrete model.
+    ///
+    /// Returns `(wire_level, effective_level)`:
+    /// - `wire_level` is the string to put in the request body, or `None` to
+    ///   omit the field entirely.
+    /// - `effective_level` is what the UI may honestly display; `None` means
+    ///   the provider default (Auto) is in charge.
+    ///
+    /// Fail-closed coercion: fast-tier models (mini/nano/flash/haiku/llama/
+    /// mistral classes) reject explicit effort, and some models reject
+    /// `reasoning_effort` combined with tools, so both cases omit the field.
+    /// `XHigh` is only advertised by the newest reasoning families; elsewhere
+    /// it coerces down to `High`.
+    pub fn resolve_for_model(
+        self,
+        model_id: &str,
+        has_tools: bool,
+    ) -> (Option<&'static str>, Option<ReasoningEffort>) {
+        if self == ReasoningEffort::Auto {
+            return (None, None);
+        }
+        let id = model_id.to_ascii_lowercase();
+        const NO_EFFORT: [&str; 9] = [
+            "mini", "nano", "flash", "haiku", "fast", "llama", "mistral", "lite", "small",
+        ];
+        if has_tools || NO_EFFORT.iter().any(|class| id.contains(class)) {
+            return (None, None);
+        }
+        const XHIGH_CAPABLE: [&str; 5] = ["gpt-5", "codex", "o3", "o4", "opus"];
+        let effective = if self == ReasoningEffort::XHigh
+            && !XHIGH_CAPABLE.iter().any(|family| id.contains(family))
+        {
+            ReasoningEffort::High
+        } else {
+            self
+        };
+        (Some(effective.as_str()), Some(effective))
+    }
+}
+
+impl fmt::Display for ReasoningEffort {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ReasoningEffort {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "auto" => Ok(ReasoningEffort::Auto),
+            "low" | "fast" => Ok(ReasoningEffort::Low),
+            "medium" | "balanced" => Ok(ReasoningEffort::Medium),
+            "high" | "deep" => Ok(ReasoningEffort::High),
+            "xhigh" | "x-high" | "max" => Ok(ReasoningEffort::XHigh),
+            other => Err(format!(
+                "unknown effort `{other}` (expected auto|low|medium|high|xhigh)"
+            )),
+        }
+    }
+}
+
 /// The pair selected for one run: execution mode + language lens.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceProfile {
@@ -528,5 +637,101 @@ mod tests {
         assert_eq!("cpp".parse(), Ok(LanguageLens::C));
         assert_eq!("golang".parse(), Ok(LanguageLens::Go));
         assert_eq!("javascript".parse(), Ok(LanguageLens::TypeScript));
+    }
+
+    #[test]
+    fn effort_parsing_accepts_wire_and_ui_names_and_rejects_garbage() {
+        assert_eq!("auto".parse(), Ok(ReasoningEffort::Auto));
+        assert_eq!("low".parse(), Ok(ReasoningEffort::Low));
+        assert_eq!("fast".parse(), Ok(ReasoningEffort::Low));
+        assert_eq!("balanced".parse(), Ok(ReasoningEffort::Medium));
+        assert_eq!("deep".parse(), Ok(ReasoningEffort::High));
+        assert_eq!("XHIGH".parse(), Ok(ReasoningEffort::XHigh));
+        assert_eq!("max".parse(), Ok(ReasoningEffort::XHigh));
+        assert!("ultra".parse::<ReasoningEffort>().is_err());
+        assert!("".parse::<ReasoningEffort>().is_err());
+    }
+
+    #[test]
+    fn effort_wire_strings_and_labels_match_the_ladder() {
+        let wire: Vec<&str> = ReasoningEffort::ALL.iter().map(|e| e.as_str()).collect();
+        assert_eq!(wire, vec!["auto", "low", "medium", "high", "xhigh"]);
+        let labels: Vec<&str> = ReasoningEffort::ALL.iter().map(|e| e.label()).collect();
+        assert_eq!(labels, vec!["Auto", "Fast", "Balanced", "Deep", "Max"]);
+        assert_eq!(ReasoningEffort::default(), ReasoningEffort::Auto);
+        for effort in ReasoningEffort::ALL {
+            assert_eq!(effort.to_string().parse(), Ok(effort));
+            let json = serde_json::to_string(&effort).unwrap();
+            assert_eq!(json, format!("\"{}\"", effort.as_str()));
+            assert_eq!(
+                serde_json::from_str::<ReasoningEffort>(&json).unwrap(),
+                effort
+            );
+        }
+    }
+
+    #[test]
+    fn effort_auto_always_omits_the_field() {
+        for model in ["gpt-5.2-codex", "claude-opus-4.6", "gpt-4o-mini", ""] {
+            assert_eq!(
+                ReasoningEffort::Auto.resolve_for_model(model, false),
+                (None, None)
+            );
+        }
+    }
+
+    #[test]
+    fn effort_passes_through_on_reasoning_models() {
+        assert_eq!(
+            ReasoningEffort::High.resolve_for_model("claude-sonnet-4.6", false),
+            (Some("high"), Some(ReasoningEffort::High))
+        );
+        assert_eq!(
+            ReasoningEffort::Low.resolve_for_model("gpt-5.2", false),
+            (Some("low"), Some(ReasoningEffort::Low))
+        );
+        assert_eq!(
+            ReasoningEffort::XHigh.resolve_for_model("gpt-5.2-codex", false),
+            (Some("xhigh"), Some(ReasoningEffort::XHigh))
+        );
+        assert_eq!(
+            ReasoningEffort::XHigh.resolve_for_model("claude-opus-4.6", false),
+            (Some("xhigh"), Some(ReasoningEffort::XHigh))
+        );
+    }
+
+    #[test]
+    fn effort_xhigh_coerces_down_when_unsupported() {
+        assert_eq!(
+            ReasoningEffort::XHigh.resolve_for_model("claude-sonnet-4.6", false),
+            (Some("high"), Some(ReasoningEffort::High))
+        );
+        assert_eq!(
+            ReasoningEffort::XHigh.resolve_for_model("deepseek-r1", false),
+            (Some("high"), Some(ReasoningEffort::High))
+        );
+    }
+
+    #[test]
+    fn effort_omitted_on_fast_tier_models_and_tool_conflicts() {
+        for model in [
+            "gpt-4o-mini",
+            "gemini-2.5-flash",
+            "gemini-2.5-nano",
+            "claude-haiku-4.5",
+            "llama-3.3-70b",
+            "mistral-large",
+        ] {
+            assert_eq!(
+                ReasoningEffort::High.resolve_for_model(model, false),
+                (None, None),
+                "{model} must not receive explicit reasoning_effort"
+            );
+        }
+        assert_eq!(
+            ReasoningEffort::Medium.resolve_for_model("gpt-5.2", true),
+            (None, None),
+            "tools + explicit effort must fail closed"
+        );
     }
 }

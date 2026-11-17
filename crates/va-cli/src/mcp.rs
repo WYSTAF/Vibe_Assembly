@@ -98,7 +98,7 @@ pub fn handle_mcp_request(raw: &str, root: Option<&Path>) -> Option<String> {
             },
             "serverInfo": {
                 "name": "vibe-assembly",
-                "version": "2.0.0"
+                "version": env!("CARGO_PKG_VERSION")
             }
         })),
         "notifications/initialized" => return None,
@@ -842,6 +842,10 @@ mod tests {
         let resp: Value = serde_json::from_str(&resp_str).unwrap();
         assert_eq!(resp["id"], 1);
         assert_eq!(resp["result"]["serverInfo"]["name"], "vibe-assembly");
+        assert_eq!(
+            resp["result"]["serverInfo"]["version"],
+            env!("CARGO_PKG_VERSION")
+        );
     }
 
     #[test]
