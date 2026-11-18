@@ -484,3 +484,82 @@ fn live_planner_config_effort_reaches_every_router_call() {
     }
     let _ = std::fs::remove_dir_all(&repo);
 }
+
+#[test]
+fn vibe_local_telemetry_headers_reach_the_planner() {
+    let repo = temp_repo("local-telemetry");
+    let source = "pub fn local() -> u32 {\n    7\n}\n";
+    std::fs::write(repo.join("src").join("lib.rs"), source).unwrap();
+    let block = segment_blocks(source).first().cloned().unwrap();
+    let short = format!("{:04X}", (block.hash >> 48) as u16);
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let handle = thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let (head, _body) = read_request(&mut stream);
+            let role = head
+                .lines()
+                .find_map(|l| {
+                    let (k, v) = l.split_once(':')?;
+                    if k.eq_ignore_ascii_case("x-vibe-role") {
+                        Some(v.trim().to_string())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default();
+            let content = if role == "boss" {
+                format!(
+                    "{{\"targets\":[{{\"file\":\"src/lib.rs\",\"block_hash\":\"{short}\"}}],\"verify\":\"exit 0\"}}"
+                )
+            } else {
+                format!(
+                    "{{\"patches\":[{{\"file\":\"src/lib.rs\",\"target_hash\":\"{short}\",\"replacement\":\"pub fn local() -> u32 {{\\n    8\\n}}\"}}]}}"
+                )
+            };
+            let wrapped = serde_json::json!({
+                "choices": [{"message": {"role": "assistant", "content": content}}]
+            })
+            .to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                 X-Vibe-Router-Cost-Micros: 0\r\nX-Vibe-Router-Latency-Ms: 12\r\n\
+                 X-Vibe-Local-Tok-Per-Sec: 37.5\r\nX-Vibe-Local-Backend: vulkan\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                wrapped.len(),
+                wrapped
+            );
+            let _ = stream.write_all(response.as_bytes());
+        }
+    });
+
+    let mut config = LivePlannerConfig::default_for(&repo);
+    config.model = Some("qwen3-8b".into());
+    config.router_port = port;
+    config.timeout_ms = 5_000;
+    config.mode = ExecutionMode::Code;
+    config.language = LanguageLens::Rust;
+    config.verification_command = Some("exit 0".to_string());
+    config.task_prompt = Some("Return eight.".to_string());
+    let mut planner = LiveRouterPlanner::with_config(config);
+    assert_eq!(planner.last_tok_per_sec, None);
+    assert_eq!(planner.last_backend, None);
+    let mut session = Session::new();
+    let mut engine = Engine::new(&repo)
+        .with_max_steps(8)
+        .with_profile(ExecutionMode::Code, LanguageLens::Rust);
+    let result = engine.run(&mut session, &mut planner);
+    assert!(result.is_ok(), "{result:?}");
+    handle.join().unwrap();
+
+    assert_eq!(
+        planner.last_cost_micros, 0,
+        "local inference must be zero-cost"
+    );
+    assert_eq!(planner.last_latency_ms, 12);
+    assert_eq!(planner.last_tok_per_sec, Some(37.5));
+    assert_eq!(planner.last_backend.as_deref(), Some("vulkan"));
+    let _ = std::fs::remove_dir_all(&repo);
+}

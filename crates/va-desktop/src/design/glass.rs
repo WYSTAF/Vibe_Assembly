@@ -23,6 +23,7 @@ use gpui::{
     SharedString, Stateful, StyleRefinement, StyledText, UTF16Selection, UnderlineStyle, Window,
     WindowControlArea,
 };
+use va_core::local_node::LocalNodeStatus;
 use va_core::modes::{ExecutionMode, LanguageLens, ReasoningEffort};
 use va_core::state::Workspace;
 
@@ -1513,6 +1514,12 @@ struct ModelChoice {
     label: String,
     blurb: String,
     combo: bool,
+    /// Zero-cost local inference (Vibe Local or a LAN Pocket Worker).
+    local: bool,
+    /// Display badge: `Vulkan`, `CUDA`, `CPU`, or `LAN`.
+    backend: Option<String>,
+    /// Direct chat endpoint for local models; `None` uses the router.
+    endpoint: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1612,6 +1619,9 @@ fn fallback_models() -> Vec<ModelChoice> {
         label: label.to_string(),
         blurb: blurb.to_string(),
         combo: false,
+        local: false,
+        backend: None,
+        endpoint: None,
     })
     .collect()
 }
@@ -1653,6 +1663,9 @@ fn catalog_from_ids(ids: Vec<String>) -> Vec<ModelChoice> {
                 label: label.to_string(),
                 blurb: "Router combo".to_string(),
                 combo: true,
+                local: false,
+                backend: None,
+                endpoint: None,
             });
         } else {
             direct.push(ModelChoice {
@@ -1660,6 +1673,9 @@ fn catalog_from_ids(ids: Vec<String>) -> Vec<ModelChoice> {
                 label: id.clone(),
                 blurb: model_blurb(&id).to_string(),
                 combo: false,
+                local: false,
+                backend: None,
+                endpoint: None,
             });
         }
     }
@@ -1667,6 +1683,62 @@ fn catalog_from_ids(ids: Vec<String>) -> Vec<ModelChoice> {
     direct.sort_by(|a, b| a.label.cmp(&b.label));
     combos.extend(direct);
     combos
+}
+
+/// Display badge for a local node's backend; LAN workers badge as `LAN`.
+fn backend_badge(backend: Option<&str>, lan: bool) -> Option<String> {
+    if lan {
+        return Some("LAN".to_string());
+    }
+    match backend {
+        Some("vulkan") => Some("Vulkan".to_string()),
+        Some("cuda") => Some("CUDA".to_string()),
+        Some("cpu") => Some("CPU".to_string()),
+        _ => None,
+    }
+}
+
+/// Merge the router catalogue, the local Vibe Local node, and discovered LAN
+/// Pocket Workers into one deduplicated menu. Router entries win on id
+/// collisions; local models keep their direct endpoint and $0 blurb.
+fn merge_model_catalog(
+    router: Result<Vec<String>, String>,
+    local: Option<LocalNodeStatus>,
+    workers: Vec<LocalNodeStatus>,
+) -> Vec<ModelChoice> {
+    let mut models = match router {
+        Ok(ids) => catalog_from_ids(ids),
+        Err(_) => Vec::new(),
+    };
+    let push_local = |node: &LocalNodeStatus, models: &mut Vec<ModelChoice>| {
+        let badge = backend_badge(node.backend.as_deref(), node.lan);
+        let blurb = if node.lan {
+            "$0 / local · LAN worker"
+        } else {
+            "$0 / local"
+        };
+        for id in &node.models {
+            if models.iter().any(|choice| &choice.id == id) {
+                continue;
+            }
+            models.push(ModelChoice {
+                id: id.clone(),
+                label: id.clone(),
+                blurb: blurb.to_string(),
+                combo: false,
+                local: true,
+                backend: badge.clone(),
+                endpoint: Some(node.endpoint.clone()),
+            });
+        }
+    };
+    if let Some(node) = &local {
+        push_local(node, &mut models);
+    }
+    for worker in &workers {
+        push_local(worker, &mut models);
+    }
+    models
 }
 
 pub struct GlassPreview {
@@ -1834,7 +1906,16 @@ impl GlassPreview {
         cx.spawn(async move |this, cx| {
             let fetched = cx
                 .background_executor()
-                .spawn(async { va_core::router_client::fetch_v1_models_default(900) })
+                .spawn(async {
+                    let router = va_core::router_client::fetch_v1_models_default(900);
+                    let (host, port) = va_core::local_node::local_endpoint();
+                    let local = va_core::local_node::probe_vibe_local(&host, port, 400);
+                    let workers = va_core::local_node::discover_lan_workers(
+                        va_core::local_node::discovery_port(),
+                        200,
+                    );
+                    (router, local, workers)
+                })
                 .await;
             this.update(cx, |this, cx| this.apply_discovered_models(fetched, cx))
                 .ok();
@@ -1844,15 +1925,15 @@ impl GlassPreview {
 
     fn apply_discovered_models(
         &mut self,
-        fetched: Result<Vec<String>, String>,
+        fetched: (
+            Result<Vec<String>, String>,
+            Option<LocalNodeStatus>,
+            Vec<LocalNodeStatus>,
+        ),
         cx: &mut Context<Self>,
     ) {
-        let Ok(ids) = fetched else {
-            self.model_catalog = ModelCatalog::Builtin;
-            cx.notify();
-            return;
-        };
-        let models = catalog_from_ids(ids);
+        let (router, local, workers) = fetched;
+        let models = merge_model_catalog(router, local, workers);
         if models.is_empty() {
             self.model_catalog = ModelCatalog::Builtin;
             cx.notify();
@@ -2155,6 +2236,13 @@ impl GlassPreview {
             live.set_mode(self.mode);
             if let Some(choice) = self.models.get(self.model) {
                 live.set_model(choice.id.clone());
+                // Local models talk straight to their node when the router
+                // is offline; cloud models keep the router endpoint.
+                live.local_endpoint = if choice.local && !live.router_live {
+                    choice.endpoint.clone()
+                } else {
+                    None
+                };
             }
             live.reasoning_effort = self.thinking.effort();
             live.prompt_input = text.clone();
@@ -2879,6 +2967,8 @@ impl Render for GlassPreview {
                             nodes: self.live.as_ref().map(|l| l.session.len()).unwrap_or(0),
                             cost_micros: self.live.as_ref().map(|l| l.spend_micros).unwrap_or(0),
                             latency_ms: self.live.as_ref().map(|l| l.latency_ms).unwrap_or(0),
+                            tok_per_sec: self.live.as_ref().and_then(|l| l.last_tok_per_sec),
+                            backend: self.live.as_ref().and_then(|l| l.last_backend.clone()),
                             chats: self.chats.clone(),
                         },
                         &self.repo,
@@ -2910,6 +3000,8 @@ impl Render for GlassPreview {
                 chat.files,
                 self.repo.branch.as_deref(),
                 self.repo.loading,
+                self.live.as_ref().and_then(|l| l.last_tok_per_sec),
+                self.live.as_ref().and_then(|l| l.last_backend.clone()),
                 cx,
             ))
     }
@@ -4107,6 +4199,8 @@ fn model_option(
         .child(icon(
             if choice.combo {
                 "git-branch"
+            } else if choice.local {
+                "monitor"
             } else {
                 "sparkles"
             },
@@ -4122,11 +4216,22 @@ fn model_option(
                 .gap(px(1.0))
                 .child(
                     div()
-                        .truncate()
-                        .text_size(px(12.5))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(if active { brand_text() } else { ink() })
-                        .child(choice.label.clone()),
+                        .flex()
+                        .items_center()
+                        .gap(px(4.0))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(12.5))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(if active { brand_text() } else { ink() })
+                                .child(choice.label.clone()),
+                        )
+                        .when_some(choice.backend.clone(), |row, badge| {
+                            row.child(soft_chip(badge))
+                        }),
                 )
                 .child(
                     div()
@@ -6764,7 +6869,19 @@ fn history_card(
         )
 }
 
-fn run_stats_card(nodes: usize, cost_micros: u64, latency_ms: u64) -> Div {
+fn run_stats_card(
+    nodes: usize,
+    cost_micros: u64,
+    latency_ms: u64,
+    tok_per_sec: Option<f32>,
+    backend: Option<String>,
+) -> Div {
+    let local_turn = backend.is_some();
+    let spend = if local_turn && cost_micros == 0 {
+        "$0.00".to_string()
+    } else {
+        format!("${:.4}", cost_micros as f64 / 1_000_000.0)
+    };
     div().flex_shrink_0().child(
         panel_card()
             .p(px(12.0))
@@ -6791,12 +6908,24 @@ fn run_stats_card(nodes: usize, cost_micros: u64, latency_ms: u64) -> Div {
                     .flex()
                     .gap(px(6.0))
                     .child(stat_tile(format!("{nodes}"), "DAG nodes"))
-                    .child(stat_tile(
-                        format!("${:.4}", cost_micros as f64 / 1_000_000.0),
-                        "Spend",
-                    ))
+                    .child(stat_tile(spend, "Spend"))
                     .child(stat_tile(format!("{latency_ms}ms"), "Latency")),
-            ),
+            )
+            .when(local_turn, |card| {
+                card.child(
+                    div()
+                        .flex()
+                        .gap(px(6.0))
+                        .child(stat_tile(
+                            format!("{:.1}", tok_per_sec.unwrap_or(0.0)),
+                            "tok/s",
+                        ))
+                        .child(stat_tile(
+                            backend.unwrap_or_else(|| "cpu".to_string()),
+                            "Backend",
+                        )),
+                )
+            }),
     )
 }
 
@@ -7056,12 +7185,15 @@ fn live_dot() -> AnyElement {
 
 // ------------------------------------------------------------------ overlay
 
+#[allow(clippy::too_many_arguments)]
 fn status_bar(
     mode: ExecutionMode,
     pinned: bool,
     files: usize,
     branch: Option<&str>,
     repo_loading: bool,
+    tok_per_sec: Option<f32>,
+    backend: Option<String>,
     cx: &mut Context<GlassPreview>,
 ) -> Div {
     div()
@@ -7097,6 +7229,19 @@ fn status_bar(
             "Local",
             "Running on this machine",
         ))
+        .when_some(backend, |bar, backend| {
+            bar.child(separator()).child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(5.0))
+                    .child(icon("monitor", 11.0, success()))
+                    .child(div().text_color(ink_soft()).child(format!(
+                        "{:.1} tok/s · {backend} · $0.00",
+                        tok_per_sec.unwrap_or(0.0)
+                    ))),
+            )
+        })
         .child(branch_chip(branch, repo_loading, cx))
         .child(separator())
         .child(div().size(px(5.0)).rounded_full().bg(if files > 0 {
@@ -7243,6 +7388,8 @@ struct EdgeState {
     nodes: usize,
     cost_micros: u64,
     latency_ms: u64,
+    tok_per_sec: Option<f32>,
+    backend: Option<String>,
     chats: Vec<ChatThread>,
 }
 
@@ -7478,7 +7625,16 @@ fn section_body(state: EdgeState, repo: &RepoSnapshot, cx: &mut Context<GlassPre
                 state.all_runs,
                 cx,
             ))
-            .child(run_stats_card(state.nodes, state.cost_micros, state.latency_ms).flex_grow()),
+            .child(
+                run_stats_card(
+                    state.nodes,
+                    state.cost_micros,
+                    state.latency_ms,
+                    state.tok_per_sec,
+                    state.backend.clone(),
+                )
+                .flex_grow(),
+            ),
         DrawerSection::GitHub => div()
             .flex()
             .flex_col()
@@ -8699,6 +8855,82 @@ mod tests {
         assert_eq!(catalog[3].label, "gpt-5.1-codex");
         assert_eq!(model_blurb("gpt-5.1-codex"), "OpenAI coding model");
         assert!(catalog_from_ids(Vec::new()).is_empty());
+    }
+
+    fn local_node(models: &[&str], backend: &str, lan: bool, host: &str) -> LocalNodeStatus {
+        LocalNodeStatus {
+            host: host.to_string(),
+            port: 20129,
+            endpoint: format!("http://{host}:20129"),
+            reachable: true,
+            models: models.iter().map(|m| m.to_string()).collect(),
+            backend: Some(backend.to_string()),
+            device: None,
+            lan,
+        }
+    }
+
+    #[test]
+    fn local_and_lan_models_merge_without_duplicates() {
+        let merged = merge_model_catalog(
+            Ok(vec![
+                "va_auto-combo".to_string(),
+                "qwen3-8b".to_string(),
+                "claude-sonnet-4.6".to_string(),
+            ]),
+            Some(local_node(
+                &["qwen3-8b", "phi-4"],
+                "vulkan",
+                false,
+                "127.0.0.1",
+            )),
+            vec![local_node(
+                &["phi-4", "llama-3.1-8b"],
+                "cuda",
+                true,
+                "192.168.1.40",
+            )],
+        );
+        assert_eq!(merged.len(), 5, "no duplicate ids across sources");
+        let qwen = merged.iter().find(|m| m.id == "qwen3-8b").unwrap();
+        assert!(!qwen.local, "router entries win id collisions");
+        let phi = merged.iter().find(|m| m.id == "phi-4").unwrap();
+        assert!(phi.local);
+        assert_eq!(phi.endpoint.as_deref(), Some("http://127.0.0.1:20129"));
+        assert_eq!(phi.backend.as_deref(), Some("Vulkan"));
+        assert_eq!(phi.blurb, "$0 / local");
+        let llama = merged.iter().find(|m| m.id == "llama-3.1-8b").unwrap();
+        assert!(llama.local);
+        assert_eq!(llama.backend.as_deref(), Some("LAN"));
+        assert_eq!(llama.endpoint.as_deref(), Some("http://192.168.1.40:20129"));
+        assert!(merged[0].combo, "combos still lead the menu");
+    }
+
+    #[test]
+    fn router_offline_local_nodes_still_fill_the_catalog() {
+        let merged = merge_model_catalog(
+            Err("gateway unreachable".to_string()),
+            Some(local_node(&["qwen3-8b"], "cuda", false, "127.0.0.1")),
+            Vec::new(),
+        );
+        assert_eq!(merged.len(), 1);
+        assert!(merged[0].local);
+        assert_eq!(merged[0].backend.as_deref(), Some("CUDA"));
+        assert_eq!(merged[0].blurb, "$0 / local");
+        assert!(merge_model_catalog(Err("x".into()), None, Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn backend_badges_map_honestly() {
+        assert_eq!(
+            backend_badge(Some("vulkan"), false).as_deref(),
+            Some("Vulkan")
+        );
+        assert_eq!(backend_badge(Some("cuda"), false).as_deref(), Some("CUDA"));
+        assert_eq!(backend_badge(Some("cpu"), false).as_deref(), Some("CPU"));
+        assert_eq!(backend_badge(Some("cuda"), true).as_deref(), Some("LAN"));
+        assert_eq!(backend_badge(Some("metal"), false), None);
+        assert_eq!(backend_badge(None, false), None);
     }
 
     #[test]

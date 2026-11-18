@@ -120,6 +120,10 @@ pub struct LiveRouterPlanner {
     last_diagnostics: Vec<PinnedDiagnostic>,
     pub last_cost_micros: u64,
     pub last_latency_ms: u64,
+    /// Decode throughput reported by the last Vibe Local completion.
+    pub last_tok_per_sec: Option<f32>,
+    /// Inference backend (`vulkan|cuda|cpu`) reported by the last completion.
+    pub last_backend: Option<String>,
     /// Resolved role → model map, cached after the first assignment query.
     models: BTreeMap<String, String>,
     /// Boss targets waiting for a Code call.
@@ -159,6 +163,8 @@ impl LiveRouterPlanner {
             last_diagnostics: Vec::new(),
             last_cost_micros: 0,
             last_latency_ms: 0,
+            last_tok_per_sec: None,
+            last_backend: None,
             models: BTreeMap::new(),
             plan_targets: Vec::new(),
             boss_done: false,
@@ -433,6 +439,12 @@ impl LiveRouterPlanner {
                     }
                     if let Some(latency) = result.telemetry.latency_ms {
                         self.last_latency_ms = latency;
+                    }
+                    if let Some(tps) = result.telemetry.tok_per_sec {
+                        self.last_tok_per_sec = Some(tps);
+                    }
+                    if let Some(backend) = &result.telemetry.backend {
+                        self.last_backend = Some(backend.clone());
                     }
                     return Ok(result.content);
                 }

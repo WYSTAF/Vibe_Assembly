@@ -9,14 +9,14 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-3B82F6?style=flat-square)](LICENSE)
 
 
-**v2.4.1 - a production-hardened, pure-Rust multi-agent coding workspace with a native Liquid Glass workbench whose thinking ladder drives real per-model `reasoning_effort` on router requests, persists night/day themes and per-model thinking preferences, searches everything from the titlebar, and fits its edge drawer to the window.**
+**v2.5.0 - a production-hardened, pure-Rust multi-agent coding workspace closing the Chukar-AI ecosystem triangle: Vibe Local zero-cost inference (127.0.0.1:20129) and LAN Pocket Workers (UDP :20131) are discovered, merged into the Liquid Glass model menu, and driven directly when the router is offline, with live tok/s and backend telemetry.**
 
 Vibe Assembly lets small, focused agents build and maintain large software
 projects without exhausting a single chat context. Roles communicate through a
 regulated `.ai/` contract, and every edit passes through a deterministic,
 hash-anchored execution harness.
 
-**Current status:** 254 tests passing, clippy clean with `-D warnings`, both
+**Current status:** 271 tests passing, clippy clean with `-D warnings`, both
 release binaries build. There is no browser runtime, webview, or Node/npm
 toolchain.
 
@@ -77,7 +77,7 @@ Observe -> Think (Boss) -> Patch (Code) -> Verify
 ## Install
 
 ```bash
-git clone https://github.com/WYSTAF/Vibe_Assembly.git
+git clone https://github.com/Chukar-AI/Vibe_Assembly.git
 cd Vibe_Assembly
 
 # Build both binaries
@@ -208,7 +208,7 @@ Chat / Architect remains a hard read-only boundary.
 | `doctor` | Run a workspace health check |
 | `init <name>` | Create a workspace, optionally with `--template <name>` |
 | `reset` | Reset volatile `.ai/` state to pristine template defaults |
-| `up` | Ensure Vibe Router and workspace readiness with a token handshake |
+| `up` | Ensure Vibe Router + Vibe Local readiness, token handshake, and LAN worker discovery |
 | `repomap` | Print the token-budgeted, hash-anchored repository symbol map |
 | `diagnose` | Run compiler checks and pinpoint errors to block hashes |
 | `run` | Run the harness execution loop |
@@ -321,7 +321,9 @@ it at a local router or a TLS-terminating proxy.
 Requests carry `X-Vibe-Role`, `X-Vibe-Node-Id`, `X-Vibe-Profile`, and
 `X-Vibe-Retry`, plus optional `Authorization: Bearer` or `X-API-Key`. Cost and
 latency are read from `X-Vibe-Router-Cost-Micros` / `X-VR-Cost-Micros` and the
-matching latency headers, then recorded in the session DAG.
+matching latency headers, then recorded in the session DAG. Vibe Local turns
+also report `X-Vibe-Local-Tok-Per-Sec` and `X-Vibe-Local-Backend`
+(`vulkan|cuda|cpu`) with zero cost.
 
 Common environment variables:
 
@@ -338,6 +340,34 @@ Model resolution order: pinned `--model`, per-mode override
 (`.ai/models/<mode>.txt` or `.ai/model_<mode>.txt`), live router assignment,
 `.ai/model_combo.txt`, then a conservative default. The judge is always
 deterministic and independent; `--judge-model` is reported for audit and display.
+
+## Vibe Local integration
+
+`va-core::local_node` closes the Chukar-AI ecosystem triangle (Vibe Assembly
++ Vibe Router + Vibe Local) with zero new dependencies:
+
+- `probe_vibe_local` queries `GET /v1/models` on the local inference node
+  (default `127.0.0.1:20129`) over raw HTTP/1.1 and reports models, backend,
+  and device. Unreachable or malformed nodes fail closed to offline.
+- `discover_lan_workers` broadcasts `VIBE_DISCOVER_V1` over UDP to
+  `255.255.255.255:20131` plus loopback and parses JSON or key-value Pocket
+  Worker announcements (host, port, backend, device, models). No replies is
+  a normal empty result.
+- `up` probes both nodes, spawns `vibe-local serve` from sibling release
+  paths when offline, and reports LAN workers in human and `--json` output;
+  `doctor` checks the local node informationally; `models` and
+  `run --auto-combo` merge zero-cost local models when the router is offline.
+- Liquid Glass merges router, local, and LAN catalogues without duplicates,
+  badges local models (`Vulkan` / `CUDA` / `CPU` / `LAN`, `$0 / local`), and
+  routes composer turns directly to the node's `/v1/chat/completions` when
+  the router is offline. After a local turn the Session drawer and status
+  strip show live tok/s, the backend, and `$0.00` spend.
+
+| Variable | Purpose |
+|---|---|
+| `VIBE_LOCAL_HOST` / `VIBE_LOCAL_PORT` | Local node address (default `127.0.0.1:20129`) |
+| `VIBE_LOCAL_DISCOVERY_PORT` | LAN UDP discovery port (default `20131`) |
+| `VIBE_LOCAL_TOKEN` | Sent as `X-Vibe-Local-Token` and `Authorization: Bearer` |
 
 ## Context safety
 
@@ -382,7 +412,7 @@ cargo test --workspace
 cargo build --release
 ```
 
-Current workspace: **254 tests passing**, clippy clean, both release binaries
+Current workspace: **271 tests passing**, clippy clean, both release binaries
 built. The live HTTP planner is tested against a local mock OpenAI-compatible
 TCP server; unit tests cover compaction, think-trace eviction, observation
 slicing, repeated anchors, read-only enforcement, stagnation escalation,

@@ -360,6 +360,13 @@ pub struct WorkbenchState {
     pub context_pct: usize,
     pub spend_micros: u64,
     pub latency_ms: u64,
+    /// Direct Vibe Local / LAN worker endpoint for the selected local model
+    /// when the router is offline; `None` routes through the router.
+    pub local_endpoint: Option<String>,
+    /// Decode throughput reported by the last local completion.
+    pub last_tok_per_sec: Option<f32>,
+    /// Inference backend reported by the last local completion.
+    pub last_backend: Option<String>,
     pub lock: LockStatus,
     pub git_branch: String,
     pub router_endpoint: String,
@@ -454,6 +461,9 @@ impl WorkbenchState {
             context_pct: 0,
             spend_micros: 0,
             latency_ms: 0,
+            local_endpoint: None,
+            last_tok_per_sec: None,
+            last_backend: None,
             lock,
             git_branch,
             router_endpoint,
@@ -940,18 +950,7 @@ impl WorkbenchState {
         });
 
         let read_only = !self.mode.allows_writes();
-        let mut config = LivePlannerConfig::default_for(&self.root);
-        config.mode = self.mode;
-        config.language = self.language;
-        config.model = if self.model == "auto-combo" {
-            None
-        } else {
-            Some(self.model.clone())
-        };
-        config.offline_mock = !self.router_live;
-        config.task_prompt = Some(text.to_string());
-        config.reasoning_effort = self.reasoning_effort;
-        let mut planner = LiveRouterPlanner::with_config(config);
+        let mut planner = LiveRouterPlanner::with_config(self.planner_config(text));
         planner.begin_task();
 
         if read_only {
@@ -976,6 +975,7 @@ impl WorkbenchState {
             self.refresh_session_views();
             self.refresh_context_usage();
             self.status_message = "Read-only response; no patch staged".to_string();
+            self.capture_local_telemetry(&planner);
             return SubmitOutcome::ReadOnly;
         }
 
@@ -1032,10 +1032,53 @@ impl WorkbenchState {
 
         self.spend_micros = self.session.total_cost_micros();
         self.latency_ms = self.session.total_latency_ms();
+        self.capture_local_telemetry(&planner);
         self.persist_session();
         self.refresh_session_views();
         self.refresh_context_usage();
         SubmitOutcome::Queued
+    }
+
+    /// Build the live planner configuration for one prompt. A selected local
+    /// model with a reachable endpoint bypasses the offline router and talks
+    /// directly to Vibe Local (or a LAN Pocket Worker).
+    fn planner_config(&self, text: &str) -> LivePlannerConfig {
+        let mut config = LivePlannerConfig::default_for(&self.root);
+        config.mode = self.mode;
+        config.language = self.language;
+        config.model = if self.model == "auto-combo" {
+            None
+        } else {
+            Some(self.model.clone())
+        };
+        config.offline_mock = !self.router_live;
+        config.task_prompt = Some(text.to_string());
+        config.reasoning_effort = self.reasoning_effort;
+        if let Some((host, port)) = self.local_endpoint.as_deref().and_then(parse_local_target) {
+            config.router_host = host;
+            config.router_port = port;
+            config.router_path = "/v1/chat/completions".to_string();
+            config.auth = va_core::router_client::RouterAuth {
+                bearer: va_core::local_node::local_token(),
+                api_key: None,
+            };
+            config.offline_mock = false;
+        }
+        config
+    }
+
+    /// Record tok/s and backend from the last local turn and surface them in
+    /// the status strip next to the zero-cost spend.
+    fn capture_local_telemetry(&mut self, planner: &LiveRouterPlanner) {
+        self.last_tok_per_sec = planner.last_tok_per_sec;
+        self.last_backend = planner.last_backend.clone();
+        if let Some(backend) = &self.last_backend {
+            let tps = self.last_tok_per_sec.unwrap_or(0.0);
+            self.status_message = format!(
+                "{} · {tps:.1} tok/s · {backend} · $0.00",
+                self.status_message
+            );
+        }
     }
 
     /// Accept the staged patch: write it atomically and advance the DAG.
@@ -2432,6 +2475,26 @@ fn phase_for_action(action: &str) -> StepPhase {
     }
 }
 
+/// Parse a local chat endpoint (`http://host:port` or `host:port`) into a
+/// host/port pair. Anything malformed fails closed to `None` so the request
+/// stays on the configured router instead of guessing a target.
+fn parse_local_target(endpoint: &str) -> Option<(String, u16)> {
+    let trimmed = endpoint.trim();
+    let rest = trimmed
+        .strip_prefix("http://")
+        .unwrap_or(trimmed)
+        .trim_end_matches('/');
+    let (host, port) = rest.rsplit_once(':')?;
+    if host.is_empty() || host.contains('/') {
+        return None;
+    }
+    let port: u16 = port.parse().ok()?;
+    if port == 0 {
+        return None;
+    }
+    Some((host.to_string(), port))
+}
+
 fn model_choices(root: &Path, current: &str) -> Vec<String> {
     let mut models = vec![
         "auto-combo".to_string(),
@@ -2555,6 +2618,65 @@ mod tests {
             LanguageLens::Auto,
             "auto-combo".to_string(),
         )
+    }
+
+    #[test]
+    fn local_endpoints_parse_and_fail_closed() {
+        assert_eq!(
+            parse_local_target("http://127.0.0.1:20129"),
+            Some(("127.0.0.1".to_string(), 20129))
+        );
+        assert_eq!(
+            parse_local_target("192.168.1.40:20129/"),
+            Some(("192.168.1.40".to_string(), 20129))
+        );
+        assert_eq!(parse_local_target("garbage"), None);
+        assert_eq!(parse_local_target("http://host:0"), None);
+        assert_eq!(parse_local_target("http://host:99999"), None);
+        assert_eq!(parse_local_target("http://:20129"), None);
+        assert_eq!(parse_local_target("http://host/path:20129"), None);
+    }
+
+    #[test]
+    fn local_endpoint_routes_the_planner_directly_to_vibe_local() {
+        let dir = temp_workspace("local-route");
+        let mut state = state_for(&dir);
+        state.router_live = false;
+        state.set_model("qwen3-8b".to_string());
+        state.local_endpoint = Some("http://127.0.0.1:20129".to_string());
+
+        let config = state.planner_config("hello");
+        assert_eq!(config.router_host, "127.0.0.1");
+        assert_eq!(config.router_port, 20129);
+        assert_eq!(config.router_path, "/v1/chat/completions");
+        assert!(!config.offline_mock, "a reachable local node is a live run");
+        assert_eq!(config.model.as_deref(), Some("qwen3-8b"));
+
+        state.local_endpoint = Some("http://192.168.1.40:20129".to_string());
+        let lan = state.planner_config("hello");
+        assert_eq!(lan.router_host, "192.168.1.40");
+        assert_eq!(lan.router_port, 20129);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn without_a_local_endpoint_the_router_config_is_untouched() {
+        let dir = temp_workspace("router-route");
+        let mut state = state_for(&dir);
+        state.router_live = false;
+        state.local_endpoint = None;
+        let config = state.planner_config("hello");
+        assert_eq!(config.router_port, 20128);
+        assert!(
+            config.offline_mock,
+            "offline router without local falls back"
+        );
+
+        state.local_endpoint = Some("not an endpoint".to_string());
+        let config = state.planner_config("hello");
+        assert_eq!(config.router_port, 20128);
+        assert!(config.offline_mock, "malformed endpoints fail closed");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

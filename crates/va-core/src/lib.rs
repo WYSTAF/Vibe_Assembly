@@ -4,6 +4,7 @@
 pub mod allocator;
 pub mod bootstrap;
 pub mod knowledge;
+pub mod local_node;
 pub mod lock;
 pub mod modes;
 pub mod parser;
@@ -17,6 +18,7 @@ pub mod state;
 pub use allocator::{allocate, classify_model, load_knowledge, AllocationResult, ModelKnowledge};
 pub use bootstrap::{init_workspace, reset_template_state, TemplateInfo};
 pub use knowledge::{auto_combo, score_model, Assignment, Fitness, Role as ModelRole};
+pub use local_node::{discover_lan_workers, probe_vibe_local, LocalNodeStatus};
 pub use lock::{
     acquire_task_lock, check_task_lock, lock_path, LockInfo, LockStatus, TaskLockGuard,
 };

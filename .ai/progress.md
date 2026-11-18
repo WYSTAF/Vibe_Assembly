@@ -29,6 +29,14 @@
   `LivePlannerConfig`; CLI `run`/`prompt` gain `--effort`; router endpoint
   (`/api/assignment`), CLI constants, `up` search paths, and MCP version made
   consistent.
+- **v2.5.0 (2026-11-18):** Vibe Local ecosystem integration - `va-core::local_node`
+  probes the local inference node (127.0.0.1:20129) and discovers LAN Pocket
+  Workers over UDP `VIBE_DISCOVER_V1` (:20131); tok/s, backend, and zero-cost
+  telemetry reach the live planner; CLI `up`/`doctor`/`models`/auto-combo
+  integrate the local node; Liquid Glass merges router/local/LAN catalogues
+  with backend badges, routes local turns directly to the node when the
+  router is offline, and shows tok/s + backend + $0.00 in the Session drawer
+  and status strip. Repository metadata moved to Chukar-AI/Vibe_Assembly.
 - Scope: real HTTP live planner, four execution modes with dynamic accents,
   language lens, auto-compaction at 75%, think-trace eviction, pinned working
   set, repeated-anchor rejection, spin-loop breaker, durable EXPERIENCE.md,
@@ -65,5 +73,5 @@
 
 - `cargo fmt --all -- --check` - clean
 - `cargo clippy --workspace --all-targets -- -D warnings` - clean
-- `cargo test --workspace` - 254 passed, 0 failed
+- `cargo test --workspace` - 271 passed, 0 failed
 - `cargo build --release` - both binaries produced

@@ -14,6 +14,9 @@ use clap::{Parser, Subcommand};
 use va_core::allocator::{allocate, load_knowledge};
 use va_core::bootstrap;
 use va_core::knowledge::context_window_tokens;
+use va_core::local_node::{
+    discover_lan_workers, discovery_port, local_endpoint, probe_vibe_local, LocalNodeStatus,
+};
 use va_core::lock::check_task_lock;
 use va_core::modes::{ExecutionMode, LanguageLens, ReasoningEffort};
 use va_core::parser::{parse_active_task, validate_contract, verified_steps};
@@ -816,6 +819,20 @@ fn run_models(root: &Path, p: &Palette) -> ExitCode {
         }
     }
 
+    // Router offline: merge zero-cost Vibe Local models into the pool so
+    // local inference is allocated automatically alongside the combo file.
+    let (local_host, local_port) = local_endpoint();
+    let local_node = probe_vibe_local(&local_host, local_port, 300);
+    let mut local_added = 0usize;
+    if let Some(node) = &local_node {
+        for model in &node.models {
+            if !combo.contains(model) {
+                combo.push(model.clone());
+                local_added += 1;
+            }
+        }
+    }
+
     if combo.is_empty() && locked.is_empty() {
         eprintln!(
             "❌ No model combo found. Create {} with one router model per line.",
@@ -831,7 +848,7 @@ fn run_models(root: &Path, p: &Palette) -> ExitCode {
 
     println!();
     println!(
-        " {}🧠 MODEL ALLOCATION{}  {}·  combo of {}{}{}",
+        " {}🧠 MODEL ALLOCATION{}  {}·  combo of {}{}{}{}",
         p.bold,
         p.reset,
         p.dim,
@@ -840,6 +857,11 @@ fn run_models(root: &Path, p: &Palette) -> ExitCode {
             String::new()
         } else {
             format!(" + {} lock(s)", locked.len())
+        },
+        if local_added > 0 {
+            format!(" + {local_added} Vibe Local ($0/local)")
+        } else {
+            String::new()
         },
         p.reset
     );
@@ -929,6 +951,40 @@ fn run_doctor(root: &Path, p: &Palette) -> ExitCode {
             "offline fallback ready (.ai/model_knowledge.json)".to_string()
         },
     ));
+
+    // Vibe Local inference node (informational)
+    let (local_host, local_port) = local_endpoint();
+    match probe_vibe_local(&local_host, local_port, 300) {
+        Some(node) => {
+            let backend = node.backend.as_deref().unwrap_or("cpu");
+            checks.push((
+                true,
+                "Vibe Local inference node".to_string(),
+                format!(
+                    "live on {local_host}:{local_port} ({backend}, {} model(s), $0/local)",
+                    node.models.len()
+                ),
+            ));
+        }
+        None => checks.push((
+            true,
+            "Vibe Local inference node".to_string(),
+            format!("offline on {local_host}:{local_port} — cloud or --offline-mock ready"),
+        )),
+    }
+    let workers = discover_lan_workers(discovery_port(), 200);
+    if !workers.is_empty() {
+        let listed = workers
+            .iter()
+            .map(|w| format!("{}:{}", w.host, w.port))
+            .collect::<Vec<_>>()
+            .join(", ");
+        checks.push((
+            true,
+            "LAN Pocket Workers".to_string(),
+            format!("{} reachable ({listed})", workers.len()),
+        ));
+    }
 
     // Contract consistency
     if let Ok(raw) = std::fs::read_to_string(ai.join("active_task.md")) {
@@ -1257,18 +1313,40 @@ fn run_execute(root: &Path, opts: ExecutionOptions<'_>) -> ExitCode {
         }
     }
 
+    // Router offline + auto-combo: merge zero-cost Vibe Local models into
+    // the pool so local inference is allocated without a combo file.
+    if auto_combo && !gateway.is_live() {
+        let (local_host, local_port) = local_endpoint();
+        if let Some(node) = probe_vibe_local(&local_host, local_port, 300) {
+            let mut added = 0usize;
+            for model in node.models {
+                if !models.contains(&model) {
+                    models.push(model);
+                    added += 1;
+                }
+            }
+            if added > 0 {
+                source = if source.is_empty() {
+                    format!("Vibe Local ({added} zero-cost model(s))")
+                } else {
+                    format!("{source} + Vibe Local ({added} zero-cost)")
+                };
+            }
+        }
+    }
+
     if models.is_empty() {
         if stream_jsonl {
             println!(
                 "{}",
                 serde_json::json!({
                     "event": "error",
-                    "message": "No models available - Vibe Router is offline and .ai/model_combo.txt is missing"
+                    "message": "No models available - Vibe Router and Vibe Local are offline and .ai/model_combo.txt is missing"
                 })
             );
         } else {
             eprintln!(
-                "❌ No models available - Vibe Router is offline and .ai/model_combo.txt is missing."
+                "❌ No models available - Vibe Router and Vibe Local are offline and .ai/model_combo.txt is missing."
             );
         }
         return ExitCode::from(1);
@@ -1935,6 +2013,9 @@ fn run_up(root: &Path, profile: Option<&str>, json: bool) -> ExitCode {
         .map(|addr| TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok())
         .unwrap_or(false);
 
+    let (local_node, spawned_local) = ensure_vibe_local(root);
+    let lan_workers = discover_lan_workers(discovery_port(), 200);
+
     if json {
         let payload = serde_json::json!({
             "status": if final_alive { "live" } else { "offline" },
@@ -1942,7 +2023,27 @@ fn run_up(root: &Path, profile: Option<&str>, json: bool) -> ExitCode {
             "spawned_router": started,
             "has_auth": !auth.is_empty(),
             "ready": true,
-            "mode": if final_alive { "vibe-link" } else { "standalone-offline" }
+            "mode": if final_alive { "vibe-link" } else { "standalone-offline" },
+            "vibe_local": local_node.as_ref().map(|node| serde_json::json!({
+                "status": "live",
+                "endpoint": node.endpoint,
+                "backend": node.backend,
+                "device": node.device,
+                "models": node.models,
+                "spawned": spawned_local,
+            })).unwrap_or_else(|| serde_json::json!({
+                "status": "offline",
+                "endpoint": format!("http://{}:{}", local_endpoint().0, local_endpoint().1),
+                "spawned": spawned_local,
+            })),
+            "lan_workers": lan_workers.iter().map(|w| serde_json::json!({
+                "host": w.host,
+                "port": w.port,
+                "endpoint": w.endpoint,
+                "backend": w.backend,
+                "device": w.device,
+                "models": w.models,
+            })).collect::<Vec<_>>()
         });
         println!(
             "{}",
@@ -1976,8 +2077,111 @@ fn run_up(root: &Path, profile: Option<&str>, json: bool) -> ExitCode {
     } else {
         println!("   {}Router:{}     {}⚠ Standalone mode (router offline - local knowledge auto-combo ready){}", p.dim, p.reset, p.yellow, p.reset);
     }
+    if let Some(node) = &local_node {
+        let backend = node.backend.as_deref().unwrap_or("cpu");
+        println!(
+            "   {}Local:{}      {}🟢 LIVE ({}, {}, {} model(s), $0/local){}",
+            p.dim,
+            p.reset,
+            p.green,
+            node.endpoint,
+            backend,
+            node.models.len(),
+            p.reset
+        );
+    } else {
+        let (host, port) = local_endpoint();
+        println!(
+            "   {}Local:{}      {}⚠ Vibe Local offline ({host}:{port}){}",
+            p.dim, p.reset, p.yellow, p.reset
+        );
+    }
+    if !lan_workers.is_empty() {
+        let listed = lan_workers
+            .iter()
+            .map(|w| {
+                format!(
+                    "{}:{} ({})",
+                    w.host,
+                    w.port,
+                    w.backend.as_deref().unwrap_or("cpu")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!(
+            "   {}LAN workers:{} {}🟢 {} Pocket Worker(s): {}{}",
+            p.dim,
+            p.reset,
+            p.green,
+            lan_workers.len(),
+            listed,
+            p.reset
+        );
+    }
     println!();
     ExitCode::SUCCESS
+}
+
+/// Probe Vibe Local; when offline, try to spawn `vibe-local serve` from a
+/// sibling release build and wait briefly for the port to open.
+fn ensure_vibe_local(root: &Path) -> (Option<LocalNodeStatus>, bool) {
+    use std::net::{TcpStream, ToSocketAddrs};
+    use std::time::Duration;
+
+    let (host, port) = local_endpoint();
+    if let Some(node) = probe_vibe_local(&host, port, 300) {
+        return (Some(node), false);
+    }
+
+    let mut candidates = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            candidates.push(parent.join("vibe-local.exe"));
+            candidates.push(parent.join("vibe-local"));
+        }
+    }
+    candidates.push(
+        root.join("portable_data")
+            .join("bin")
+            .join("vibe-local.exe"),
+    );
+    candidates.push(root.join("portable_data").join("bin").join("vibe-local"));
+    for dir in [
+        "../Vibe_Local",
+        "../Vibe Local",
+        "../../Vibe_Local",
+        "../../Vibe Local",
+    ] {
+        candidates.push(root.join(dir).join("target/release/vibe-local.exe"));
+        candidates.push(root.join(dir).join("target/release/vibe-local"));
+    }
+
+    let Some(bin) = candidates.into_iter().find(|p| p.exists()) else {
+        return (None, false);
+    };
+    if std::process::Command::new(bin)
+        .arg("serve")
+        .spawn()
+        .is_err()
+    {
+        return (None, false);
+    }
+
+    let addr_str = format!("{host}:{port}");
+    for _ in 0..25 {
+        std::thread::sleep(Duration::from_millis(100));
+        let open = addr_str
+            .to_socket_addrs()
+            .ok()
+            .and_then(|mut a| a.next())
+            .map(|addr| TcpStream::connect_timeout(&addr, Duration::from_millis(100)).is_ok())
+            .unwrap_or(false);
+        if open {
+            return (probe_vibe_local(&host, port, 300), true);
+        }
+    }
+    (None, true)
 }
 
 fn run_repomap(root: &Path, max_tokens: usize, priority: &[PathBuf], json: bool) -> ExitCode {

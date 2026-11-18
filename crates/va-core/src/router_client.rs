@@ -51,11 +51,15 @@ pub struct RouterRole {
     pub recommended_ticket_size: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct RouterTelemetry {
     pub cost_micros: Option<u64>,
     pub latency_ms: Option<u64>,
     pub cache_hit: Option<bool>,
+    /// Measured decode throughput reported by a Vibe Local node.
+    pub tok_per_sec: Option<f32>,
+    /// Inference backend reported by a Vibe Local node (`vulkan|cuda|cpu`).
+    pub backend: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -677,10 +681,19 @@ fn extract_telemetry(headers: &BTreeMap<String, String>) -> RouterTelemetry {
         .get("x-vr-cache")
         .or_else(|| headers.get("x-vibe-cache"))
         .map(|v| v.eq_ignore_ascii_case("hit"));
+    let tok_per_sec = headers
+        .get("x-vibe-local-tok-per-sec")
+        .and_then(|v| v.parse::<f32>().ok())
+        .filter(|v| v.is_finite() && *v >= 0.0);
+    let backend = headers
+        .get("x-vibe-local-backend")
+        .and_then(|v| crate::local_node::normalize_backend(v));
     RouterTelemetry {
         cost_micros,
         latency_ms,
         cache_hit,
+        tok_per_sec,
+        backend,
     }
 }
 
@@ -1034,6 +1047,26 @@ mod tests {
         assert_eq!(t.cost_micros, Some(250));
         assert_eq!(t.latency_ms, Some(180));
         assert_eq!(t.cache_hit, Some(true));
+    }
+
+    #[test]
+    fn vibe_local_telemetry_headers_are_ingested() {
+        let mut headers = BTreeMap::new();
+        headers.insert("x-vibe-router-cost-micros".into(), "0".into());
+        headers.insert("x-vibe-local-tok-per-sec".into(), "42.5".into());
+        headers.insert("x-vibe-local-backend".into(), "Vulkan".into());
+
+        let t = extract_telemetry(&headers);
+        assert_eq!(t.cost_micros, Some(0));
+        assert_eq!(t.tok_per_sec, Some(42.5));
+        assert_eq!(t.backend.as_deref(), Some("vulkan"));
+
+        let mut bad = BTreeMap::new();
+        bad.insert("x-vibe-local-tok-per-sec".into(), "fast".into());
+        bad.insert("x-vibe-local-backend".into(), "metal".into());
+        let t = extract_telemetry(&bad);
+        assert_eq!(t.tok_per_sec, None);
+        assert_eq!(t.backend, None);
     }
 
     #[test]
