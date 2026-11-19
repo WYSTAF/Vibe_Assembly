@@ -6,6 +6,7 @@
 //! * Environment sanitization (clears untrusted vars; passes whitelisted toolchain vars).
 //! * Bounded stdout/stderr capture (prevents memory blowout from chatty processes).
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -25,18 +26,32 @@ impl SandboxConfig {
     pub fn default_for(root: &Path) -> Self {
         Self {
             root: root.to_path_buf(),
-            timeout: Duration::from_secs(30),
+            // Compile-style verification (cargo check, tsc, cmake) routinely
+            // exceeds 30s on a cold workspace; a short default turns healthy
+            // builds into false verification failures.
+            timeout: Duration::from_secs(300),
             max_output_bytes: 64 * 1024,
             env_whitelist: vec![
                 "PATH".into(),
                 "SYSTEMROOT".into(),
+                "SYSTEMDRIVE".into(),
+                "WINDIR".into(),
+                "COMSPEC".into(),
+                "PATHEXT".into(),
                 "TEMP".into(),
                 "TMP".into(),
                 "USERPROFILE".into(),
                 "HOME".into(),
+                "ALLUSERSPROFILE".into(),
+                "PROGRAMDATA".into(),
+                "NUMBER_OF_PROCESSORS".into(),
+                "PROCESSOR_ARCHITECTURE".into(),
+                "OS".into(),
                 "CARGO_HOME".into(),
                 "RUSTUP_HOME".into(),
                 "RUST_LOG".into(),
+                "LANG".into(),
+                "LC_ALL".into(),
             ],
         }
     }
@@ -154,22 +169,31 @@ impl SandboxExecutor {
 
         let mut child = cmd.spawn().map_err(SandboxError::SpawnFailed)?;
 
+        // Drain both pipes concurrently while the child runs. Reading only
+        // after exit deadlocks any command that outwrites the OS pipe buffer
+        // (~4-64KB): the child blocks on write, never exits, and gets killed
+        // as a "timeout" even though it was healthy. Keep the first
+        // max_output_bytes and discard the rest so capture stays bounded.
+        let max = self.config.max_output_bytes;
+        let out_handle = child
+            .stdout
+            .take()
+            .map(|pipe| std::thread::spawn(move || drain_bounded(pipe, max)));
+        let err_handle = child
+            .stderr
+            .take()
+            .map(|pipe| std::thread::spawn(move || drain_bounded(pipe, max)));
+        let join = |handle: Option<std::thread::JoinHandle<Vec<u8>>>| -> Vec<u8> {
+            handle.and_then(|h| h.join().ok()).unwrap_or_default()
+        };
+
         let timeout = self.config.timeout;
 
         loop {
             match child.try_wait() {
                 Ok(Some(status)) => {
-                    let mut stdout_buf = Vec::new();
-                    let mut stderr_buf = Vec::new();
-                    if let Some(mut out) = child.stdout.take() {
-                        use std::io::Read;
-                        let _ = out.read_to_end(&mut stdout_buf);
-                    }
-                    if let Some(mut err) = child.stderr.take() {
-                        use std::io::Read;
-                        let _ = err.read_to_end(&mut stderr_buf);
-                    }
-
+                    let stdout_buf = join(out_handle);
+                    let stderr_buf = join(err_handle);
                     let stdout = truncate_output(&stdout_buf, self.config.max_output_bytes);
                     let stderr = truncate_output(&stderr_buf, self.config.max_output_bytes);
 
@@ -186,11 +210,18 @@ impl SandboxExecutor {
                     if start.elapsed() >= timeout {
                         let _ = child.kill();
                         let _ = child.wait();
+                        // Killing closes the pipes, so the drain threads finish.
+                        let stdout_buf = join(out_handle);
+                        let stderr_buf = join(err_handle);
                         return Ok(SandboxResult {
                             success: false,
                             exit_code: None,
-                            stdout: String::new(),
-                            stderr: format!("Command timed out after {:?}", timeout),
+                            stdout: truncate_output(&stdout_buf, self.config.max_output_bytes),
+                            stderr: format!(
+                                "Command timed out after {:?}\n{}",
+                                timeout,
+                                truncate_output(&stderr_buf, self.config.max_output_bytes)
+                            ),
                             timed_out: true,
                             duration: start.elapsed(),
                         });
@@ -201,6 +232,26 @@ impl SandboxExecutor {
             }
         }
     }
+}
+
+/// Read a pipe to EOF, retaining at most `max_bytes + 1` (the extra byte
+/// lets the caller detect and report overflow) and discarding the rest so a
+/// chatty child never blocks on a full pipe.
+fn drain_bounded(mut reader: impl Read, max_bytes: usize) -> Vec<u8> {
+    let mut kept = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        match reader.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                if kept.len() <= max_bytes {
+                    let take = (max_bytes + 1 - kept.len()).min(n);
+                    kept.extend_from_slice(&chunk[..take]);
+                }
+            }
+        }
+    }
+    kept
 }
 
 fn truncate_output(bytes: &[u8], max_bytes: usize) -> String {
@@ -258,5 +309,35 @@ mod tests {
         let truncated = truncate_output(bytes, 10);
         assert!(truncated.starts_with("0123456789"));
         assert!(truncated.contains("output truncated at 10 bytes"));
+    }
+
+    #[test]
+    fn chatty_commands_do_not_deadlock_on_full_pipes() {
+        let temp = std::env::temp_dir();
+        // ~120KB of stdout: far beyond any OS pipe buffer. Before concurrent
+        // draining this blocked the child until the timeout killed it.
+        let config = SandboxConfig::default_for(&temp).with_timeout(Duration::from_secs(15));
+        let sandbox = SandboxExecutor::new(config);
+        let command = if cfg!(windows) {
+            "for /L %i in (1,1,3000) do @echo 0123456789012345678901234567890123456789"
+        } else {
+            "i=0; while [ $i -lt 3000 ]; do echo 0123456789012345678901234567890123456789; i=$((i+1)); done"
+        };
+        let res = sandbox.execute(command, None).unwrap();
+        assert!(res.success, "chatty command must succeed: {}", res.stderr);
+        assert!(!res.timed_out, "pipe deadlock masqueraded as a timeout");
+        assert!(res.stdout.contains("output truncated"));
+    }
+
+    #[test]
+    fn whitelist_keeps_windows_command_resolution_vars() {
+        let config = SandboxConfig::default_for(&std::env::temp_dir());
+        for var in ["PATHEXT", "COMSPEC", "SYSTEMDRIVE", "WINDIR"] {
+            assert!(
+                config.env_whitelist.iter().any(|v| v == var),
+                "{var} must survive env_clear or cmd/npx resolution breaks"
+            );
+        }
+        assert_eq!(config.timeout, Duration::from_secs(300));
     }
 }

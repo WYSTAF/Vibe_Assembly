@@ -167,12 +167,29 @@ pub fn discover_lan_workers(discovery_port: u16, timeout_ms: u64) -> Vec<LocalNo
             Err(_) => break,
         }
     }
+    // Vibe Local announcements carry no model list; fill models/backend/device
+    // from the node's own catalogue so discovered workers are actually usable.
+    for worker in &mut workers {
+        match probe_vibe_local(&worker.host, worker.port, 300) {
+            Some(probed) => {
+                if worker.models.is_empty() {
+                    worker.models = probed.models;
+                }
+                worker.backend = worker.backend.take().or(probed.backend);
+                worker.device = worker.device.take().or(probed.device);
+                worker.reachable = true;
+            }
+            None => worker.reachable = false,
+        }
+    }
     workers
 }
 
 /// Parse one worker announcement: a JSON object or `key=value` pairs
 /// separated by newlines, `;`, or `&`. Fails closed without a usable
-/// host/port pair; the sender IP fills in a missing host.
+/// host/port pair. Vibe Local announces `http_port` and its hostname; the
+/// UDP sender IP wins over the announced host because it is the proven
+/// reachable address (hostnames may not resolve across machines).
 pub fn parse_worker_announcement(
     payload: &str,
     from_ip: Option<IpAddr>,
@@ -224,15 +241,16 @@ pub fn parse_worker_announcement(
         }
     }
 
-    let port: u16 = fields.get("port").and_then(|p| p.parse().ok())?;
+    let port: u16 = fields
+        .get("port")
+        .or_else(|| fields.get("http_port"))
+        .and_then(|p| p.parse().ok())?;
     if port == 0 {
         return None;
     }
-    let host = fields
-        .get("host")
-        .filter(|h| !h.trim().is_empty())
-        .cloned()
-        .or_else(|| from_ip.map(|ip| ip.to_string()))?;
+    let host = from_ip
+        .map(|ip| ip.to_string())
+        .or_else(|| fields.get("host").filter(|h| !h.trim().is_empty()).cloned())?;
     models.retain(|m| !m.is_empty());
     models.dedup();
 
@@ -332,6 +350,25 @@ mod tests {
         assert_eq!(node.host, "10.0.0.7");
         assert_eq!(node.backend.as_deref(), Some("cuda"));
         assert_eq!(node.models, vec!["qwen3-8b", "phi-4"]);
+    }
+
+    #[test]
+    fn parses_the_real_vibe_local_announcement_shape() {
+        // Vibe Local replies with http_port + hostname and no model list.
+        let payload = r#"{"service":"vibe-local","version":"0.1.0","http_port":20129,"lan":true,"host":"DESKTOP-ABC123"}"#;
+        let ip: IpAddr = "192.168.1.40".parse().unwrap();
+        let node = parse_worker_announcement(payload, Some(ip)).unwrap();
+        assert_eq!(node.port, 20129);
+        assert_eq!(
+            node.host, "192.168.1.40",
+            "sender IP beats unresolvable hostname"
+        );
+        assert_eq!(node.endpoint, "http://192.168.1.40:20129");
+        assert!(
+            node.models.is_empty(),
+            "models arrive via the HTTP enrichment probe"
+        );
+        assert!(node.lan);
     }
 
     #[test]

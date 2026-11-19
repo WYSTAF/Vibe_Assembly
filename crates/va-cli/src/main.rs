@@ -20,9 +20,7 @@ use va_core::local_node::{
 use va_core::lock::check_task_lock;
 use va_core::modes::{ExecutionMode, LanguageLens, ReasoningEffort};
 use va_core::parser::{parse_active_task, validate_contract, verified_steps};
-use va_core::router::{
-    fetch_live_assignment, DEFAULT_ROUTER_HOST, DEFAULT_ROUTER_PATH, DEFAULT_ROUTER_PORT,
-};
+use va_core::router::{fetch_live_assignment, parse_env_router_endpoint};
 use va_core::runtime::{detect_system_specs, AtomicStateSync};
 use va_core::state::Workspace;
 use va_harness::engine::{Engine, EngineError, StagnationPolicy};
@@ -746,10 +744,11 @@ fn run_status(root: &Path, p: &Palette, json: bool) -> ExitCode {
 
 fn run_models(root: &Path, p: &Palette) -> ExitCode {
     // Prefer live router assignments; fall back to the local knowledge base.
+    let (router_host, router_port, router_path) = parse_env_router_endpoint();
     if let Some(live) = fetch_live_assignment(
-        DEFAULT_ROUTER_HOST,
-        DEFAULT_ROUTER_PORT,
-        DEFAULT_ROUTER_PATH,
+        &router_host,
+        router_port,
+        &router_path,
         std::time::Duration::from_millis(200),
     ) {
         println!();
@@ -935,10 +934,11 @@ fn run_doctor(root: &Path, p: &Palette) -> ExitCode {
     }
 
     // Router connectivity (informational)
+    let (router_host, router_port, router_path) = parse_env_router_endpoint();
     let router_ok = fetch_live_assignment(
-        DEFAULT_ROUTER_HOST,
-        DEFAULT_ROUTER_PORT,
-        DEFAULT_ROUTER_PATH,
+        &router_host,
+        router_port,
+        &router_path,
         std::time::Duration::from_millis(200),
     )
     .is_some();
@@ -1944,8 +1944,9 @@ fn run_up(root: &Path, profile: Option<&str>, json: bool) -> ExitCode {
     use std::time::Duration;
 
     let p = Palette::detect();
-    let addr_str = format!("{DEFAULT_ROUTER_HOST}:{DEFAULT_ROUTER_PORT}");
-    let endpoint = format!("http://{addr_str}{DEFAULT_ROUTER_PATH}");
+    let (router_host, router_port, router_path) = parse_env_router_endpoint();
+    let addr_str = format!("{router_host}:{router_port}");
+    let endpoint = format!("http://{addr_str}{router_path}");
     let is_alive = addr_str
         .to_socket_addrs()
         .ok()
@@ -2134,6 +2135,12 @@ fn ensure_vibe_local(root: &Path) -> (Option<LocalNodeStatus>, bool) {
         return (Some(node), false);
     }
 
+    // Only a loopback node can be spawned by this machine; a remote
+    // VIBE_LOCAL_HOST must be started by its own operator.
+    if !matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1") {
+        return (None, false);
+    }
+
     let mut candidates = Vec::new();
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
@@ -2160,11 +2167,13 @@ fn ensure_vibe_local(root: &Path) -> (Option<LocalNodeStatus>, bool) {
     let Some(bin) = candidates.into_iter().find(|p| p.exists()) else {
         return (None, false);
     };
-    if std::process::Command::new(bin)
-        .arg("serve")
-        .spawn()
-        .is_err()
-    {
+    let mut command = std::process::Command::new(bin);
+    command.arg("serve");
+    // Honor a non-default VIBE_LOCAL_PORT; the node defaults to 20129.
+    if port != va_core::local_node::DEFAULT_LOCAL_PORT {
+        command.arg("--port").arg(port.to_string());
+    }
+    if command.spawn().is_err() {
         return (None, false);
     }
 

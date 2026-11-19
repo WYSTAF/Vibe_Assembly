@@ -1,5 +1,5 @@
 //! Vibe Router assignment client with offline fallback.
-//! Queries http://127.0.0.1:20128/api/assignment or falls back to
+//! Queries http://127.0.0.1:20128/v1/assignment (public) or falls back to
 //! .ai/model_knowledge.json and .ai/model_combo.txt.
 
 use serde::{Deserialize, Serialize};
@@ -12,7 +12,9 @@ use std::time::Duration;
 
 pub const DEFAULT_ROUTER_HOST: &str = "127.0.0.1";
 pub const DEFAULT_ROUTER_PORT: u16 = 20128;
-pub const DEFAULT_ROUTER_PATH: &str = "/api/assignment";
+/// Public assignment path; `/api/assignment` is admin-key guarded on the
+/// current gateway and only tried as a fallback.
+pub const DEFAULT_ROUTER_PATH: &str = "/v1/assignment";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoleAllocation {
@@ -43,6 +45,8 @@ impl Default for RouterAssignment {
 
 /// Attempt to fetch dynamic role allocations from Vibe Router via HTTP 1.1 GET.
 /// Uses standard library TcpStream for zero extra dependencies and fast timeout.
+/// Non-2xx answers on a custom path fall back to the public `/v1/assignment`
+/// before giving up (the `/api` alias is admin-key guarded).
 pub fn fetch_live_assignment(
     host: &str,
     port: u16,
@@ -57,30 +61,40 @@ pub fn fetch_live_assignment(
         return None;
     }
 
-    let mut stream = TcpStream::connect_timeout(&addrs[0], timeout).ok()?;
-    stream.set_read_timeout(Some(timeout)).ok()?;
-    stream.set_write_timeout(Some(timeout)).ok()?;
+    let get = |req_path: &str| -> Option<(u16, String)> {
+        let mut stream = TcpStream::connect_timeout(&addrs[0], timeout).ok()?;
+        stream.set_read_timeout(Some(timeout)).ok()?;
+        stream.set_write_timeout(Some(timeout)).ok()?;
+        let request = format!(
+            "GET {} HTTP/1.1\r\nHost: {}:{}\r\nUser-Agent: vibe-assembly-control/1.2.0\r\nAccept: application/json\r\nConnection: close\r\n\r\n",
+            req_path, host, port
+        );
+        stream.write_all(request.as_bytes()).ok()?;
+        let mut response = Vec::new();
+        let _ = stream.read_to_end(&mut response);
+        let text = String::from_utf8_lossy(&response);
+        let (header_part, body_part) = text.split_once("\r\n\r\n")?;
+        let status = header_part
+            .lines()
+            .next()?
+            .split_whitespace()
+            .nth(1)?
+            .parse::<u16>()
+            .ok()?;
+        Some((status, body_part.to_string()))
+    };
 
-    let request = format!(
-        "GET {} HTTP/1.1\r\nHost: {}:{}\r\nUser-Agent: vibe-assembly-control/1.2.0\r\nAccept: application/json\r\nConnection: close\r\n\r\n",
-        path, host, port
-    );
-
-    stream.write_all(request.as_bytes()).ok()?;
-
-    let mut response = Vec::new();
-    let _ = stream.read_to_end(&mut response);
-
-    let text = String::from_utf8_lossy(&response);
-    let (header_part, body_part) = text.split_once("\r\n\r\n")?;
-
-    // Check HTTP status code
-    let first_line = header_part.lines().next()?;
-    if !first_line.contains("200") {
+    let (status, body) = get(path)?;
+    let (status, body) = if !(200..300).contains(&status) && path != DEFAULT_ROUTER_PATH {
+        get(DEFAULT_ROUTER_PATH)?
+    } else {
+        (status, body)
+    };
+    if !(200..300).contains(&status) {
         return None;
     }
 
-    let val: serde_json::Value = serde_json::from_str(body_part.trim()).ok()?;
+    let val: serde_json::Value = serde_json::from_str(body.trim()).ok()?;
 
     // If router advises offline fallback, honor it immediately
     if val
@@ -276,10 +290,29 @@ pub fn resolve_assignment(root: &Path) -> RouterAssignment {
     }
 }
 
-fn parse_env_router_endpoint() -> (String, u16, String) {
+/// Resolve the router endpoint from the environment: `VIBE_ROUTER_HOST`,
+/// `VIBE_ROUTER_PORT`, `VIBE_ROUTER_PATH` first, then a full
+/// `VIBE_ROUTER_URL`, then the public-assignment defaults.
+pub fn parse_env_router_endpoint() -> (String, u16, String) {
+    let host = std::env::var("VIBE_ROUTER_HOST")
+        .ok()
+        .filter(|h| !h.trim().is_empty());
+    let port = std::env::var("VIBE_ROUTER_PORT")
+        .ok()
+        .and_then(|p| p.parse::<u16>().ok());
+    let path = std::env::var("VIBE_ROUTER_PATH")
+        .ok()
+        .filter(|p| !p.trim().is_empty());
+    if host.is_some() || port.is_some() || path.is_some() {
+        return (
+            host.unwrap_or_else(|| DEFAULT_ROUTER_HOST.to_string()),
+            port.unwrap_or(DEFAULT_ROUTER_PORT),
+            path.unwrap_or_else(|| DEFAULT_ROUTER_PATH.to_string()),
+        );
+    }
     if let Ok(url) = std::env::var("VIBE_ROUTER_URL") {
         if let Some(after) = url.strip_prefix("http://") {
-            let (host_port, path) = after.split_once('/').unwrap_or((after, "api/assignment"));
+            let (host_port, path) = after.split_once('/').unwrap_or((after, "v1/assignment"));
             let path = format!("/{}", path);
             if let Some((h, p)) = host_port.split_once(':') {
                 if let Ok(port) = p.parse::<u16>() {

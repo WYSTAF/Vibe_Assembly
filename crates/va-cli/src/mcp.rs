@@ -16,12 +16,13 @@ use serde_json::{json, Value};
 
 use va_core::knowledge::auto_combo;
 use va_core::router_client::fetch_default;
+use va_core::runtime::AtomicStateSync;
 use va_harness::diagnostics::{DiagnosticPinpointer, PinnedDiagnostic};
 use va_harness::judge::{Judge, Verdict};
 use va_harness::patcher::{apply_patch, segment_blocks, short_hash, PatchOp};
 use va_harness::repomap::RepoMap;
 use va_harness::review::parse_unified_diff;
-use va_harness::session::Session;
+use va_harness::session::{NodeKind, Session};
 use va_harness::tournament::{CandidatePatch, SpeculativeTournament};
 
 #[derive(Debug, Deserialize)]
@@ -313,7 +314,7 @@ fn execute_tool(name: &str, args: &Value, root: Option<&Path>) -> Result<Value, 
             let file_str = args.get("file").and_then(|v| v.as_str()).ok_or_else(
                 || json!({"code": -32602, "message": "Missing required argument `file`"}),
             )?;
-            let path = resolve_path(file_str, root);
+            let path = resolve_path(file_str, root)?;
             let content = std::fs::read_to_string(&path).map_err(|e| {
                 json!({"code": -32000, "message": format!("Cannot read file {}: {e}", path.display())})
             })?;
@@ -351,13 +352,13 @@ fn execute_tool(name: &str, args: &Value, root: Option<&Path>) -> Result<Value, 
             })?;
             let expected_file_hash = args.get("expected_file_hash").and_then(|v| v.as_u64());
 
-            let path = resolve_path(file_str, root);
+            let path = resolve_path(file_str, root)?;
             let content = std::fs::read_to_string(&path).map_err(|e| {
                 json!({"code": -32000, "message": format!("Cannot read file {}: {e}", path.display())})
             })?;
 
             let target_hash = parse_hash_val(target_str, &content).ok_or_else(
-                || json!({"code": -32602, "message": format!("Invalid target hash: {target_str}")}),
+                || json!({"code": -32602, "message": format!("Invalid or ambiguous target hash: {target_str}")}),
             )?;
 
             let mut op = PatchOp::new(target_hash, replacement);
@@ -367,7 +368,7 @@ fn execute_tool(name: &str, args: &Value, root: Option<&Path>) -> Result<Value, 
 
             match apply_patch(&content, &op) {
                 Ok(updated) => {
-                    std::fs::write(&path, &updated).map_err(|e| {
+                    AtomicStateSync::write_atomic(&path, updated.as_bytes()).map_err(|e| {
                         json!({"code": -32000, "message": format!("Cannot write file {}: {e}", path.display())})
                     })?;
                     Ok(json!({
@@ -470,7 +471,8 @@ fn execute_tool(name: &str, args: &Value, root: Option<&Path>) -> Result<Value, 
                     let fork_id = session.fork(node_id, reason).map_err(
                         |e| json!({"code": -32000, "message": format!("Fork error: {e}")}),
                     )?;
-                    let _ = std::fs::write(&session_path, session.to_jsonl());
+                    let _ =
+                        AtomicStateSync::write_atomic(&session_path, session.to_jsonl().as_bytes());
 
                     Ok(json!({
                         "content": [{
@@ -491,7 +493,8 @@ fn execute_tool(name: &str, args: &Value, root: Option<&Path>) -> Result<Value, 
                             json!({"code": -32000, "message": format!("Rollback to verified error: {e}")})
                         })?;
                     }
-                    let _ = std::fs::write(&session_path, session.to_jsonl());
+                    let _ =
+                        AtomicStateSync::write_atomic(&session_path, session.to_jsonl().as_bytes());
 
                     Ok(json!({
                         "content": [{
@@ -518,6 +521,16 @@ fn execute_tool(name: &str, args: &Value, root: Option<&Path>) -> Result<Value, 
                     surface.compact_range(from_id, to_id, summary).map_err(
                         |e| json!({"code": -32000, "message": format!("Compaction error: {e}")}),
                     )?;
+                    // Persist the compaction as a DAG node, exactly like the
+                    // CLI; a surface-only compact was a silent no-op.
+                    session.push(NodeKind::Compacted {
+                        start: from_id,
+                        end: to_id,
+                        summary: summary.to_string(),
+                    });
+                    let _ = session.commit();
+                    let _ =
+                        AtomicStateSync::write_atomic(&session_path, session.to_jsonl().as_bytes());
 
                     Ok(json!({
                         "content": [{
@@ -799,25 +812,57 @@ fn execute_tool(name: &str, args: &Value, root: Option<&Path>) -> Result<Value, 
     }
 }
 
-fn resolve_path(p: &str, root: Option<&Path>) -> PathBuf {
+/// Resolve a tool-supplied file path strictly inside the workspace. MCP
+/// callers get the same confinement the engine enforces: no `..` traversal,
+/// no drive-relative prefixes, no NTFS alternate data streams, and absolute
+/// paths only when they already sit under the root.
+fn resolve_path(p: &str, root: Option<&Path>) -> Result<PathBuf, Value> {
+    let bad =
+        || json!({"code": -32602, "message": format!("path must stay inside the workspace: {p}")});
+    let base = match root {
+        Some(r) => r.to_path_buf(),
+        None => std::env::current_dir().map_err(|_| bad())?,
+    };
     let path = PathBuf::from(p);
+    if path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(bad());
+    }
     if path.is_absolute() {
-        path
-    } else if let Some(r) = root {
-        r.join(path)
+        if path.starts_with(&base) {
+            Ok(path)
+        } else {
+            Err(bad())
+        }
     } else {
-        path
+        if path
+            .components()
+            .any(|c| matches!(c, std::path::Component::Prefix(_)))
+            || p.contains(':')
+        {
+            return Err(bad());
+        }
+        Ok(base.join(path))
     }
 }
 
+/// Resolve a full or 4-hex short hash. A short hash matching more than one
+/// block is ambiguous and rejected - never silently resolved to the first.
 fn parse_hash_val(text: &str, source: &str) -> Option<u64> {
     let t = text.trim().trim_start_matches('#');
     if t.len() <= 4 && !t.is_empty() {
         let blocks = segment_blocks(source);
-        for b in blocks {
-            if short_hash(b.hash).eq_ignore_ascii_case(t) {
-                return Some(b.hash);
-            }
+        let matches: Vec<u64> = blocks
+            .iter()
+            .filter(|b| short_hash(b.hash).eq_ignore_ascii_case(t))
+            .map(|b| b.hash)
+            .collect();
+        match matches.len() {
+            1 => return Some(matches[0]),
+            n if n > 1 => return None,
+            _ => {}
         }
         return u64::from_str_radix(t, 16).ok().map(|h| h << 48);
     }
@@ -900,6 +945,120 @@ mod tests {
         assert_eq!(resp["result"]["isError"], false);
         let text = resp["result"]["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("\"verdict\": \"pass\""));
+    }
+
+    fn mcp_temp_root(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("va-mcp-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".ai")).unwrap();
+        std::fs::write(dir.join("lib.rs"), "pub fn a() -> u32 {\n    1\n}\n").unwrap();
+        dir
+    }
+
+    fn call_tool(root: &Path, name: &str, arguments: Value) -> Value {
+        let req = json!({
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": { "name": name, "arguments": arguments }
+        })
+        .to_string();
+        let resp_str = handle_mcp_request(&req, Some(root)).expect("response");
+        serde_json::from_str(&resp_str).unwrap()
+    }
+
+    #[test]
+    fn mcp_paths_are_confined_to_the_workspace() {
+        let root = mcp_temp_root("confine");
+        for evil in [
+            "../outside.rs",
+            "lib.rs:stream",
+            "C:escape.rs",
+            "C:/Windows/system32/config/SAM",
+        ] {
+            let resp = call_tool(&root, "vibe_assembly_list_blocks", json!({ "file": evil }));
+            assert_eq!(
+                resp["error"]["code"], -32602,
+                "{evil} must be rejected: {resp}"
+            );
+        }
+        let ok = call_tool(
+            &root,
+            "vibe_assembly_list_blocks",
+            json!({ "file": "lib.rs" }),
+        );
+        assert_eq!(ok["result"]["isError"], false);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn mcp_ambiguous_short_hash_is_rejected_not_first_match() {
+        // Birthday-search two distinct blocks whose 16-bit short hashes collide.
+        let mut seen: std::collections::HashMap<u16, String> = std::collections::HashMap::new();
+        let mut collision: Option<(String, String, u16)> = None;
+        for i in 0..20_000u32 {
+            let body = format!("pub fn f{i}() -> u32 {{\n    {i}\n}}");
+            let lines: Vec<&str> = body.lines().collect();
+            let short = (va_harness::patcher::hash_block(&lines) >> 48) as u16;
+            if let Some(prev) = seen.get(&short) {
+                if prev != &body {
+                    collision = Some((prev.clone(), body.clone(), short));
+                    break;
+                }
+            } else {
+                seen.insert(short, body);
+            }
+        }
+        let (a, b, short) = collision.expect("a 16-bit collision within 20k samples");
+        // No blank separator: each body segments into exactly one block, so
+        // the block hashes equal the body hashes searched above.
+        let source = format!("{a}\n{b}\n");
+        let blocks = segment_blocks(&source);
+        assert_eq!(blocks.len(), 2, "premise: two independent blocks");
+        let tag = format!("{short:04X}");
+        assert_eq!(
+            parse_hash_val(&tag, &source),
+            None,
+            "ambiguous short hash must fail closed"
+        );
+        let unique_source = format!("{a}\n");
+        assert!(parse_hash_val(&tag, &unique_source).is_some());
+    }
+
+    #[test]
+    fn mcp_compact_persists_a_dag_node() {
+        let root = mcp_temp_root("compact");
+        let session_path = root.join(".ai").join("session.jsonl");
+        let mut session = Session::new();
+        // push chains off the committed head, so commit after every node.
+        session.push(NodeKind::Prompt {
+            role: "user".into(),
+            text: "task".into(),
+        });
+        session.commit().unwrap();
+        session.push(NodeKind::Thought {
+            text: "plan".into(),
+        });
+        session.commit().unwrap();
+        session.push(NodeKind::Verification {
+            passed: true,
+            detail: "baseline".into(),
+        });
+        session.commit().unwrap();
+        std::fs::write(&session_path, session.to_jsonl()).unwrap();
+
+        let resp = call_tool(
+            &root,
+            "vibe_assembly_session_dag",
+            json!({ "action": "compact", "from_id": 1, "to_id": 2, "summary": "s" }),
+        );
+        assert_eq!(resp["result"]["isError"], false, "{resp}");
+        let persisted = std::fs::read_to_string(&session_path).unwrap();
+        assert!(
+            persisted.contains("\"type\":\"compacted\""),
+            "compact must persist a DAG node, not just mutate a local surface; file:\n{persisted}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

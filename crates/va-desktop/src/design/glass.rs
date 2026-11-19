@@ -2236,9 +2236,10 @@ impl GlassPreview {
             live.set_mode(self.mode);
             if let Some(choice) = self.models.get(self.model) {
                 live.set_model(choice.id.clone());
-                // Local models talk straight to their node when the router
-                // is offline; cloud models keep the router endpoint.
-                live.local_endpoint = if choice.local && !live.router_live {
+                // Local models carry their direct endpoint; the workbench
+                // decides at submit time whether the router is actually
+                // offline before using it.
+                live.local_endpoint = if choice.local {
                     choice.endpoint.clone()
                 } else {
                     None

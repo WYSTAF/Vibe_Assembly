@@ -1039,10 +1039,13 @@ impl WorkbenchState {
         SubmitOutcome::Queued
     }
 
-    /// Build the live planner configuration for one prompt. A selected local
-    /// model with a reachable endpoint bypasses the offline router and talks
-    /// directly to Vibe Local (or a LAN Pocket Worker).
-    fn planner_config(&self, text: &str) -> LivePlannerConfig {
+    /// Build the live planner configuration for one prompt. Router liveness
+    /// is re-probed here (not trusted from launch time) so a router that came
+    /// up after launch is used immediately. A selected local model with a
+    /// reachable endpoint bypasses an offline router and talks directly to
+    /// Vibe Local (or a LAN Pocket Worker).
+    fn planner_config(&mut self, text: &str) -> LivePlannerConfig {
+        self.router_live = probe_router_alive(&self.router_endpoint);
         let mut config = LivePlannerConfig::default_for(&self.root);
         config.mode = self.mode;
         config.language = self.language;
@@ -1054,15 +1057,18 @@ impl WorkbenchState {
         config.offline_mock = !self.router_live;
         config.task_prompt = Some(text.to_string());
         config.reasoning_effort = self.reasoning_effort;
-        if let Some((host, port)) = self.local_endpoint.as_deref().and_then(parse_local_target) {
-            config.router_host = host;
-            config.router_port = port;
-            config.router_path = "/v1/chat/completions".to_string();
-            config.auth = va_core::router_client::RouterAuth {
-                bearer: va_core::local_node::local_token(),
-                api_key: None,
-            };
-            config.offline_mock = false;
+        if !self.router_live {
+            if let Some((host, port)) = self.local_endpoint.as_deref().and_then(parse_local_target)
+            {
+                config.router_host = host;
+                config.router_port = port;
+                config.router_path = "/v1/chat/completions".to_string();
+                config.auth = va_core::router_client::RouterAuth {
+                    bearer: va_core::local_node::local_token(),
+                    api_key: None,
+                };
+                config.offline_mock = false;
+            }
         }
         config
     }
@@ -2475,6 +2481,20 @@ fn phase_for_action(action: &str) -> StepPhase {
     }
 }
 
+/// Cheap TCP liveness probe of the configured router endpoint, so a router
+/// started after the workbench launched is picked up on the next submit.
+fn probe_router_alive(endpoint: &str) -> bool {
+    use std::net::{TcpStream, ToSocketAddrs};
+    endpoint
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut a| a.next())
+        .map(|addr| {
+            TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(200)).is_ok()
+        })
+        .unwrap_or(false)
+}
+
 /// Parse a local chat endpoint (`http://host:port` or `host:port`) into a
 /// host/port pair. Anything malformed fails closed to `None` so the request
 /// stays on the configured router instead of guessing a target.
@@ -2641,6 +2661,7 @@ mod tests {
     fn local_endpoint_routes_the_planner_directly_to_vibe_local() {
         let dir = temp_workspace("local-route");
         let mut state = state_for(&dir);
+        state.router_endpoint = "127.0.0.1:1".to_string(); // provably offline
         state.router_live = false;
         state.set_model("qwen3-8b".to_string());
         state.local_endpoint = Some("http://127.0.0.1:20129".to_string());
@@ -2663,6 +2684,7 @@ mod tests {
     fn without_a_local_endpoint_the_router_config_is_untouched() {
         let dir = temp_workspace("router-route");
         let mut state = state_for(&dir);
+        state.router_endpoint = "127.0.0.1:1".to_string();
         state.router_live = false;
         state.local_endpoint = None;
         let config = state.planner_config("hello");
@@ -2676,6 +2698,31 @@ mod tests {
         let config = state.planner_config("hello");
         assert_eq!(config.router_port, 20128);
         assert!(config.offline_mock, "malformed endpoints fail closed");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn router_liveness_is_reprobed_at_submit_time() {
+        let dir = temp_workspace("reprobe");
+        let mut state = state_for(&dir);
+        state.router_live = false;
+        state.local_endpoint = Some("http://127.0.0.1:20129".to_string());
+
+        // A router that came up after launch must win over the local override.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        state.router_endpoint = listener.local_addr().unwrap().to_string();
+        let config = state.planner_config("hello");
+        assert!(state.router_live, "the live router must be detected");
+        assert!(!config.offline_mock);
+        assert_eq!(config.router_port, 20128, "cloud path stays on the router");
+        drop(listener);
+
+        // Once it goes away, the local endpoint takes over again.
+        state.router_endpoint = "127.0.0.1:1".to_string();
+        let config = state.planner_config("hello");
+        assert!(!state.router_live);
+        assert_eq!(config.router_port, 20129);
+        assert!(!config.offline_mock);
         let _ = fs::remove_dir_all(&dir);
     }
 

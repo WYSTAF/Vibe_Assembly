@@ -59,13 +59,25 @@ fn probe_fails_closed_on_http_errors_and_garbage_bodies() {
 
 #[test]
 fn udp_discovery_collects_worker_announcements() {
+    // The worker's HTTP catalogue lives on a mock TCP server; the UDP reply
+    // uses the real Vibe Local shape (http_port + hostname, no model list).
+    let http_port = spawn_models_server(
+        "HTTP/1.1 200 OK\r\n\
+         Content-Type: application/json\r\n\
+         X-Vibe-Local-Backend: cuda\r\n\
+         X-Vibe-Local-Device: GTX 1660\r\n\
+         Connection: close\r\n\r\n\
+         {\"data\":[{\"id\":\"phi-4\"}]}",
+    );
     let responder = UdpSocket::bind("127.0.0.1:0").unwrap();
     let port = responder.local_addr().unwrap().port();
     thread::spawn(move || {
         let mut buf = [0u8; 256];
         if let Ok((len, from)) = responder.recv_from(&mut buf) {
             assert_eq!(std::str::from_utf8(&buf[..len]).unwrap(), DISCOVERY_MAGIC);
-            let announcement = r#"{"host":"127.0.0.1","port":20129,"backend":"cuda","device":"GTX 1660","models":["phi-4"]}"#;
+            let announcement = format!(
+                "{{\"service\":\"vibe-local\",\"version\":\"0.1.0\",\"http_port\":{http_port},\"lan\":false,\"host\":\"MOCK-HOST\"}}"
+            );
             let _ = responder.send_to(announcement.as_bytes(), from);
         }
     });
@@ -74,8 +86,36 @@ fn udp_discovery_collects_worker_announcements() {
     assert_eq!(workers.len(), 1, "exactly one mock worker must answer");
     let worker = &workers[0];
     assert!(worker.lan && worker.reachable);
-    assert_eq!(worker.port, 20129);
+    assert_eq!(worker.host, "127.0.0.1", "sender IP wins over the hostname");
+    assert_eq!(worker.port, http_port);
     assert_eq!(worker.backend.as_deref(), Some("cuda"));
     assert_eq!(worker.device.as_deref(), Some("GTX 1660"));
-    assert_eq!(worker.models, vec!["phi-4"]);
+    assert_eq!(
+        worker.models,
+        vec!["phi-4"],
+        "models enriched via /v1/models"
+    );
+}
+
+#[test]
+fn announced_worker_with_dead_http_is_marked_unreachable() {
+    let responder = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let port = responder.local_addr().unwrap().port();
+    thread::spawn(move || {
+        let mut buf = [0u8; 256];
+        if let Ok((len, from)) = responder.recv_from(&mut buf) {
+            assert_eq!(std::str::from_utf8(&buf[..len]).unwrap(), DISCOVERY_MAGIC);
+            // Port 1 has no HTTP listener; the announcement still parses.
+            let announcement = r#"{"service":"vibe-local","http_port":1,"host":"MOCK-HOST"}"#;
+            let _ = responder.send_to(announcement.as_bytes(), from);
+        }
+    });
+
+    let workers = discover_lan_workers(port, 1_500);
+    assert_eq!(workers.len(), 1);
+    assert!(
+        !workers[0].reachable,
+        "UDP alive but HTTP dead must be honest"
+    );
+    assert!(workers[0].models.is_empty());
 }

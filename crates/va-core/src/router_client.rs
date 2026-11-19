@@ -2,19 +2,15 @@
 //!
 //! # Endpoint note
 //!
-//! The wave brief named `GET /v1/assignment`. Probing the live gateway on
-//! 2026-10-08 showed:
-//!
-//! ```text
-//! 200  /api/health        gateway is up
-//! 404  /v1/assignment     path does not exist
-//! 401  /api/assignment    exists, requires authorization
-//! ```
-//!
-//! So the default is `/api/assignment`, with the path overridable for when
-//! the gateway adds the `/v1` alias. Because the payload shape is not yet
-//! fixed by a published contract, the parser accepts several plausible field
-//! names and degrades to offline rather than guessing wrong.
+//! The original wave brief named `GET /v1/assignment`; a 2026-10-08 probe
+//! showed only the admin-guarded `/api/assignment` existed. The current
+//! Vibe Router (verified 2026-11-18) serves the same payload publicly at
+//! `GET /v1/assignment` while `/api/*` requires an admin key, so the
+//! zero-config default is `/v1/assignment` with a fallback ladder:
+//! configured path → public `/v1/assignment` → legacy `/api/assignment`
+//! (on 404) → `/v1/models` auto-combo. Because the payload shape is not
+//! fixed by a published contract, the parser accepts several plausible
+//! field names and degrades to offline rather than guessing wrong.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -27,7 +23,11 @@ use crate::modes::ReasoningEffort;
 
 pub const DEFAULT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_PORT: u16 = 20128;
-pub const DEFAULT_PATH: &str = "/api/assignment";
+/// Public assignment endpoint on the current Vibe Router. The `/api` alias
+/// is admin-key guarded, so the zero-config default must be the public path.
+pub const DEFAULT_PATH: &str = "/v1/assignment";
+/// Admin-guarded alias kept as a fallback for older/gateway-only setups.
+pub const LEGACY_ASSIGNMENT_PATH: &str = "/api/assignment";
 pub const DEFAULT_TIMEOUT_MS: u64 = 400;
 /// OpenAI-compatible chat endpoint used by live planners.
 pub const DEFAULT_CHAT_PATH: &str = "/v1/chat/completions";
@@ -785,14 +785,39 @@ pub fn fetch_assignment_with_context(
 
     let telemetry = extract_telemetry(&headers);
 
+    // The current gateway guards `/api/*` with an admin key but serves the
+    // same assignment publicly at `/v1/assignment`. Fall back to the public
+    // path before declaring offline, and to the legacy alias on 404.
+    let try_alternate = |alt_path: &str| -> Option<RouterAssignment> {
+        if alt_path == path {
+            return None;
+        }
+        let (s, h, b) = http_get(host, port, alt_path, auth, ctx, timeout).ok()?;
+        if !(200..300).contains(&s) {
+            return None;
+        }
+        let mut a = parse_assignment(&b).ok()?;
+        a.telemetry = extract_telemetry(&h);
+        Some(a)
+    };
+
     if status == 401 || status == 403 {
+        if let Some(a) = try_alternate(DEFAULT_PATH) {
+            return a;
+        }
         return RouterAssignment::offline(format!(
             "gateway returned {status} - set VIBE_ROUTER_TOKEN, VIBE_ROUTER_API_KEY, or place .vibe_router_token in workspace"
         ));
     }
 
-    // 404 Fallback: Universal OpenAI-compatible gateway (9router, LiteLLM, Ollama, OpenRouter)
+    // 404 Fallback: public assignment, legacy alias, then universal
+    // OpenAI-compatible gateway (9router, LiteLLM, Ollama, OpenRouter).
     if status == 404 {
+        if let Some(a) =
+            try_alternate(DEFAULT_PATH).or_else(|| try_alternate(LEGACY_ASSIGNMENT_PATH))
+        {
+            return a;
+        }
         if let Ok((m_status, m_headers, m_body)) =
             http_get(host, port, "/v1/models", auth, ctx, timeout)
         {

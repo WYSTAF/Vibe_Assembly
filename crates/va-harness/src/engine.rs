@@ -413,10 +413,16 @@ impl Engine {
                             mode: self.mode.as_str().to_string(),
                         });
                     }
-                    if path
-                        .components()
-                        .any(|c| matches!(c, std::path::Component::ParentDir))
-                        || path.is_absolute()
+                    // Reject traversal, absolute paths, Windows drive-relative
+                    // prefixes ("C:file" joins onto another drive's cwd), and
+                    // NTFS alternate data streams ("file.rs:stream").
+                    if path.components().any(|c| {
+                        matches!(
+                            c,
+                            std::path::Component::ParentDir | std::path::Component::Prefix(_)
+                        )
+                    }) || path.is_absolute()
+                        || path.to_string_lossy().contains(':')
                     {
                         return Err(EngineError::Io(std::io::Error::new(
                             std::io::ErrorKind::InvalidInput,
@@ -445,7 +451,9 @@ impl Engine {
                             return Err(EngineError::Patch(e));
                         }
                     };
-                    std::fs::write(&full, &after)?;
+                    // Atomic replace: a crash mid-write must never corrupt the
+                    // source file the harness is trusted to edit.
+                    va_core::runtime::AtomicStateSync::write_atomic(&full, after.as_bytes())?;
                     self.stats.patches_applied += 1;
                     self.refresh_working_set(&path);
                     self.last_failure = None;
@@ -560,7 +568,12 @@ impl Engine {
             }
         }
 
-        Ok(records)
+        // Exhausting the step cap is not success: the planner never reported
+        // Done, so callers must not present the run as completed.
+        Err(EngineError::Aborted(format!(
+            "step cap ({}) reached before the planner reported Done",
+            self.max_steps
+        )))
     }
 
     /// Record a failure, detect identical-failure stagnation, and let the
@@ -831,9 +844,37 @@ mod tests {
                 .collect(),
             index: 0,
         };
-        let records = engine.run(&mut session, &mut planner).unwrap();
-        assert_eq!(records.len(), 3, "must stop at the cap");
+        // Hitting the cap is an honest failure, never a silent "completed".
+        match engine.run(&mut session, &mut planner) {
+            Err(EngineError::Aborted(reason)) => {
+                assert!(reason.contains("step cap"), "got: {reason}");
+            }
+            other => panic!("expected step-cap abort, got {other:?}"),
+        }
+        assert_eq!(engine.stats().steps, 3, "must stop at the cap");
         assert_eq!(engine.stats().verifications_run, 3);
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn patch_paths_cannot_escape_via_drive_prefix_or_ads() {
+        let repo = temp_repo("escape");
+        let mut engine = Engine::new(&repo).with_max_steps(4);
+        let mut session = Session::new();
+        for evil in ["C:escape.rs", "lib.rs:stream", "../outside.rs"] {
+            let mut planner = ScriptedPlanner {
+                script: vec![Action::Patch {
+                    path: PathBuf::from(evil),
+                    op: PatchOp::new(0xDEAD, "x".to_string()),
+                }],
+                index: 0,
+            };
+            let result = engine.run(&mut session, &mut planner);
+            assert!(
+                matches!(result, Err(EngineError::Io(_))),
+                "{evil} must be rejected, got {result:?}"
+            );
+        }
         let _ = std::fs::remove_dir_all(&repo);
     }
 }

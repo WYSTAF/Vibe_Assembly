@@ -1,14 +1,16 @@
 # Verification Record & Proven Baselines
 
-**Current feature proven:** v2.5.0 Vibe Local ecosystem integration - local
-node probe, LAN UDP discovery, zero-cost telemetry through the live planner,
-CLI readiness integration, and Liquid Glass local-model catalog/routing/UI
+**Current feature proven:** v2.5.1 deep-dive hardening - public assignment
+endpoint ladder, real Vibe Local UDP announcement parsing + HTTP enrichment,
+submit-time router liveness, sandbox pipe-drain/whitelist/timeout fixes,
+engine confinement/atomicity/step-cap honesty, and MCP confinement,
+persistence, and ambiguity fixes
 
 **Test suites and checks executed:**
 
 - [x] `cargo fmt --all -- --check`
 - [x] `cargo clippy --workspace --all-targets -- -D warnings`
-- [x] `cargo test --workspace` - 271 passed, 0 failed
+- [x] `cargo test --workspace` - 283 passed, 0 failed
 - [x] `cargo build --release` - `vibe-assembly` and `vibe-assembly-desktop`
 - [x] Desktop smoke test - a bare launch of the release binary installed at
       `target/release` opens the Liquid Glass workbench in the persisted theme;
@@ -32,9 +34,21 @@ CLI readiness integration, and Liquid Glass local-model catalog/routing/UI
       on every Boss/Code call through `LivePlannerConfig`
 - [x] Model pill displays the coerced effective level (`Model · Deep (coerced)`)
       instead of claiming an unsupported level
-- [x] Router endpoint consistency: `DEFAULT_ROUTER_PATH=/api/assignment` used by
-      `models`, `doctor`, and `up`; MCP `initialize` version equals
-      `CARGO_PKG_VERSION`
+- [x] Router endpoint consistency: `DEFAULT_ROUTER_PATH=/v1/assignment` (public)
+      used by `models`, `doctor`, and `up` with env overrides; 401/404 fallback
+      ladder proven against a mock guarded gateway; MCP `initialize` version
+      equals `CARGO_PKG_VERSION`
+- [x] LAN discovery parses the real Vibe Local announcement (`http_port`,
+      hostname, no models): sender-IP preference, `/v1/models` enrichment of
+      models/backend/device, and UDP-alive/HTTP-dead workers marked unreachable
+- [x] Desktop router liveness re-probed at submit time (live listener detected,
+      local override only when the router is truly offline)
+- [x] Engine rejects drive-relative/ADS patch paths, aborts honestly at the
+      step cap, and writes patches atomically
+- [x] Sandbox drains >64KB output without pipe deadlock, keeps Windows
+      command-resolution env vars, and defaults to a 300s verification timeout
+- [x] MCP tools confine file paths to the workspace, reject ambiguous short
+      hashes, persist `compact` as a DAG node, and write atomically
 - [x] `probe_vibe_local` against a local mock TCP server (`GET /v1/models`):
       models, backend/device headers, endpoint URL; HTTP errors and garbage
       bodies fail closed to `None`

@@ -1,19 +1,18 @@
 # Current Operational State
 
-- **Active Milestone:** v2.5.0 Vibe Local ecosystem integration
-- **Release:** v2.5.0 - the Chukar-AI triangle is closed: `va-core::local_node`
-  probes Vibe Local (`127.0.0.1:20129`, env-overridable) over raw HTTP and
-  discovers LAN Pocket Workers via UDP `VIBE_DISCOVER_V1` on `:20131`;
-  `X-Vibe-Local-Tok-Per-Sec` / `X-Vibe-Local-Backend` / zero
-  `X-Vibe-Router-Cost-Micros` telemetry flows through the live planner;
-  `up` probes/spawns both nodes and reports LAN workers, `doctor` gained an
-  informational Vibe Local check, and `models`/auto-combo merge zero-cost
-  local models when the router is offline. Liquid Glass merges router/local/
-  LAN catalogues without duplicates, badges local models (Vulkan/CUDA/CPU/LAN,
-  `$0 / local`), routes composer turns directly to the local node when the
-  router is offline, and shows tok/s + backend + $0.00 in the Session drawer
-  and status strip. Repository metadata points at Chukar-AI/Vibe_Assembly.
-- **Current Assignment:** Complete - v2.5.0 shipped.
+- **Active Milestone:** v2.5.1 deep-dive hardening of the Vibe Local ecosystem wiring
+- **Release:** v2.5.1 - bug-fix wave on top of v2.5.0: assignment requests default
+  to the public `/v1/assignment` with a 401/404 fallback ladder (the `/api`
+  alias is admin-guarded on the current router); LAN discovery parses Vibe
+  Local's real `http_port` announcement shape and enriches workers via
+  `/v1/models`; the desktop re-probes router liveness at submit time; `up`
+  honors env overrides and spawns loopback-only with the right port; the
+  engine confines patch paths (drive prefixes/ADS), writes atomically, and
+  reports step-cap exhaustion as failure; the sandbox drains pipes
+  concurrently, keeps Windows resolution vars, and allows 300s verifications;
+  MCP tools are workspace-confined, reject ambiguous short hashes, and persist
+  compactions.
+- **Current Assignment:** Complete - v2.5.1 shipped.
 - **Planning Status:** Complete.
 - **Implementation Status:**
   - `va-core`: parser, single-writer task lock, allocator, model knowledge,
@@ -54,7 +53,7 @@
     editor and git diff view, an interactive assistant composer, a floating
     command palette, a real context-window meter, a shared native `ui_kit`,
     embedded brand/Windows icon assets, and preview-only design samples.
-- **Verification Status:** 271 tests passing, 0 failed; clippy clean with
+- **Verification Status:** 283 tests passing, 0 failed; clippy clean with
   `-D warnings`; formatting clean; release build produced both binaries.
 - **Resume Anchor:** n/a - wave verified and complete.
 - **Blockers:** None.

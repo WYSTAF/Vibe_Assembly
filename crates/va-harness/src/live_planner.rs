@@ -369,7 +369,7 @@ impl LiveRouterPlanner {
         let assignment = fetch_assignment_with_context(
             &self.config.router_host,
             self.config.router_port,
-            "/api/assignment",
+            va_core::router_client::DEFAULT_PATH,
             &self.config.auth,
             &ctx,
             self.config.timeout_ms.min(2_000),

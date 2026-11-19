@@ -9,14 +9,14 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-3B82F6?style=flat-square)](LICENSE)
 
 
-**v2.5.0 - a production-hardened, pure-Rust multi-agent coding workspace closing the Chukar-AI ecosystem triangle: Vibe Local zero-cost inference (127.0.0.1:20129) and LAN Pocket Workers (UDP :20131) are discovered, merged into the Liquid Glass model menu, and driven directly when the router is offline, with live tok/s and backend telemetry.**
+**v2.5.1 - a production-hardened, pure-Rust multi-agent coding workspace closing the Chukar-AI ecosystem triangle: Vibe Local zero-cost inference (127.0.0.1:20129) and LAN Pocket Workers (UDP :20131) are discovered, merged into the Liquid Glass model menu, and driven directly when the router is offline, with live tok/s and backend telemetry. This patch hardens the ecosystem wire contract (public assignment endpoint, real UDP announcement shape), sandbox execution, MCP confinement, and desktop router liveness.**
 
 Vibe Assembly lets small, focused agents build and maintain large software
 projects without exhausting a single chat context. Roles communicate through a
 regulated `.ai/` contract, and every edit passes through a deterministic,
 hash-anchored execution harness.
 
-**Current status:** 271 tests passing, clippy clean with `-D warnings`, both
+**Current status:** 283 tests passing, clippy clean with `-D warnings`, both
 release binaries build. There is no browser runtime, webview, or Node/npm
 toolchain.
 
@@ -77,7 +77,7 @@ Observe -> Think (Boss) -> Patch (Code) -> Verify
 ## Install
 
 ```bash
-git clone https://github.com/Chukar-AI/Vibe_Assembly.git
+git clone https://github.com/ChukarAI/Vibe_Assembly.git
 cd Vibe_Assembly
 
 # Build both binaries
@@ -330,7 +330,7 @@ Common environment variables:
 | Variable | Purpose |
 |---|---|
 | `VIBE_ROUTER_HOST` / `VIBE_ROUTER_PORT` | Router address (default `127.0.0.1:20128`) |
-| `VIBE_ROUTER_PATH` | Assignment endpoint path (default `/api/assignment`) |
+| `VIBE_ROUTER_PATH` | Assignment endpoint path (default `/v1/assignment`, public; falls back to the admin-guarded `/api/assignment` and `/v1/models`) |
 | `VIBE_ROUTER_CHAT_PATH` | Chat completions path (default `/v1/chat/completions`) |
 | `VIBE_ROUTER_TOKEN` / `VIBE_ROUTER_API_KEY` | Router credentials; a workspace `.vibe_router_token` file also works |
 | `VIBE_MODE` / `VIBE_LANG` / `VIBE_MODEL` | Initial desktop selectors (CLI and TUI use flags) |
@@ -351,8 +351,10 @@ deterministic and independent; `--judge-model` is reported for audit and display
   and device. Unreachable or malformed nodes fail closed to offline.
 - `discover_lan_workers` broadcasts `VIBE_DISCOVER_V1` over UDP to
   `255.255.255.255:20131` plus loopback and parses JSON or key-value Pocket
-  Worker announcements (host, port, backend, device, models). No replies is
-  a normal empty result.
+  Worker announcements (including Vibe Local's real `http_port` + hostname
+  shape; the sender IP wins over unresolvable hostnames). Announced workers
+  are then enriched through their own `GET /v1/models`; no replies is a
+  normal empty result.
 - `up` probes both nodes, spawns `vibe-local serve` from sibling release
   paths when offline, and reports LAN workers in human and `--json` output;
   `doctor` checks the local node informationally; `models` and
@@ -412,7 +414,7 @@ cargo test --workspace
 cargo build --release
 ```
 
-Current workspace: **271 tests passing**, clippy clean, both release binaries
+Current workspace: **283 tests passing**, clippy clean, both release binaries
 built. The live HTTP planner is tested against a local mock OpenAI-compatible
 TCP server; unit tests cover compaction, think-trace eviction, observation
 slicing, repeated anchors, read-only enforcement, stagnation escalation,

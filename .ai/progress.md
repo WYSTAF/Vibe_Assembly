@@ -37,6 +37,13 @@
   with backend badges, routes local turns directly to the node when the
   router is offline, and shows tok/s + backend + $0.00 in the Session drawer
   and status strip. Repository metadata moved to Chukar-AI/Vibe_Assembly.
+- **v2.5.1 (2026-11-18):** deep-dive bug-fix wave (13 root causes): public
+  `/v1/assignment` default + fallback ladder, real UDP announcement shape +
+  worker enrichment, submit-time router liveness, env-aware/loopback-only
+  `up` spawn, engine path confinement + atomic writes + honest step cap,
+  sandbox pipe-drain/whitelist/300s timeout, MCP confinement + ambiguity
+  rejection + persisted compaction. Org renamed to ChukarAI (origin,
+  Cargo.toml, README updated).
 - Scope: real HTTP live planner, four execution modes with dynamic accents,
   language lens, auto-compaction at 75%, think-trace eviction, pinned working
   set, repeated-anchor rejection, spin-loop breaker, durable EXPERIENCE.md,
@@ -73,5 +80,5 @@
 
 - `cargo fmt --all -- --check` - clean
 - `cargo clippy --workspace --all-targets -- -D warnings` - clean
-- `cargo test --workspace` - 271 passed, 0 failed
+- `cargo test --workspace` - 283 passed, 0 failed
 - `cargo build --release` - both binaries produced

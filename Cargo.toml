@@ -8,11 +8,11 @@ members = [
 ]
 
 [workspace.package]
-version = "2.5.0"
+version = "2.5.1"
 edition = "2021"
 authors = ["Nikan Wystaf <nikan.wystaf@gmail.com>"]
 license = "Apache-2.0"
-repository = "https://github.com/Chukar-AI/Vibe_Assembly"
+repository = "https://github.com/ChukarAI/Vibe_Assembly"
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
