@@ -5,11 +5,11 @@
 # Vibe Assembly
 
 [![XERJ Corpus Hub](https://img.shields.io/badge/XERJ_Corpus_Hub-Featured_Reference-10B981?style=flat-square)](https://hub.xerj.org/contributors/WYSTAF)
-[![Rust](https://img.shields.io/badge/Rust-2024_Edition-F74C00?style=flat-square&logo=rust)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/Rust-2021_Edition-F74C00?style=flat-square&logo=rust)](https://www.rust-lang.org/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-3B82F6?style=flat-square)](LICENSE)
 
 
-**v2.5.1 - a production-hardened, pure-Rust multi-agent coding workspace closing the Chukar-AI ecosystem triangle: Vibe Local zero-cost inference (127.0.0.1:20129) and LAN Pocket Workers (UDP :20131) are discovered, merged into the Liquid Glass model menu, and driven directly when the router is offline, with live tok/s and backend telemetry. This patch hardens the ecosystem wire contract (public assignment endpoint, real UDP announcement shape), sandbox execution, MCP confinement, and desktop router liveness.**
+**v2.5.1 - a production-hardened, pure-Rust multi-agent coding workspace closing the ChukarAI ecosystem triangle: Vibe Local zero-cost inference (127.0.0.1:20129) and LAN Pocket Workers (UDP :20131) are discovered, merged into the Liquid Glass model menu, and driven directly when the router is offline, with live tok/s and backend telemetry. This patch hardens the ecosystem wire contract (public assignment endpoint, real UDP announcement shape), sandbox execution, MCP confinement, and desktop router liveness.**
 
 Vibe Assembly lets small, focused agents build and maintain large software
 projects without exhausting a single chat context. Roles communicate through a
@@ -343,7 +343,7 @@ deterministic and independent; `--judge-model` is reported for audit and display
 
 ## Vibe Local integration
 
-`va-core::local_node` closes the Chukar-AI ecosystem triangle (Vibe Assembly
+`va-core::local_node` closes the ChukarAI ecosystem triangle (Vibe Assembly
 + Vibe Router + Vibe Local) with zero new dependencies:
 
 - `probe_vibe_local` queries `GET /v1/models` on the local inference node
